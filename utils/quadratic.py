@@ -1,9 +1,14 @@
+import os
+
 import numpy as np
 from torch.autograd import Variable
 import torch
+from torch.nn import init
 import matplotlib.pyplot as plt
-from matplotlib.pylab import savefig
+from cycler import cycler
+
 from datetime import datetime
+from config import config
 
 POLY_DEGREE = 2
 
@@ -93,12 +98,14 @@ class Quadratic2D(object):
 
     def __init__(self, x_min=-10, x_max=10, use_cuda=False):
         self.use_cuda = use_cuda
-        self.W = Variable(torch.randn(5) * 8, requires_grad=False)
+        # self.W = Variable(torch.randn(5) * 8, requires_grad=False)
+        self.W = Variable(torch.zeros(5))
+        init.normal(self.W)
         self.W.data.abs_()
 
         while np.any(self.W.data.numpy()) == 0 or not (x_min < self.W[0].data.numpy()[0] < x_max) or \
                 not (x_min < self.W[1].data.numpy()[0] < x_max):
-            self.W = Variable(torch.randn(5) * 4, requires_grad=False)
+            init.normal(self.W)
             self.W.data.abs_()
 
         self.x_min = x_min
@@ -106,12 +113,10 @@ class Quadratic2D(object):
         self.func = self.f
         self.value_hist = {'x1': [], 'x2': [], 'y': []}
         self.parameter = Variable(self._sample_x0(), requires_grad=True)
+        self.initial_parms = Variable(torch.zeros(self.parameter.data.size()))
+        self.initial_parms.data.copy_(self.parameter.data)
         self.true_opt = self._get_true_min_f()
-
-        if self.use_cuda:
-            self.W = self.W.cuda()
-            self.true_opt = self.true_opt.cuda()
-            self.parameter = self.parameter.cuda()
+        self.error = torch.zeros(1)
 
     def _get_true_min_f(self):
         return Variable(torch.cat((self.W[0].data, self.W[1].data), 0).unsqueeze(1),
@@ -122,19 +127,26 @@ class Quadratic2D(object):
         x2_val = torch.FloatTensor(1)
         x1_val = self.x_min + (self.x_max - self.x_min) * torch.FloatTensor.uniform_(x1_val)
         x2_val = self.x_min + (self.x_max - self.x_min) * torch.FloatTensor.uniform_(x2_val)
+        while not (self.x_min <= x1_val[0] <= self.x_max and self.x_min <= x2_val[0] <= self.x_max
+                   and (torch.abs(x1_val - self.W[0].data)[0] > 4.)
+                   and (torch.abs(x2_val - self.W[1].data)[0] > 4.)):
+            x1_val = self.x_min + (self.x_max - self.x_min) * torch.FloatTensor.uniform_(x1_val)
+            x2_val = self.x_min + (self.x_max - self.x_min) * torch.FloatTensor.uniform_(x2_val)
 
         x0 = torch.FloatTensor(torch.cat((x1_val, x2_val), 0))
-        if self.use_cuda:
-            x0 = x0.cuda()
         x0 = x0.unsqueeze(1)
 
         return x0
 
     def f(self, X):
+        if self.use_cuda:
+            X = X.cuda()
+            self.W = self.W.cuda()
 
         y = ((X[0] - self.W[0].expand_as(X[0])) ** 2 / self.W[2].expand_as(X[0]) ** 2 +
-            (X[1] - self.W[1].expand_as(X[1])) ** 2 / self.W[2].expand_as(X[1]) ** 2 + self.W[3].expand_as(X[1])) * \
-            self.W[4].expand_as(X[0])
+            (X[1] - self.W[1].expand_as(X[1])) ** 2 / self.W[2].expand_as(X[1]) ** 2 + self.W[3].expand_as(X[1]))
+        # omitting the last parameter after figuring out that this made the functions pretty hard to optimize
+        # * self.W[4].expand_as(X[0])
 
         return y.unsqueeze(1)
 
@@ -142,7 +154,7 @@ class Quadratic2D(object):
         y = self.func(self.parameter)
         if hist:
             self.value_hist['x1'].append(self.parameter[0].squeeze().cpu().data.clone().numpy()[0])
-            self.value_hist['x2'].append(self.parameter[0].squeeze().cpu().data.clone().numpy()[0])
+            self.value_hist['x2'].append(self.parameter[1].squeeze().cpu().data.clone().numpy()[0])
             self.value_hist['y'].append(y.squeeze().cpu().data.numpy()[0])
         return y.squeeze()
 
@@ -153,31 +165,42 @@ class Quadratic2D(object):
     @property
     def poly_desc(self):
         """Creates a string description of a quadratic."""
-        result = "(x1-{:.2f})^2/{:.2f}^2".format(self.W[0].cpu().data.numpy()[0],
+        result = "((x1-{:.2f})^2/{:.2f}^2".format(self.W[0].cpu().data.numpy()[0],
                                                             self.W[2].cpu().data.numpy()[0])
-        result += "+(x2-{:.2f})^2/{:.2f}^2".format(self.W[1].cpu().data.numpy()[0],
+        result += "+(x2-{:.2f})^2/{:.2f}^2)".format(self.W[1].cpu().data.numpy()[0],
                                                               self.W[2].cpu().data.numpy()[0])
-        result += "+{:.2f})*{:.2f}".format(self.W[3].cpu().data.numpy()[0], self.W[4].cpu().data.numpy()[0])
+        result += "+{:.2f}".format(self.W[3].cpu().data.numpy()[0])
+        # result += "+{:.2f})*{:.2f}".format(self.W[3].cpu().data.numpy()[0], self.W[4].cpu().data.numpy()[0])
 
         return result
 
     def plot_func(self, fig_name=None, height=8, width=6, do_save=False, show=False):
+
+        cm = plt.get_cmap(config.color_map)
         steps = (self.x_max - self.x_min) * 25
         x_range = np.linspace(self.x_min, self.x_max, steps)
         X, Y = np.meshgrid(x_range, x_range)
         f_in = Variable(torch.FloatTensor(torch.cat((torch.from_numpy(X.ravel()).float(), torch.from_numpy(Y.ravel()).float()), 1).t()))
         Z = self.f(f_in)
         plt.figure(figsize=(height, width))
-        plt.contourf(X, Y, Z.data.view(steps, steps).numpy(), steps)
-        plt.plot(self.true_opt[0].data.numpy(), self.true_opt[1].data.numpy(), 'yo')
-        # print(self.value_hist['x1'], self.value_hist['x2'])
-        plt.plot(self.value_hist['x1'], self.value_hist['x2'], 'rx-', markersize=5)
+        plt.contourf(X, Y, Z.data.cpu().view(steps, steps).numpy(), steps)
+        plt.plot(self.true_opt[0].data.cpu().numpy(), self.true_opt[1].data.cpu().numpy(), 'ro')
+        # plot the gradient steps (lines) in different colors with increased transparency
+        ax = plt.gca()
+        num_points = len(self.value_hist['x1'])
+        ax.set_prop_cycle(cycler('color', [cm(1. * i / (num_points - 1)) for i in range(num_points - 1)]))
+        for i in range(num_points - 1):
+            ax.plot(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2], 'o-')
+            # plt.plot(self.value_hist['x1'], self.value_hist['x2'], 'o-')
         plt.title(self.poly_desc)
 
         if do_save:
+            dt = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             if fig_name is None:
-                fig_name = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                fig_name = "figures/" + fig_name + ".png"
+                fig_name = dt + ".png"
+            else:
+                fig_name = fig_name + "_" + dt + ".png"
+
             plt.savefig(fig_name, bbox_inches='tight')
             print("INFO - Successfully saved fig %s" % fig_name)
 
@@ -185,6 +208,106 @@ class Quadratic2D(object):
             plt.show()
 
         plt.close()
+
+    def compute_error(self):
+        self.error = 0.5 * torch.sum((self.true_opt.data - self.parameter.data)**2)
+        return self.error
+
+
+class SimpleQuadratic(object):
+
+    def __init__(self, use_cuda=False):
+        self.x_min = -10
+        self.x_max = 10
+        self.use_cuda = use_cuda
+        self.W = Variable(torch.zeros(2, 2), requires_grad=False)
+        self.b = Variable(torch.zeros(2, 1), requires_grad=False)
+        init.normal(self.W)
+        init.normal(self.b)
+        self.func = self.f
+        self.value_hist = {'x1': [], 'x2': [], 'y': []}
+        self.parameter = Variable(torch.zeros(2, 1), requires_grad=True)
+        init.normal(self.parameter, mean=0, std=2.)
+        self.initial_parms = Variable(torch.zeros(self.parameter.data.size()))
+        self.initial_parms.data.copy_(self.parameter.data)
+        self.true_opt = self._get_true_min_f()
+        self.error = torch.zeros(1)
+
+    def _get_true_min_f(self):
+        x_true = np.dot(np.linalg.pinv(self.W.data.numpy()), self.b.data.numpy())
+        return Variable(torch.from_numpy(x_true))
+
+    def f(self, x):
+        if self.use_cuda:
+            x = x.cuda()
+            self.W = self.W.cuda()
+            self.b = self.b.cuda()
+
+        y = torch.sum((x.t().mm(self.W) - self.b.expand_as(x))**2, 1)
+        if y.dim() < 2:
+            return y.unsqueeze(1)
+        else:
+            return y
+
+    def f_at_xt(self, hist=False):
+        y = self.func(self.parameter)
+        if hist:
+            self.value_hist['x1'].append(self.parameter[0].squeeze().cpu().data.clone().numpy()[0])
+            self.value_hist['x2'].append(self.parameter[1].squeeze().cpu().data.clone().numpy()[0])
+            self.value_hist['y'].append(y.squeeze().cpu().data.numpy()[0])
+        return y.squeeze()
+
+    @property
+    def min_value(self):
+        return self.f(self.true_opt).squeeze()
+
+    @property
+    def poly_desc(self):
+        """Creates a string description of a quadratic."""
+        result = "({:.2f}x1 - {:.2f})^2".format(self.W[0].cpu().data.numpy()[0],
+                                                self.W[1].cpu().data.numpy()[0])
+
+        return result
+
+    def plot_func(self, fig_name=None, height=8, width=6, do_save=False, show=False):
+        MAP = config.color_map
+        cm = plt.get_cmap(MAP)
+        steps = (self.x_max - self.x_min) * 25
+        x_range = np.linspace(self.x_min, self.x_max, steps)
+        X, Y = np.meshgrid(x_range, x_range)
+        f_in = Variable(torch.FloatTensor(
+            torch.cat((torch.from_numpy(X.ravel()).float(), torch.from_numpy(Y.ravel()).float()), 1).t()))
+        Z = self.f(f_in)
+        plt.figure(figsize=(height, width))
+        plt.contourf(X, Y, Z.data.cpu().view(steps, steps).numpy(), steps)
+        plt.plot(self.true_opt[0].data.cpu().numpy(), self.true_opt[1].data.cpu().numpy(), 'yo')
+        # plot the gradient steps (lines) in different colors with increased transparency
+        ax = plt.gca()
+        num_points = len(self.value_hist['x1'])
+        ax.set_prop_cycle(cycler('color', [cm(1. * i / (num_points - 1)) for i in range(num_points - 1)]))
+        for i in range(num_points - 1):
+            ax.plot(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2], 'o-')
+            # plt.plot(self.value_hist['x1'], self.value_hist['x2'], 'o-')
+        plt.title(self.poly_desc)
+
+        if do_save:
+            if fig_name is None:
+                fig_name = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                fig_name = os.path.join(config.figure_path, (fig_name + ".png"))
+            plt.savefig(fig_name, bbox_inches='tight')
+            print("INFO - Successfully saved fig %s" % fig_name)
+
+        if show:
+            plt.show()
+
+        plt.close()
+
+    def compute_error(self):
+        self.error = 0.5 * torch.sum((self.true_opt.data - self.parameter.data) ** 2)
+        return self.error
+
+
+
 # q2d = Quadratic2D()
 # print(q2d.poly_desc)
 # print(q2d.parameter[0].data.numpy()[0], q2d.parameter[1].data.numpy()[0], q2d.f_at_xt(hist=True))

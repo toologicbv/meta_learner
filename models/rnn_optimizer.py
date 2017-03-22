@@ -1,5 +1,3 @@
-from functools import reduce
-from operator import mul
 
 import torch
 import torch.nn as nn
@@ -14,14 +12,16 @@ class MetaLearner(nn.Module):
 
     def __init__(self, func, num_inputs=1, num_hidden=20, bias=True, num_layers=2, use_cuda=False):
         super(MetaLearner, self).__init__()
-        self.helper_func = func
+        self.name = "default"
+        self.opt_wrapper = func
         self.hidden_size = num_hidden
         self.use_cuda = use_cuda
-        self.num_params = self.helper_func.helper_q2_func.parameter.data.view(-1).size(0)
+        self.num_params = self.opt_wrapper.optimizee.parameter.data.view(-1).size(0)
 
         self.linear1 = nn.Linear(num_inputs, num_hidden)
         self.ln1 = LayerNorm1D(num_hidden)
-        self.lstms = []
+        self.lstms = nn.ModuleList()
+        # self.lstms = []
         for i in range(num_layers):
             self.lstms.append(LayerNormLSTMCell(num_hidden, num_hidden))
             # self.lstms.append(nn.LSTMCell(num_hidden, num_hidden))
@@ -47,26 +47,9 @@ class MetaLearner(nn.Module):
         for i, cells in enumerate(self.lstms):
             cells.zero_grad()
 
-    def reset_lstm_old(self, func, keep_states=False):
-        # copy the quadratic function "func" to our internal quadratic function we keep in the meta optimizer
-        self.helper_func.reset(func)
-
-        if keep_states:
-            for i in range(len(self.lstms)):
-                self.hx[i] = Variable(self.hx[i].data)
-                self.cx[i] = Variable(self.cx[i].data)
-        else:
-            self.hx = []
-            self.cx = []
-            for i in range(len(self.lstms)):
-                self.hx.append(Variable(torch.zeros(1, self.hidden_size)))
-                self.cx.append(Variable(torch.zeros(1, self.hidden_size)))
-                if self.use_cuda:
-                    self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
-
     def reset_lstm(self, func, keep_states=False):
         # copy the quadratic function "func" to our internal quadratic function we keep in the meta optimizer
-        self.helper_func.reset(func)
+        self.opt_wrapper.reset(func)
         if keep_states:
             for theta in np.arange(self.num_params):
                 for i in range(len(self.lstms)):
@@ -85,6 +68,8 @@ class MetaLearner(nn.Module):
                         self.hx[theta][i], self.cx[theta][i] = self.hx[theta][i].cuda(), self.cx[theta][i].cuda()
 
     def forward(self, x):
+        if self.use_cuda:
+            x = x.cuda()
 
         x_out = []
         for t in np.arange(self.num_params):
@@ -129,39 +114,33 @@ class MetaLearner(nn.Module):
         x_out = self.linear_out(x)
         return x_out.squeeze()
 
-    def meta_update_v1(self, func_with_grads):
+    def meta_update(self, func_with_grads, normal=True):
         """
-        We use the quadratic loss surface - which is a copy of the "outside" loss surface that we're trying to optimize
-        - to (a) compute the new parameters of this loss surface by taking the gradients of the outside loss surface
-        pass them through our LSTM and subtract (gradient descent) the LSTM output from the "inside" loss surface
-        parameters.
-        (b) we copy the new parameter of the "inside" loss surface
-        :param func_with_grads:
-        :return:
+            We use the quadratic loss surface - which is a copy of the "outside" loss surface that we're trying to optimize
+            - to (a) compute the new parameters of this loss surface by taking the gradients of the outside loss surface
+            pass them through our LSTM and subtract (gradient descent) the LSTM output from the "inside" loss surface
+            parameters.
+            (b) we copy the new parameter of the "inside" loss surface
+            :param func_with_grads:
+            :return:
         """
-        parameters = Variable(self.helper_func.helper_q2_func.parameter.data)
+        parameters = Variable(self.opt_wrapper.optimizee.parameter.data)
         grads = Variable(func_with_grads.parameter.grad.data)
-        parameters = parameters + self(grads)
-        # copy updated parameters to our "inside" loss surface model
-        self.helper_func.set_parameters(parameters)
-        # copy new parameters also to "outside" func that deliverd the grads in the first place
-        self.helper_func.copy_params_to(func_with_grads)
-        # return the "inside" loss surface function so we can compute the loss again. This loss will be used
-        # to calculate the gradients of the LSTM parameters (with taking truncated BPTT into account)
-        return self.helper_func.helper_q2_func
+        if self.use_cuda:
+            parameters = parameters.cuda()
 
-    def meta_update_v2(self, func_with_grads):
-
-        parameters = Variable(self.helper_func.helper_q2_func.parameter.data)
-        grads = Variable(func_with_grads.parameter.grad.data)
         parameters = parameters - self(grads)
         # copy updated parameters to our "inside" loss surface model
-        self.helper_func.set_parameters(parameters)
+        self.opt_wrapper.set_parameters(parameters)
         # copy new parameters also to "outside" func that deliverd the grads in the first place
-        self.helper_func.copy_params_to(func_with_grads)
-        loss = torch.sum(self.helper_func.helper_q2_func.func(parameters))
+        self.opt_wrapper.copy_params_to(func_with_grads)
+        if normal:
+            loss = torch.sum(self.opt_wrapper.optimizee.func(parameters))
+        else:
+            loss = 0.5 * torch.sum((self.opt_wrapper.optimizee.true_opt - parameters) ** 2)
 
         return loss
+        # return parameters
 
     def loss_func(self):
         assert self.loss_meta_model.size()[0] == self.q_t.size()[0], "Length of two objects is not the same!"
@@ -182,25 +161,25 @@ class MetaLearner(nn.Module):
         return sum_grads
 
 
-class HelperQuadratic(object):
+class WrapperOptimizee(object):
     """
         this class holds the quadratic function that we want to minimize by means of the meta-optimizer
         we need to reset
     """
     def __init__(self, func):
-        self.helper_q2_func = func
+        self.optimizee = func
 
     def reset(self, q_func):
-        self.helper_q2_func.parameter = Variable(q_func.parameter.data, requires_grad=True)
-        self.helper_q2_func.x_min = q_func.x_min
-        self.helper_q2_func.x_max = q_func.x_max
-        self.helper_q2_func.func = q_func.f
-        self.helper_q2_func.true_opt = q_func.true_opt
+        self.optimizee.parameter = Variable(q_func.parameter.data, requires_grad=True)
+        self.optimizee.x_min = q_func.x_min
+        self.optimizee.x_max = q_func.x_max
+        self.optimizee.func = q_func.f
+        self.optimizee.true_opt = q_func.true_opt
 
     def set_parameters(self, parameters):
-        self.helper_q2_func.parameter.data.copy_(parameters.data)
+        self.optimizee.parameter.data.copy_(parameters.data)
 
     def copy_params_to(self, func):
         # copy parameter from the meta_model function we just updated in meta_update to the
         # function that delivered the gradients...call it the "outside" function
-        func.parameter.data.copy_(self.helper_q2_func.parameter.data)
+        func.parameter.data.copy_(self.optimizee.parameter.data)
