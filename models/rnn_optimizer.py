@@ -114,7 +114,7 @@ class MetaLearner(nn.Module):
         x_out = self.linear_out(x)
         return x_out.squeeze()
 
-    def meta_update(self, func_with_grads, normal=True):
+    def meta_update(self, func_with_grads, loss_type="MSE"):
         """
             We use the quadratic loss surface - which is a copy of the "outside" loss surface that we're trying to optimize
             - to (a) compute the new parameters of this loss surface by taking the gradients of the outside loss surface
@@ -134,10 +134,12 @@ class MetaLearner(nn.Module):
         self.opt_wrapper.set_parameters(parameters)
         # copy new parameters also to "outside" func that deliverd the grads in the first place
         self.opt_wrapper.copy_params_to(func_with_grads)
-        if normal:
+        if loss_type == "EVAL":
             loss = torch.sum(self.opt_wrapper.optimizee.func(parameters))
-        else:
+        elif loss_type == "MSE":
             loss = 0.5 * torch.sum((self.opt_wrapper.optimizee.true_opt - parameters) ** 2)
+        else:
+            raise ValueError("<{}> is not a valid option for loss_type.".format(loss_type))
 
         return loss
         # return parameters

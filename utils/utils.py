@@ -6,9 +6,41 @@ import shutil
 from config import config
 from datetime import datetime
 import argparse
+import logging
 
 from models.rnn_optimizer import MetaLearner, WrapperOptimizee
 from quadratic import Quadratic2D, Quadratic
+from plots import loss_plot, param_error_plot
+
+
+def create_logger(exper):
+    # create logger
+    logger = logging.getLogger('meta learner')
+    logger.setLevel(logging.DEBUG)
+    # create file handler which logs even debug messages
+    fh = logging.FileHandler(os.path.join(exper.output_dir, config.logger_filename))
+    fh.setLevel(logging.INFO)
+    # create console handler with a higher log level
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    # create formatter and add it to the handlers
+    formatter_fh = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter_ch = logging.Formatter('%(levelname)s - %(message)s')
+    fh.setFormatter(formatter_fh)
+    ch.setFormatter(formatter_ch)
+    # add the handlers to the logger
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+    return logger
+
+
+def print_flags(exper_args):
+    """
+    Prints all entries in argument parser.
+    """
+    for key, value in vars(exper_args).items():
+        print(key + ' : ' + str(value))
 
 
 def preprocess_gradients(x):
@@ -38,9 +70,11 @@ def create_def_argparser(**kwargs):
     args.q2D = kwargs['q2D']
     args.model = kwargs['model']
     args.log_dir = kwargs['log_dir']
+    args.use_std_opt = False
     args.num_layers = 2
     args.hidden_size = 20
     args.retrain = kwargs['retrain']
+    args.loss_type = kwargs['loss_type']
 
     return args
 
@@ -71,16 +105,14 @@ def get_model(exper, retrain=False):
                 meta_optimizer.load_state_dict(torch.load(model_file_name))
                 print("INFO - loaded existing model from file {}".format(model_file_name))
                 loaded = True
-            else:
-                meta_optimizer.name = exper.args.model
 
         if not loaded:
             print("Warning - retrain was enabled but model <{}> does not exist. "
                   "Training a new model with this name.".format(exper.args.model))
-            meta_optimizer.name = exper.args.model
+
     else:
         print("INFO - training a new model {}".format(exper.args.model))
-        meta_optimizer.name = exper.args.model
+    meta_optimizer.name = exper.args.model
 
     if exper.args.cuda:
         meta_optimizer.cuda()
@@ -89,10 +121,17 @@ def get_model(exper, retrain=False):
     return meta_optimizer
 
 
-def load_val_data():
-    load_file = os.path.join(config.data_path, config.validation_funcs)
-    with open(load_file, 'rb') as f:
-        val_funcs = dill.load(f)
+def load_val_data(path_specs=None):
+    if path_specs is not None:
+        load_file = path_specs
+    else:
+        load_file = os.path.join(config.data_path, config.validation_funcs)
+    try:
+        with open(load_file, 'rb') as f:
+            val_funcs = dill.load(f)
+        print("INFO - validation set loaded from {}".format(load_file))
+    except:
+        raise IOError("Can't open file {}".format(load_file))
 
     return val_funcs
 
@@ -138,7 +177,7 @@ def prepare(prcs_args):
 
 
 def end_run(experiment, model, func_list):
-    if model.name is not None:
+    if not experiment.args.use_std_opt and model.name is not None:
         model_path = os.path.join(experiment.output_dir, model.name + config.save_ext)
         torch.save(model.state_dict(), model_path)
         experiment.model_path = model_path
@@ -147,6 +186,9 @@ def end_run(experiment, model, func_list):
         diff_func_file = os.path.join(experiment.output_dir, "diff_funcs.dll")
         with open(diff_func_file, 'wb') as f:
             dill.dump(func_list, f)
-        print("INFO - Successfully saved selection of difficult functions to {}".format(diff_func_file))
+        print("INFO - Successfully saved selection of <{}> difficult functions to {}".format(len(diff_func_file),
+                                                                                             diff_func_file))
     if experiment.args.save_log:
         save_exper(experiment)
+        loss_plot(experiment, save=True)
+        param_error_plot(experiment, save=True)

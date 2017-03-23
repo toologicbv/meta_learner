@@ -103,8 +103,10 @@ class Quadratic2D(object):
         init.normal(self.W)
         self.W.data.abs_()
 
-        while np.any(self.W.data.numpy()) == 0 or not (x_min < self.W[0].data.numpy()[0] < x_max) or \
-                not (x_min < self.W[1].data.numpy()[0] < x_max):
+        while torch.sum(torch.eq(self.W, 0)).data.numpy()[0] != 0 or \
+                not (x_min < self.W[0].data.numpy()[0] < x_max) or \
+                not (x_min < self.W[1].data.numpy()[0] < x_max) or \
+                torch.sum(torch.le(self.W, 0.1)).data.numpy()[0] != 0:
             init.normal(self.W)
             self.W.data.abs_()
 
@@ -113,10 +115,14 @@ class Quadratic2D(object):
         self.func = self.f
         self.value_hist = {'x1': [], 'x2': [], 'y': []}
         self.parameter = Variable(self._sample_x0(), requires_grad=True)
-        self.initial_parms = Variable(torch.zeros(self.parameter.data.size()))
-        self.initial_parms.data.copy_(self.parameter.data)
+        self.initial_parms = self.parameter.clone()
         self.true_opt = self._get_true_min_f()
         self.error = torch.zeros(1)
+
+    def reset(self):
+        self.value_hist = {'x1': [], 'x2': [], 'y': []}
+        reset_params = self.initial_parms.data.clone()
+        self.parameter = Variable(reset_params, requires_grad=True)
 
     def _get_true_min_f(self):
         return Variable(torch.cat((self.W[0].data, self.W[1].data), 0).unsqueeze(1),
