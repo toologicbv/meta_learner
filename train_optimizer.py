@@ -23,6 +23,7 @@ STD_OPT_LR = 4e-1
 META_LR = 1e-3
 VALID_VERBOSE = False
 VALID_PLOT = False
+
 # DEBUG, INFO, WARNING, ERROR, CRITICAL
 # logging.basicConfig()
 # rootLogger = logging.getLogger(__name__)
@@ -30,8 +31,6 @@ VALID_PLOT = False
 
 parser = argparse.ArgumentParser(description='PyTorch Meta-learner')
 
-parser.add_argument('--batch_size', type=int, default=32, metavar='N',
-                    help='batch size (default: 32)')
 parser.add_argument('--optimizer_steps', type=int, default=80, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
@@ -62,8 +61,8 @@ parser.add_argument('--retrain', action='store_true', default=False,
                     help='retrain an existing model (note should exist in <models> or specific log_dir (.pkl)')
 parser.add_argument('--loss_type', type=str, default="MSE",
                     help='Loss of optimizer: 1) MSE 2) EVAL')
-parser.add_argument('--use_std_opt', action='store_true', default=False,
-                    help='use standard optimizer (NOT META)')
+parser.add_argument('--learner', type=str, default="act",
+                    help='type of learner to use 1) manual (e.g. Adam) 2) meta 3) act')
 
 args = parser.parse_args()
 args.cuda = args.use_cuda and torch.cuda.is_available()
@@ -71,11 +70,6 @@ args.cuda = False
 args.q2D = True
 args.save_log = True
 args.save_diff_funcs = True
-
-"""
-    make sure that the total number of optimizer steps is a multiple of the BPTT steps
-"""
-# assert args.optimizer_steps % args.truncated_bptt_step == 0
 
 
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, verbose=True, plot_func=False,
@@ -87,7 +81,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
         meta_logger.debug("create global")
         STD_OPT_LR = 4e-1
 
-    print("-----------------------------------------------------------")
+    meta_logger.info("-----------------------------------------------------------")
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
         val_set = [Quadratic2D(use_cuda=args.cuda)]
@@ -115,7 +109,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
                 meta_logger.info("\tStart-value parameter {}, true min {}".format(q_func.parameter.squeeze().data[0],
                                                           q_func.true_opt.squeeze().data[0]))
 
-        if exper.args.use_std_opt:
+        if exper.args.learner == 'manual':
             state_dict = meta_learner.state_dict()
             meta_learner = optim.Adam([q_func.parameter], lr=STD_OPT_LR)
             meta_learner.load_state_dict(state_dict)
@@ -126,17 +120,21 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
                 keep_states = True
             else:
                 keep_states = False
-            if i % args.truncated_bptt_step == 0 and not exper.args.use_std_opt:
+            if i % args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
                 meta_learner.reset_lstm(q_func, keep_states=keep_states)
 
             loss = q_func.f_at_xt(hist=True)
-            if verbose and not exper.args.use_std_opt and i % 2 == 0 and f in plot_idx:
+            if verbose and not exper.args.learner == 'manual' and i % 2 == 0 and f in plot_idx:
                 meta_logger.info("\tCurrent loss {:.4f}".format(loss.squeeze().data[0]))
             loss.backward()
-            if not exper.args.use_std_opt:
+            if not exper.args.learner == 'manual':
                 delta_p = meta_learner.forward(q_func.parameter.grad)
-                # gradient descent
-                par_new = q_func.parameter.data - delta_p.data
+                if exper.args.learner == 'meta':
+                    # gradient descent
+                    par_new = q_func.parameter.data - delta_p.data
+                elif exper.args.learner == 'act':
+                    # in this case forward returns a tuple (parm_delta, qt)
+                    par_new = q_func.parameter.data - delta_p[0].data
                 q_func.parameter.data.copy_(par_new)
             else:
                 meta_learner.step()
@@ -168,8 +166,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
     exper.val_stats["loss"].append(total_loss[0])
     exper.val_stats["param_error"].append(total_param_loss)
     meta_logger.info("INFO - Epoch {}: Final validation average loss / param-loss: {:.4}/{:.4}".format(exper.epoch,
-                                                                                            total_loss[0],
-                                                                                            total_param_loss))
+                                                                                                       total_loss[0],
+                                                                                                       total_param_loss))
 
 
 def main():
@@ -184,7 +182,7 @@ def main():
 
     # list that stores functions with high residual error during training
     diff_func_list = []
-    if not args.use_std_opt:
+    if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
         meta_optimizer = get_model(exper, retrain=args.retrain)
         optimizer = optim.Adam(meta_optimizer.parameters(), lr=META_LR)
@@ -206,7 +204,7 @@ def main():
             else:
                 q2_func = Quadratic(use_cuda=args.cuda)
             # if we're using a standard optimizer
-            if args.use_std_opt:
+            if args.learner == 'manual':
                 meta_optimizer = optim.Adam([q2_func.parameter], lr=STD_OPT_LR)
 
             # counter that we keep in order to enable BPTT
@@ -217,7 +215,7 @@ def main():
                     keep_states = True
                 else:
                     keep_states = False
-                if k % args.truncated_bptt_step == 0 and not args.use_std_opt:
+                if k % args.truncated_bptt_step == 0 and not args.learner == 'manual':
                     meta_logger.debug("DEBUG@step %d - Resetting LSTM" % k)
                     forward_steps = 1
                     meta_optimizer.reset_lstm(q2_func, keep_states=keep_states)
@@ -232,29 +230,31 @@ def main():
                 # new_params = meta_optimizer.meta_update(q2_func)
                 # loss_meta = torch.sum(meta_optimizer.opt_wrapper.optimizee.func(new_params))
                 # set grads of loss-func to zero
-                if not args.use_std_opt:
+                if args.learner == 'meta' or args.learner == 'act':
                     loss_meta = meta_optimizer.meta_update(q2_func, loss_type=args.loss_type)
                     loss_sum = loss_sum + loss_meta
+
                 else:
                     # we're just using one of the pre-delivered optimizers, update function parameters
                     meta_optimizer.step()
+
                 q2_func.parameter.grad.data.zero_()
 
                 if (forward_steps == args.truncated_bptt_step or k == args.optimizer_steps - 1) \
-                        and not args.use_std_opt:
+                        and not args.learner == 'manual':
                     meta_logger.debug("DEBUG@step %d(%d) - Backprop for LSTM" % (k+1, forward_steps))
-                    # set grads of meta_optimizer to zero after update parameters
-                    meta_optimizer.zero_grad()
                     # average the loss over the optimization steps, PEP complains about not using in-place multi
                     # but pytorch autograd can't handle this (according to documentation)
                     loss_sum *= 1./args.truncated_bptt_step
                     loss_sum.backward()
                     # finally update meta_learner parameters
                     optimizer.step()
+                    # set grads of meta_optimizer to zero after update parameters
+                    meta_optimizer.zero_grad()
 
             # compute the final loss error for this function between last loss calculated and function min-value
             error = torch.abs(loss.data - q2_func.min_value.data)
-            if not exper.args.use_std_opt and error[0] > 20. and epoch != 0 and len(diff_func_list) < MAX_VAL_FUNCS:
+            if not exper.args.learner == 'manual' and error[0] > 20. and epoch != 0 and len(diff_func_list) < MAX_VAL_FUNCS:
                 # add this function to the list of "difficult" functions. can be used later for analysis
                 # and will be saved in log directory as "dill" dump
                 diff_func_list.append(q2_func)
@@ -264,15 +264,26 @@ def main():
                 meta_logger.info("{}-th function: loss {:.4f}".format(i, error[0]))
                 meta_logger.info(q2_func.poly_desc)
                 if args.q2D:
-                    meta_logger.info("Initial parameter values ({:.2f},{:.2f})".format(q2_func.initial_parms[0].data.numpy()[0],
-                                                                            q2_func.initial_parms[1].data.numpy()[0]))
-                    meta_logger.info("True parameter values ({:.2f},{:.2f})".format(q2_func.true_opt[0].data.numpy()[0],
-                                                                         q2_func.true_opt[1].data.numpy()[0]))
-                    meta_logger.info("Final parameter values ({:.2f},{:.2f})".format(q2_func.parameter[0].data.numpy()[0],
-                                                                          q2_func.parameter[1].data.numpy()[0]))
+                    meta_logger.info("Initial parameter values ({:.2f},{:.2f})".format(
+                        q2_func.initial_parms[0].data.numpy()[0],
+                        q2_func.initial_parms[1].data.numpy()[0]))
+                    meta_logger.info("True parameter values ({:.2f},{:.2f})".format(
+                        q2_func.true_opt[0].data.numpy()[0],
+                        q2_func.true_opt[1].data.numpy()[0]))
+                    meta_logger.info("Final parameter values ({:.2f},{:.2f})".format(
+                        q2_func.parameter[0].data.numpy()[0],
+                        q2_func.parameter[1].data.numpy()[0]))
                 else:
                     meta_logger.info("Final parameter values {:.2f}".format(q2_func.parameter.data.numpy()[0]))
-
+            # END OF SPECIFIC FUNCTION OPTIMIZATION
+            if args.learner == 'act':
+                meta_logger.debug("**************************** act loss backward **********************************")
+                act_loss = meta_optimizer.final_loss()
+                act_loss.backward()
+                optimizer.step()
+                # set grads of meta_optimizer to zero after update parameters
+                meta_optimizer.zero_grad()
+                meta_optimizer.reset_final_loss()
             # As evaluation measure we take the final error of the function we minimize (which is our loss) minus the
             # actual min-value of the function (so how far away are we from the actual minimum).
             # We sum this error measure for all functions (default 100) inside one epoch
@@ -288,7 +299,7 @@ def main():
         exper.epoch_stats["param_error"].append(param_loss)
         if epoch % args.eval_freq == 0 or epoch + 1 == args.max_epoch:
             # pass
-            if not args.use_std_opt:
+            if args.learner == 'manual':
                 opt_steps = 6
             else:
                 opt_steps = args.optimizer_steps
