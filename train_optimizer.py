@@ -1,15 +1,17 @@
 import argparse
 import time
-import logging
+import numpy as np
 import os
 
 import torch
 import torch.optim as optim
+from torch.autograd import Variable
 from utils.quadratic import Quadratic, Quadratic2D
 
 from utils.config import config
 from utils.utils import load_val_data, Experiment, prepare, end_run, get_model, print_flags
-from utils.utils import create_logger
+from utils.utils import create_logger, softmax
+from utils.probs import TimeStepsDist, ConditionalTimeStepDist
 
 """
     TODO:
@@ -21,8 +23,8 @@ from utils.utils import create_logger
 MAX_VAL_FUNCS = 100
 STD_OPT_LR = 4e-1
 META_LR = 1e-3
-VALID_VERBOSE = False
-VALID_PLOT = False
+VALID_VERBOSE = True
+PLOT_VALIDATION_FUNCS = True
 
 # DEBUG, INFO, WARNING, ERROR, CRITICAL
 # logging.basicConfig()
@@ -114,6 +116,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
             meta_learner = optim.Adam([q_func.parameter], lr=STD_OPT_LR)
             meta_learner.load_state_dict(state_dict)
 
+        qt_weights = []
         for i in range(steps):
             # Keep states for truncated BPTT
             if i > args.truncated_bptt_step - 1:
@@ -135,6 +138,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
                 elif exper.args.learner == 'act':
                     # in this case forward returns a tuple (parm_delta, qt)
                     par_new = q_func.parameter.data - delta_p[0].data
+                    qt_weights.append(delta_p[1].data.squeeze().numpy()[0])
                 q_func.parameter.data.copy_(par_new)
             else:
                 meta_learner.step()
@@ -154,6 +158,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, steps=6, 
                                                                      q_func.true_opt[1].data.numpy()[0]))
                 meta_logger.info("\tFinal parameter values ({:.2f},{:.2f})".format(q_func.parameter[0].data.numpy()[0],
                                                                       q_func.parameter[1].data.numpy()[0]))
+                if args.learner == 'act':
+                    meta_logger.info("Final qt-probabilities")
+                    meta_logger.info("{}".format(np.array_str(softmax(np.array(qt_weights)))))
         else:
             if verbose and f in plot_idx:
                 meta_logger.info("\tFinal parameter values {:.2f}".format(q_func.parameter.data.numpy()[0]))
@@ -179,6 +186,9 @@ def main():
     exper.output_dir = prepare(prcs_args=args)
     meta_logger = create_logger(exper)
     val_funcs = load_val_data()
+    # get distribution P(T) over possible number of total timesteps
+    pt_dist = TimeStepsDist(config.T, config.continue_prob)
+    exper.avg_num_opt_steps = pt_dist.mean
 
     # list that stores functions with high residual error during training
     diff_func_list = []
@@ -195,6 +205,7 @@ def main():
         exper.epoch += 1
         start_epoch = time.time()
         final_loss = 0.0
+        final_act_loss = 0.
         param_loss = 0.
         # loop over functions we are going to optimize
         for i in range(args.functions_per_epoch):
@@ -209,7 +220,17 @@ def main():
 
             # counter that we keep in order to enable BPTT
             forward_steps = 0
-            for k in range(args.optimizer_steps):
+            if args.learner != 'act':
+                optimizer_steps = args.optimizer_steps
+            else:
+                # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
+                # add one to choice because we actually want values between [1, config.T]
+                optimizer_steps = pt_dist.rvs(n=1) + 1
+                prior_dist = ConditionalTimeStepDist(optimizer_steps)
+                prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps + 1))).float())
+            meta_logger.debug("Number of optimization steps {}".format(optimizer_steps))
+
+            for k in range(optimizer_steps):
                 # Keep states for truncated BPTT
                 if k > args.truncated_bptt_step - 1:
                     keep_states = True
@@ -240,7 +261,7 @@ def main():
 
                 q2_func.parameter.grad.data.zero_()
 
-                if (forward_steps == args.truncated_bptt_step or k == args.optimizer_steps - 1) \
+                if (forward_steps == args.truncated_bptt_step or k == optimizer_steps - 1) \
                         and not args.learner == 'manual':
                     meta_logger.debug("DEBUG@step %d(%d) - Backprop for LSTM" % (k+1, forward_steps))
                     # average the loss over the optimization steps, PEP complains about not using in-place multi
@@ -258,10 +279,23 @@ def main():
                 # add this function to the list of "difficult" functions. can be used later for analysis
                 # and will be saved in log directory as "dill" dump
                 diff_func_list.append(q2_func)
+            # back-propagate ACT loss that was accumulated during optimization steps
+            if args.learner == 'act':
+                meta_logger.debug("**************************** act loss backward **********************************")
+                act_loss = meta_optimizer.final_loss(prior_probs)
+                act_loss.backward()
+                optimizer.step()
+                final_act_loss += act_loss.data
+                # set grads of meta_optimizer to zero after update parameters
+                meta_optimizer.zero_grad()
+                meta_optimizer.reset_final_loss()
+                # increase counter for this "number of optimization steps". we use this later to evaluate the
+                # meta optimizer
+                meta_optimizer.opt_step_hist[optimizer_steps] += 1
             if i % 20 == 0 and i != 0:
 
                 meta_logger.info("INFO-track -----------------------------------------------------")
-                meta_logger.info("{}-th function: loss {:.4f}".format(i, error[0]))
+                meta_logger.info("{}-th function (op-steps {}): loss {:.4f}".format(i, optimizer_steps, error[0]))
                 meta_logger.info(q2_func.poly_desc)
                 if args.q2D:
                     meta_logger.info("Initial parameter values ({:.2f},{:.2f})".format(
@@ -273,17 +307,13 @@ def main():
                     meta_logger.info("Final parameter values ({:.2f},{:.2f})".format(
                         q2_func.parameter[0].data.numpy()[0],
                         q2_func.parameter[1].data.numpy()[0]))
+                    if args.learner == 'act':
+                        meta_logger.debug("Final qt-probabilities")
+                        meta_logger.debug("{}".format(np.array_str(meta_optimizer.q_soft.data.squeeze().numpy())))
                 else:
                     meta_logger.info("Final parameter values {:.2f}".format(q2_func.parameter.data.numpy()[0]))
             # END OF SPECIFIC FUNCTION OPTIMIZATION
-            if args.learner == 'act':
-                meta_logger.debug("**************************** act loss backward **********************************")
-                act_loss = meta_optimizer.final_loss()
-                act_loss.backward()
-                optimizer.step()
-                # set grads of meta_optimizer to zero after update parameters
-                meta_optimizer.zero_grad()
-                meta_optimizer.reset_final_loss()
+
             # As evaluation measure we take the final error of the function we minimize (which is our loss) minus the
             # actual min-value of the function (so how far away are we from the actual minimum).
             # We sum this error measure for all functions (default 100) inside one epoch
@@ -292,22 +322,31 @@ def main():
         # end of an epoch, calculate average final loss/error and print summary
         final_loss *= 1./args.functions_per_epoch
         param_loss *= 1./args.functions_per_epoch
+        final_act_loss *= 1./args.functions_per_epoch
         end_epoch = time.time()
         meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: average final loss {:.4f} / param-loss {:.4f}".format(
               epoch+1, (end_epoch - start_epoch), final_loss[0], param_loss))
+        if args.learner == 'act':
+            meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
+
         exper.epoch_stats["loss"].append(final_loss[0])
         exper.epoch_stats["param_error"].append(param_loss)
+        exper.epoch_stats["act_loss"].append(final_act_loss[0])
         if epoch % args.eval_freq == 0 or epoch + 1 == args.max_epoch:
             # pass
             if args.learner == 'manual':
-                opt_steps = 6
-            else:
+                # the manual (e.g. SGD, Adam will be validated using full number of optimization steps
                 opt_steps = args.optimizer_steps
+            else:
+                opt_steps = 6
 
             validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=meta_logger,
                                verbose=VALID_VERBOSE,
-                               plot_func=VALID_PLOT,
+                               plot_func=PLOT_VALIDATION_FUNCS,
                                steps=opt_steps, num_of_plots=3)
+    if args.learner == 'act':
+        exper.opt_step_hist = meta_optimizer.opt_step_hist
+        exper.epoch_stats['qt_hist'] = meta_optimizer.qt_hist
 
     end_run(exper, meta_optimizer, diff_func_list)
 

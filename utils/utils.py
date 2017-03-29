@@ -7,10 +7,11 @@ from config import config
 from datetime import datetime
 import argparse
 import logging
+import numpy as np
 
-from models.rnn_optimizer import MetaLearner, WrapperOptimizee
+from models.rnn_optimizer import MetaLearner, WrapperOptimizee, AdaptiveMetaLearnerV1
 from quadratic import Quadratic2D, Quadratic
-from plots import loss_plot, param_error_plot
+from plots import loss_plot, param_error_plot, plot_histogram
 
 
 def create_logger(exper):
@@ -19,7 +20,8 @@ def create_logger(exper):
     logger.setLevel(logging.DEBUG)
     # create file handler which logs even debug messages
     fh = logging.FileHandler(os.path.join(exper.output_dir, config.logger_filename))
-    fh.setLevel(logging.INFO)
+    # fh.setLevel(logging.INFO)
+    fh.setLevel(logging.DEBUG)
     # create console handler with a higher log level
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
@@ -41,6 +43,12 @@ def print_flags(exper_args):
     """
     for key, value in vars(exper_args).items():
         print(key + ' : ' + str(value))
+
+
+def softmax(x):
+    """Compute softmax values for each sets of scores in x."""
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
 
 
 def preprocess_gradients(x):
@@ -70,7 +78,7 @@ def create_def_argparser(**kwargs):
     args.q2D = kwargs['q2D']
     args.model = kwargs['model']
     args.log_dir = kwargs['log_dir']
-    args.use_std_opt = False
+    args.learner = kwargs['learner']
     args.num_layers = 2
     args.hidden_size = 20
     args.retrain = kwargs['retrain']
@@ -85,9 +93,14 @@ def get_model(exper, retrain=False):
         q2_func = Quadratic2D(use_cuda=exper.args.cuda)
     else:
         q2_func = Quadratic(use_cuda=exper.args.cuda)
-    meta_optimizer = MetaLearner(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
-                                 num_hidden=exper.args.hidden_size,
-                                 use_cuda=exper.args.cuda)
+    if exper.args.learner == "act":
+        meta_optimizer = AdaptiveMetaLearnerV1(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
+                                             num_hidden=exper.args.hidden_size,
+                                             use_cuda=exper.args.cuda)
+    else:
+        meta_optimizer = MetaLearner(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
+                                     num_hidden=exper.args.hidden_size,
+                                     use_cuda=exper.args.cuda)
     if retrain:
         loaded = False
         if exper.model_path is not None:
@@ -140,11 +153,13 @@ class Experiment(object):
 
     def __init__(self, run_args):
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": []}
-        self.val_stats = {"loss": [], "param_error": []}
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": []}
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
+        self.opt_step_hist = None
+        self.avg_num_opt_steps = 0
 
 
 def save_exper(exper):
@@ -177,7 +192,7 @@ def prepare(prcs_args):
 
 
 def end_run(experiment, model, func_list):
-    if not experiment.args.use_std_opt and model.name is not None:
+    if not experiment.args.learner == 'manual' and model.name is not None:
         model_path = os.path.join(experiment.output_dir, model.name + config.save_ext)
         torch.save(model.state_dict(), model_path)
         experiment.model_path = model_path
@@ -190,5 +205,9 @@ def end_run(experiment, model, func_list):
                                                                                              diff_func_file))
     if experiment.args.save_log:
         save_exper(experiment)
-        loss_plot(experiment, save=True)
+        loss_plot(experiment, loss_type="normal", save=True)
+        if experiment.args.learner == "act":
+            loss_plot(experiment, loss_type="act", save=True)
+            # plot histogram of T distribution (number of optimization steps during training)
+            plot_histogram(experiment, save=True)
         param_error_plot(experiment, save=True)

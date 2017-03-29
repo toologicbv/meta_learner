@@ -4,8 +4,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+from collections import OrderedDict
+
 from layer_norm_lstm import LayerNormLSTMCell
 from layer_norm import LayerNorm1D
+from utils.config import config
+
+
+def kl_divergence(q_probs, prior_probs, do_average=True):
+    """
+    Kullback-Leibler divergence loss
+
+    :param q_probs: the approximated posterior probability q(t|T)
+    :param prior_probs: the prior probability p(t|T)
+    :return: KL divergence loss
+    """
+
+    kl_div = torch.sum(q_probs * (torch.log(q_probs) - torch.log(prior_probs)))
+
+    if kl_div.data.squeeze().numpy()[0] < 0:
+        print("************* Negative KL-divergence *****************")
+        print("sum(q_probs {:.2f}".format(torch.sum(q_probs.data.squeeze())))
+        print("sum(prior_probs {:.2f}".format(torch.sum(prior_probs.data.squeeze())))
+        raise ValueError("KL divergence can't be less than zero {:.3.f}".format(kl_div.data.squeeze().numpy()[0]))
+    if do_average:
+        n = Variable(torch.FloatTensor([q_probs.size(0)]))
+        return 1/n * kl_div
+    else:
+        return kl_div
 
 
 class MetaLearner(nn.Module):
@@ -147,16 +173,20 @@ class WrapperOptimizee(object):
         func.parameter.data.copy_(self.optimizee.parameter.data)
 
 
-class AdaptiveMetaLearner(MetaLearner):
+class AdaptiveMetaLearnerV1(MetaLearner):
 
     def __init__(self, func, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False):
-        super(AdaptiveMetaLearner, self).__init__(func, num_inputs, num_hidden, num_layers, use_cuda)
+        super(AdaptiveMetaLearnerV1, self).__init__(func, num_inputs, num_hidden, num_layers, use_cuda)
         self.linear_grads = nn.Linear(self.num_params, 1)
         # holds losses from each optimizer step
         self.losses = []
         self.q_t = []
         # number of parameters extend by one for the WEIGHT factor per timestep
         self.num_params = self.opt_wrapper.optimizee.parameter.data.view(-1).size(0) + 1
+        # is used to compute the mean weights/probs over one epoch
+        self.qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
+        self.q_soft = None
+        self.opt_step_hist = np.zeros(config.T+1)
 
     def forward(self, x):
         # extend the input by one, to start with we take the mean of the incoming gradients
@@ -181,7 +211,8 @@ class AdaptiveMetaLearner(MetaLearner):
             if t != self.num_params - 1:
                 x_out.append(x_t)
             else:
-                qt = x_t
+                # squash the output for the weight into a Sigmoid
+                qt = F.sigmoid(x_t)
 
         x_out = torch.cat(x_out)
 
@@ -221,13 +252,25 @@ class AdaptiveMetaLearner(MetaLearner):
 
         return loss
 
-    def final_loss(self):
+    def final_loss(self, prior_probs):
         assert len(self.losses) == len(self.q_t), "Length of two objects is not the same!"
+        steps = prior_probs.size(0)
         losses = torch.cat(self.losses, 0)
-        q_t = torch.cat(self.q_t, 0)
-        q_soft = F.softmax(q_t)
+        # concatenate all qt factors and calculate probabilities, NOTE, q_t tensor has size (1, opt-steps)
+        # and therefore we compute softmax over dimension 1
+        q_t = torch.cat(self.q_t, 1)
+        self.q_soft = F.softmax(q_t)
+        # Note, because we are computing the KL-divergence as "sum q(t|T) * (log q(t|T) - log p(t|T))"
+        # we are adding the KL divergence to the loss and not subtracting it.
+        loss = torch.mean(self.q_soft * losses) + kl_divergence(self.q_soft, prior_probs, do_average=True)
+        # loss1 = torch.mean(self.q_soft * losses)
+        # loss2 = kl_divergence(self.q_soft, prior_probs, do_average=True)
+        # print("loss+kl {:.4f} + {:.4f}".format(loss1.data.squeeze().numpy()[0],
+        #                                       loss2.data.squeeze().numpy()[0]))
+        # aggregate the probs so we can compute some average later...for debugging purposes
+        self.qt_hist[steps] += self.q_soft.data.squeeze().numpy()
 
-        return torch.mean(q_soft * losses)
+        return loss
 
     def reset_final_loss(self):
         self.losses = []
