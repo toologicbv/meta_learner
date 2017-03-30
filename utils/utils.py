@@ -9,46 +9,54 @@ import argparse
 import logging
 import numpy as np
 
-from models.rnn_optimizer import MetaLearner, WrapperOptimizee, AdaptiveMetaLearnerV1
+import models.rnn_optimizer
+from models.rnn_optimizer import MetaLearner, WrapperOptimizee
 from quadratic import Quadratic2D, Quadratic
-from plots import loss_plot, param_error_plot, plot_histogram
+from plots import loss_plot, param_error_plot, plot_histogram, plot_qt_probs, create_exper_label
 
 
-def create_logger(exper):
+def create_logger(exper, file_handler=False):
     # create logger
     logger = logging.getLogger('meta learner')
     logger.setLevel(logging.DEBUG)
     # create file handler which logs even debug messages
-    fh = logging.FileHandler(os.path.join(exper.output_dir, config.logger_filename))
-    # fh.setLevel(logging.INFO)
-    fh.setLevel(logging.DEBUG)
+    if file_handler:
+        fh = logging.FileHandler(os.path.join(exper.output_dir, config.logger_filename))
+        # fh.setLevel(logging.INFO)
+        fh.setLevel(logging.DEBUG)
+        formatter_fh = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        fh.setFormatter(formatter_fh)
+        logger.addHandler(fh)
     # create console handler with a higher log level
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     # create formatter and add it to the handlers
-    formatter_fh = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
     formatter_ch = logging.Formatter('%(levelname)s - %(message)s')
-    fh.setFormatter(formatter_fh)
     ch.setFormatter(formatter_ch)
     # add the handlers to the logger
-    logger.addHandler(fh)
     logger.addHandler(ch)
 
     return logger
 
 
-def print_flags(exper_args):
+def print_flags(exper_args, logger):
     """
     Prints all entries in argument parser.
     """
     for key, value in vars(exper_args).items():
-        print(key + ' : ' + str(value))
+        logger.info(key + ' : ' + str(value))
 
 
 def softmax(x):
     """Compute softmax values for each sets of scores in x."""
     e_x = np.exp(x - np.max(x))
     return e_x / e_x.sum()
+
+
+def act_continue(q_logits):
+    q_probs = softmax(q_logits)
+    return False
 
 
 def preprocess_gradients(x):
@@ -94,9 +102,10 @@ def get_model(exper, retrain=False):
     else:
         q2_func = Quadratic(use_cuda=exper.args.cuda)
     if exper.args.learner == "act":
-        meta_optimizer = AdaptiveMetaLearnerV1(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
-                                             num_hidden=exper.args.hidden_size,
-                                             use_cuda=exper.args.cuda)
+        act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version)
+        meta_optimizer = act_class(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
+                                               num_hidden=exper.args.hidden_size,
+                                               use_cuda=exper.args.cuda)
     else:
         meta_optimizer = MetaLearner(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
@@ -153,8 +162,8 @@ class Experiment(object):
 
     def __init__(self, run_args):
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": []}
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": []}
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -171,12 +180,13 @@ def save_exper(exper):
     print("INFO - Successfully saved experimental details to {}".format(outfile))
 
 
-def prepare(prcs_args):
+def prepare(prcs_args, exper):
 
     if prcs_args.log_dir == 'default':
         prcs_args.log_dir = config.exper_prefix + str.replace(datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-7],
-                                                              ' ', '_')
+                                                              ' ', '_') + "_" + create_exper_label(exper)
         prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
+
     else:
         prcs_args.log_dir = str.replace(prcs_args.log_dir, ' ', '_')
         prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
@@ -210,4 +220,5 @@ def end_run(experiment, model, func_list):
             loss_plot(experiment, loss_type="act", save=True)
             # plot histogram of T distribution (number of optimization steps during training)
             plot_histogram(experiment, save=True)
+            plot_qt_probs(experiment, save=True)
         param_error_plot(experiment, save=True)

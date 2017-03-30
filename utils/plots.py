@@ -3,6 +3,15 @@ import matplotlib.pyplot as plt
 
 import os
 import numpy as np
+from collections import OrderedDict
+
+
+def create_exper_label(exper):
+
+    label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
+        str(int(exper.avg_num_opt_steps)) + "ops_" + exper.args.loss_type
+
+    return label1
 
 
 def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=False, show=False):
@@ -33,20 +42,25 @@ def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=
     x_vals = range(1, exper.epoch+1, 1)
     plt.plot(x_vals, train_loss, 'r', label="train-loss")
 
-    if not exper.args.learner == "act":
-        if len(x_vals) <= 10:
-            plt.xticks(x_vals)
-        x_vals = [i for i in range(exper.epoch+1) if i % exper.args.eval_freq == 0]
-        if exper.args.eval_freq == 1:
-            x_vals = x_vals[1:]
-        else:
-            x_vals[0] = 1
-            if x_vals[-1] != exper.epoch - 1:
-                x_vals.append(exper.epoch)
-            else:
+    if len(x_vals) <= 10:
+        plt.xticks(x_vals)
+    x_vals = [i for i in range(exper.epoch+1) if i % exper.args.eval_freq == 0]
+    if exper.args.eval_freq == 1:
+        x_vals = x_vals[1:]
+    elif exper.args.eval_freq == exper.epoch:
+        # eval frequency and total number of epochs are the same, therefore
+        # two evaluation moments 1 and exper.epoch
+        x_vals = [1, exper.epoch]
+    else:
+        x_vals[0] = 1
+        if len(x_vals) == len(val_loss):
+            if x_vals[-1] != exper.epoch:
                 x_vals[-1] = exper.epoch
+        else:
+            if x_vals[-1] != exper.epoch:
+                x_vals.append(exper.epoch)
 
-        plt.plot(x_vals, val_loss, 'b', label="valid-loss")
+    plt.plot(x_vals, val_loss, 'b', label="valid-loss")
     plt.legend(loc="best")
     plt.title("Train/validation loss {}-epochs/{}-opt-steps/{}-loss-func".format(exper.epoch,
                                                                                  num_opt_steps,
@@ -68,19 +82,25 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
     x_vals = range(1, exper.epoch+1, 1)
     plt.plot(x_vals, exper.epoch_stats['param_error'], 'r', label="train-loss")
 
-    if not exper.args.learner == "act":
-        if len(x_vals) <= 10:
-            plt.xticks(x_vals)
-        x_vals = [i for i in range(exper.epoch + 1) if i % exper.args.eval_freq == 0]
-        if exper.args.eval_freq == 1:
-            x_vals = x_vals[1:]
-        else:
-            x_vals[0] = 1
-            if x_vals[-1] != exper.epoch - 1:
-                x_vals.append(exper.epoch)
-            else:
+    if len(x_vals) <= 10:
+        plt.xticks(x_vals)
+    x_vals = [i for i in range(exper.epoch + 1) if i % exper.args.eval_freq == 0]
+    if exper.args.eval_freq == 1:
+        x_vals = x_vals[1:]
+    elif exper.args.eval_freq == exper.epoch:
+        # eval frequency and total number of epochs are the same, therefore
+        # two evaluation moments 1 and exper.epoch
+        x_vals = [1, exper.epoch]
+    else:
+        x_vals[0] = 1
+        if len(x_vals) == len(exper.val_stats['param_error']):
+            if x_vals[-1] != exper.epoch:
                 x_vals[-1] = exper.epoch
-        plt.plot(x_vals, exper.val_stats['param_error'], 'b', label="valid-loss")
+        else:
+            if x_vals[-1] != exper.epoch:
+                x_vals.append(exper.epoch)
+
+    plt.plot(x_vals, exper.val_stats['param_error'], 'b', label="valid-loss")
     plt.legend(loc="best")
     plt.title("Train/validation param-error {}-epochs/{}-opt-steps/{}-loss-func".format(exper.epoch,
                                                                                  exper.avg_num_opt_steps,
@@ -100,19 +120,71 @@ def plot_histogram(exper, fig_name=None, height=8, width=6, save=False, show=Fal
     bar_width = 0.5
     # because we shift the distribution by 1 to start with t=1 until config.T we also need to increase the
     # indices here
-    index = np.arange(1, len(exper.opt_step_hist) + 1)
-    norms = 1. / np.sum(exper.opt_step_hist) * exper.opt_step_hist
+    index = range(1, len(exper.epoch_stats["opt_step_hist"]) + 1)
+    norms = 1. / np.sum(exper.epoch_stats["opt_step_hist"]) * exper.epoch_stats["opt_step_hist"]
     o_mean = int(round(np.sum(index * norms)))
     plt.figure(figsize=(height, width))
-    plt.bar(index, norms, bar_width, color='b', label="p(T) distribution (q={:.3f})".format(config.continue_prob))
+    plt.bar(index, norms, bar_width, color='b', align='center',
+            label="p(T) distribution (q={:.3f})".format(config.continue_prob))
     # plot mean value again...in red
-    plt.bar([o_mean], norms[o_mean + 1], bar_width, color='r')
+    plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("optimization steps")
     plt.ylabel("probability")
     plt.title("Distribution of optimization steps T (E[T|{}]={})".format(config.T, o_mean), **title_font)
     plt.legend(loc="best")
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, config.T_dist_fig_name)
+    if save:
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+    if show:
+        plt.show()
+    plt.close()
+
+
+def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False, plot_idx=[]):
+    bar_width = 0.5
+    if data_set == "train":
+        T = len(exper.epoch_stats["qt_hist"])
+        opt_step_hist = exper.epoch_stats["opt_step_hist"]
+        qt_hist = exper.epoch_stats["qt_hist"]
+    else:
+        T = len(exper.val_stats["qt_hist"])
+        opt_step_hist = exper.val_stats["opt_step_hist"]
+        qt_hist = exper.val_stats["qt_hist"]
+
+    res_qts = OrderedDict()
+    for i in range(1, T + 1):
+        if opt_step_hist[i - 1] != 0:
+            res_qts[i] = qt_hist[i] * 1. / opt_step_hist[i - 1]
+        else:
+            res_qts[i] = []
+
+    if len(plot_idx) == 0:
+        plot_idx = [int(exper.avg_num_opt_steps + i) for i in range(-config.qt_mean_range, config.qt_mean_range+1)]
+    num_of_plots = len(plot_idx)
+
+    fig = plt.figure(figsize=(width, height))
+    fig.suptitle("q(t|T) distributions for different T (mean={})".format(int(exper.avg_num_opt_steps),
+                                                                         **config.title_font))
+    for i in range(1, num_of_plots + 1):
+        index = range(1, plot_idx[i - 1] + 1)
+        if i == 1:
+            ax1 = plt.subplot(num_of_plots, 2, i)
+        else:
+            axex = plt.subplot(num_of_plots, 2, i, sharey=ax1)
+        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center')
+        plt.xticks(index)
+        plt.xlabel("Steps")
+        if i % 2 == 0:
+            # TODO hide yticks for this subplots, looks better
+            pass
+        else:
+            plt.ylabel("Probs")
+
+    if fig_name is None:
+        fig_name = "_" + data_set + "_" + create_exper_label(exper)
+        fig_name = os.path.join(exper.output_dir, config.qt_dist_prefix + fig_name + ".png")
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)

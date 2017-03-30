@@ -31,9 +31,16 @@ class MetaConfig(object):
         self.act_loss_fig_name = "loss_act.png"
         # bar-plot of the distribution of optimization steps T
         self.T_dist_fig_name = "T_dist.png"
+        # bar-plot of q(t|T) distributions
+        self.qt_dist_prefix = "qt_T_dist"
+        self.qt_mean_range = 3
         # probability of continue computation
-        self.continue_prob = 0.9
+        self.continue_prob = 0.8
         # horizon for maximum number of timesteps
         self.T = 30
+
+        # some fonts defaults for headers of plots
+        self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
+
 
 config = MetaConfig()

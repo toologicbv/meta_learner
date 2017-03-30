@@ -185,8 +185,12 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         self.num_params = self.opt_wrapper.optimizee.parameter.data.view(-1).size(0) + 1
         # is used to compute the mean weights/probs over one epoch
         self.qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
+        # the same object for the validation data
+        self.qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
         self.q_soft = None
-        self.opt_step_hist = np.zeros(config.T+1)
+        self.opt_step_hist = np.zeros(config.T)
+        # the same object for the validation data
+        self.opt_step_hist_val = np.zeros(config.T)
 
     def forward(self, x):
         # extend the input by one, to start with we take the mean of the incoming gradients
@@ -213,6 +217,7 @@ class AdaptiveMetaLearnerV1(MetaLearner):
             else:
                 # squash the output for the weight into a Sigmoid
                 qt = F.sigmoid(x_t)
+                # qt = F.tanh(x_t)
 
         x_out = torch.cat(x_out)
 
@@ -252,23 +257,191 @@ class AdaptiveMetaLearnerV1(MetaLearner):
 
         return loss
 
-    def final_loss(self, prior_probs):
+    def final_loss(self, prior_probs, calc_hist=False):
         assert len(self.losses) == len(self.q_t), "Length of two objects is not the same!"
         steps = prior_probs.size(0)
-        losses = torch.cat(self.losses, 0)
+        self.losses = torch.cat(self.losses, 0)
+        # ones = Variable(torch.ones(losses.size()))
         # concatenate all qt factors and calculate probabilities, NOTE, q_t tensor has size (1, opt-steps)
         # and therefore we compute softmax over dimension 1
-        q_t = torch.cat(self.q_t, 1)
-        self.q_soft = F.softmax(q_t)
+        self.q_t = torch.cat(self.q_t, 1)
+        self.q_soft = F.softmax(self.q_t)
         # Note, because we are computing the KL-divergence as "sum q(t|T) * (log q(t|T) - log p(t|T))"
         # we are adding the KL divergence to the loss and not subtracting it.
-        loss = torch.mean(self.q_soft * losses) + kl_divergence(self.q_soft, prior_probs, do_average=True)
+        loss = torch.mean(self.q_soft * self.losses) + kl_divergence(self.q_soft, prior_probs, do_average=True)
         # loss1 = torch.mean(self.q_soft * losses)
         # loss2 = kl_divergence(self.q_soft, prior_probs, do_average=True)
         # print("loss+kl {:.4f} + {:.4f}".format(loss1.data.squeeze().numpy()[0],
         #                                       loss2.data.squeeze().numpy()[0]))
         # aggregate the probs so we can compute some average later...for debugging purposes
-        self.qt_hist[steps] += self.q_soft.data.squeeze().numpy()
+        if calc_hist:
+            self.qt_hist[steps] += self.q_soft.data.squeeze().numpy()
+
+        return loss
+
+    def reset_final_loss(self):
+        self.losses = []
+        self.q_t = []
+
+
+class AdaptiveMetaLearnerV2(MetaLearner):
+
+    def __init__(self, func, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False):
+        super(AdaptiveMetaLearnerV2, self).__init__(func, num_inputs, num_hidden, num_layers, use_cuda)
+        self.linear_grads = nn.Linear(self.num_params, 1)
+        # holds losses from each optimizer step
+        self.losses = []
+        self.q_t = []
+        # number of parameters of the function to optimize (the optimizee)
+        self.num_params = self.opt_wrapper.optimizee.parameter.data.view(-1).size(0)
+        # currently we're only feeding the second LSTM with one parameter, the sum of the incoming gradients
+        # of the optimizee
+        self.act_num_params = 1
+        # is used to compute the mean weights/probs over epochs
+        self.qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
+        # the same object for the validation data
+        self.qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
+        self.q_soft = None
+        self.opt_step_hist = np.zeros(config.T)
+        # the same object for the validation data
+        self.opt_step_hist_val = np.zeros(config.T)
+        # this is the LSTM for the ACT distribution
+        self.act_linear1 = nn.Linear(num_inputs, num_hidden)
+        self.act_ln1 = LayerNorm1D(num_hidden)
+        self.act_lstms = nn.ModuleList()
+        for i in range(num_layers):
+            self.act_lstms.append(LayerNormLSTMCell(num_hidden, num_hidden))
+
+        self.act_linear_out = nn.Linear(num_hidden, 1)
+
+    def zero_grad(self):
+        super(AdaptiveMetaLearnerV2, self).zero_grad()
+        # make sure we also reset the gradients of the LSTM cells as well
+        for i, cells in enumerate(self.act_lstms):
+            cells.zero_grad()
+        self.act_linear1.zero_grad()
+        self.act_ln1.zero_grad()
+        self.act_linear_out.zero_grad()
+
+    def reset_lstm(self, func, keep_states=False):
+        super(AdaptiveMetaLearnerV2, self).reset_lstm(func, keep_states)
+        # copy the quadratic function "func" to our internal quadratic function we keep in the meta optimizer
+
+        if keep_states:
+            for theta in np.arange(self.act_num_params):
+                for i in range(len(self.lstms)):
+                    self.act_hx[theta][i] = Variable(self.hx[theta][i].data)
+                    self.act_cx[theta][i] = Variable(self.cx[theta][i].data)
+        else:
+            self.act_hx = {}
+            self.act_cx = {}
+            # first loop over the number of parameters we have, because we're updating coordinate wise
+            for theta in np.arange(self.num_params):
+                self.act_hx[theta] = [Variable(torch.zeros(1, self.hidden_size)) for i in range(len(self.act_lstms))]
+                self.act_cx[theta] = [Variable(torch.zeros(1, self.hidden_size)) for i in range(len(self.act_lstms))]
+
+                if self.use_cuda:
+                    for i in range(len(self.act_lstms)):
+                        self.act_hx[theta][i], self.act_cx[theta][i] = self.act_hx[theta][i].cuda(), \
+                                                                       self.act_cx[theta][i].cuda()
+
+    def forward(self, x):
+        if self.use_cuda:
+            x = x.cuda()
+
+        x_out = []
+        for t in np.arange(self.num_params):
+            x_t = x[t].unsqueeze(1)
+            x_t = F.tanh(self.ln1(self.linear1(x_t)))
+            for i in range(len(self.lstms)):
+                if x_t.size(0) != self.hx[t][i].size(0):
+                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
+                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
+
+                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
+                x_t = self.hx[t][i]
+            x_t = self.linear_out(x_t)
+            x_out.append(x_t)
+
+        x_out = torch.cat(x_out)
+
+        # extend the input by one, to start with we take the mean of the incoming gradients
+        mean_grad = torch.mean(x)
+        if self.use_cuda:
+            mean_grad = mean_grad.cuda()
+
+        qt_out = []
+        for t in np.arange(self.act_num_params):
+            q_t = mean_grad[t].unsqueeze(1)
+            q_t = F.tanh(self.act_ln1(self.act_linear1(q_t)))
+            for i in range(len(self.act_lstms)):
+                if q_t.size(0) != self.act_hx[t][i].size(0):
+                    self.act_hx[t][i] = self.act_hx[t][i].expand(q_t.size(0), self.act_hx[t][i].size(1))
+                    self.act_cx[t][i] = self.act_cx[t][i].expand(q_t.size(0), self.act_cx[t][i].size(1))
+
+                self.act_hx[t][i], self.act_cx[t][i] = self.act_lstms[i](q_t, (self.act_hx[t][i], self.act_cx[t][i]))
+                q_t = self.act_hx[t][i]
+            q_t = F.sigmoid(self.act_linear_out(q_t))
+
+            qt_out.append(q_t)
+
+        qt_out = torch.cat(qt_out)
+
+        return tuple((x_out, qt_out))
+
+    def meta_update(self, func_with_grads, loss_type="MSE"):
+        """
+            We use the quadratic loss surface - which is a copy of the "outside" loss surface that we're trying to optimize
+            - to (a) compute the new parameters of this loss surface by taking the gradients of the outside loss surface
+            pass them through our LSTM and subtract (gradient descent) the LSTM output from the "inside" loss surface
+            parameters.
+            (b) we copy the new parameter of the "inside" loss surface
+            :param func_with_grads:
+            :return:
+        """
+        parameters = Variable(self.opt_wrapper.optimizee.parameter.data)
+        grads = Variable(func_with_grads.parameter.grad.data)
+        if self.use_cuda:
+            parameters = parameters.cuda()
+
+        delta_grads, qt = self(grads)
+        parameters = parameters - delta_grads
+        # copy updated parameters to our "inside" loss surface model
+        self.opt_wrapper.set_parameters(parameters)
+        # copy new parameters also to "outside" func that deliverd the grads in the first place
+        self.opt_wrapper.copy_params_to(func_with_grads)
+        if loss_type == "EVAL":
+            loss = torch.sum(self.opt_wrapper.optimizee.func(parameters))
+        elif loss_type == "MSE":
+            loss = 0.5 * torch.sum((self.opt_wrapper.optimizee.true_opt - parameters) ** 2)
+        else:
+            raise ValueError("<{}> is not a valid option for loss_type.".format(loss_type))
+        # collect the parts we need to calculate the final loss over all timesteps
+
+        self.losses.append(Variable(loss.data))
+        self.q_t.append(qt)
+
+        return loss
+
+    def final_loss(self, prior_probs, calc_hist=False):
+        assert len(self.losses) == len(self.q_t), "Length of two objects is not the same!"
+        steps = prior_probs.size(0)
+        self.losses = torch.cat(self.losses, 0)
+        ones = Variable(torch.ones(self.losses.size()))
+        # concatenate all qt factors and calculate probabilities, NOTE, q_t tensor has size (1, opt-steps)
+        # and therefore we compute softmax over dimension 1
+        self.q_t = torch.cat(self.q_t, 1)
+        self.q_soft = F.softmax(self.q_t)
+        # Note, because we are computing the KL-divergence as "sum q(t|T) * (log q(t|T) - log p(t|T))"
+        # we are adding the KL divergence to the loss and not subtracting it.
+        loss = torch.mean(self.q_soft * self.losses) + kl_divergence(self.q_soft, prior_probs, do_average=True)
+        # loss1 = torch.mean(self.q_soft * losses)
+        # loss2 = kl_divergence(self.q_soft, prior_probs, do_average=True)
+        # print("loss+kl {:.4f} + {:.4f}".format(loss1.data.squeeze().numpy()[0],
+        #                                       loss2.data.squeeze().numpy()[0]))
+        # aggregate the probs so we can compute some average later...for debugging purposes
+        if calc_hist:
+            self.qt_hist[steps] += self.q_soft.data.squeeze().numpy()
 
         return loss
 

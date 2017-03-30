@@ -216,8 +216,8 @@ class Quadratic2D(object):
         plt.close()
 
     def compute_error(self):
-        self.error = 0.5 * torch.sum((self.true_opt.data - self.parameter.data)**2)
-        return self.error
+        self.error = 0.5 * torch.sum((self.true_opt - self.parameter)**2)
+        return self.error.squeeze()
 
 
 class SimpleQuadratic(object):
