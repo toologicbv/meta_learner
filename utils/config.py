@@ -23,21 +23,23 @@ class MetaConfig(object):
         self.color_map = 'summer'
         # filename that stores Experiment object dumped with dill
         self.exp_file_name = "exp_statistics.dll"
+        # default plot file extension
+        self.dflt_plot_ext = ".png"
         # filename of figure for loss
-        self.loss_fig_name = "loss.png"
+        self.loss_fig_name = "loss"
         # filename of figure for parameter error (MSE)
-        self.param_error_fig_name = "param_error.png"
+        self.param_error_fig_name = "param_error"
         # filename of figure for ACT loss
-        self.act_loss_fig_name = "loss_act.png"
+        self.act_loss_fig_name = "loss_act"
         # bar-plot of the distribution of optimization steps T
-        self.T_dist_fig_name = "T_dist.png"
+        self.T_dist_fig_name = "T_dist"
         # bar-plot of q(t|T) distributions
         self.qt_dist_prefix = "qt_T_dist"
         self.qt_mean_range = 3
         # probability of continue computation
         self.continue_prob = 0.8
         # horizon for maximum number of timesteps
-        self.T = 30
+        self.T = 8
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}

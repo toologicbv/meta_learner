@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from cycler import cycler
 
 from datetime import datetime
+from pytz import timezone
 from config import config
 
 POLY_DEGREE = 2
@@ -180,7 +181,7 @@ class Quadratic2D(object):
 
         return result
 
-    def plot_func(self, fig_name=None, height=8, width=6, do_save=False, show=False):
+    def plot_func(self, fig_name=None, height=8, width=6, do_save=False, show=False, exper=None):
 
         cm = plt.get_cmap(config.color_map)
         steps = (self.x_max - self.x_min) * 25
@@ -197,15 +198,19 @@ class Quadratic2D(object):
         ax.set_prop_cycle(cycler('color', [cm(1. * i / (num_points - 1)) for i in range(num_points - 1)]))
         for i in range(num_points - 1):
             ax.plot(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2], 'o-')
-            # plt.plot(self.value_hist['x1'], self.value_hist['x2'], 'o-')
+            # ax.arrow(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2])
         plt.title(self.poly_desc)
 
         if do_save:
-            dt = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            dt = datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
+            exp_label = ""
+            if exper is not None:
+                exp_label = create_exp_label(exper) + "_"
+
             if fig_name is None:
-                fig_name = dt + ".png"
+                fig_name = exp_label + dt + "_" + str(num_points) + "st.png"
             else:
-                fig_name = fig_name + "_" + dt + ".png"
+                fig_name = fig_name + "_" + exp_label + dt + "_" + str(num_points) + "st.png"
 
             plt.savefig(fig_name, bbox_inches='tight')
             print("INFO - Successfully saved fig %s" % fig_name)
@@ -313,6 +318,12 @@ class SimpleQuadratic(object):
         return self.error
 
 
+def create_exp_label(exper):
+
+    label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
+                str(int(exper.avg_num_opt_steps)) + "ops_" + exper.args.loss_type
+
+    return label1
 
 # q2d = Quadratic2D()
 # print(q2d.poly_desc)

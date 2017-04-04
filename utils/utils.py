@@ -5,6 +5,8 @@ import dill
 import shutil
 from config import config
 from datetime import datetime
+from pytz import timezone
+
 import argparse
 import logging
 import numpy as np
@@ -12,7 +14,7 @@ import numpy as np
 import models.rnn_optimizer
 from models.rnn_optimizer import MetaLearner, WrapperOptimizee
 from quadratic import Quadratic2D, Quadratic
-from plots import loss_plot, param_error_plot, plot_histogram, plot_qt_probs, create_exper_label
+from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 
 
 def create_logger(exper, file_handler=False):
@@ -54,9 +56,14 @@ def softmax(x):
     return e_x / e_x.sum()
 
 
-def act_continue(q_logits):
+def stop_computing(q_logits, meta_logger=None):
     q_probs = softmax(q_logits)
-    return False
+    if meta_logger is not None:
+        meta_logger.debug("q_probs {}".format(np.array_str(q_probs)))
+    if q_probs[-1] <= q_probs[-2]:
+        return True
+    else:
+        return False
 
 
 def preprocess_gradients(x):
@@ -160,15 +167,16 @@ def load_val_data(path_specs=None):
 
 class Experiment(object):
 
-    def __init__(self, run_args):
+    def __init__(self, run_args, config=None):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
-        self.opt_step_hist = None
+        # self.opt_step_hist = None
         self.avg_num_opt_steps = 0
+        self.config = config
 
 
 def save_exper(exper):
@@ -183,11 +191,14 @@ def save_exper(exper):
 def prepare(prcs_args, exper):
 
     if prcs_args.log_dir == 'default':
-        prcs_args.log_dir = config.exper_prefix + str.replace(datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-7],
-                                                              ' ', '_') + "_" + create_exper_label(exper)
+        prcs_args.log_dir = config.exper_prefix + \
+                            str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
+                                '%Y-%m-%d %H:%M:%S.%f')[:-7],
+                                ' ', '_') + "_" + create_exper_label(exper)
         prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
 
     else:
+        # custom log dir
         prcs_args.log_dir = str.replace(prcs_args.log_dir, ' ', '_')
         prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
     log_dir = os.path.join(config.log_root_path, prcs_args.log_dir)
@@ -196,6 +207,7 @@ def prepare(prcs_args, exper):
         fig_path = os.path.join(log_dir, config.figure_path)
         os.makedirs(fig_path)
     else:
+        # make a back-up copy of the contents
         dst = os.path.join(log_dir, "backup")
         shutil.copytree(log_dir, dst)
     return log_dir
@@ -219,6 +231,8 @@ def end_run(experiment, model, func_list):
         if experiment.args.learner == "act":
             loss_plot(experiment, loss_type="act", save=True)
             # plot histogram of T distribution (number of optimization steps during training)
-            plot_histogram(experiment, save=True)
-            plot_qt_probs(experiment, save=True)
+            plot_dist_optimization_steps(experiment, data_set="train", save=True)
+            plot_dist_optimization_steps(experiment, data_set="val", save=True)
+            plot_qt_probs(experiment, data_set="train", save=True)
+            plot_qt_probs(experiment, data_set="val", save=True)
         param_error_plot(experiment, save=True)

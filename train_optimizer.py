@@ -24,7 +24,7 @@ from val_optimizer import validate_optimizer
 MAX_VAL_FUNCS = 100
 STD_OPT_LR = 4e-1
 META_LR = 1e-3
-VALID_VERBOSE = True
+VALID_VERBOSE = False
 PLOT_VALIDATION_FUNCS = True
 
 # DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -79,9 +79,12 @@ args.save_diff_funcs = True
 
 def main():
     # set manual seed for random number generation
-    SEED = 4325
+    if args.retrain:
+        SEED = 2345
+    else:
+        SEED = 4325
     torch.manual_seed(SEED)
-    exper = Experiment(args)
+    exper = Experiment(args, config)
     # get distribution P(T) over possible number of total timesteps
     if args.learner == "act":
         pt_dist = TimeStepsDist(config.T, config.continue_prob)
@@ -133,7 +136,7 @@ def main():
                 # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
                 # add one to choice because we actually want values between [1, config.T]
                 optimizer_steps = pt_dist.rvs(n=1) + 1
-                prior_dist = ConditionalTimeStepDist(optimizer_steps)
+                prior_dist = ConditionalTimeStepDist(T=optimizer_steps, q_prob=config.continue_prob)
                 prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps + 1))).float())
             meta_logger.debug("Number of optimization steps {}".format(optimizer_steps))
 
@@ -192,15 +195,13 @@ def main():
             # back-propagate ACT loss that was accumulated during optimization steps
             if args.learner == 'act':
                 # meta_logger.debug("**************************** act loss backward **********************************")
-                act_loss = meta_optimizer.final_loss(prior_probs, calc_hist=True)
+                act_loss = meta_optimizer.final_loss(prior_probs, run_type='train')
                 act_loss.backward()
                 optimizer.step()
                 final_act_loss += act_loss.data
                 # set grads of meta_optimizer to zero after update parameters
                 meta_optimizer.zero_grad()
-                # increase counter for this "number of optimization steps". we use this later to evaluate the
-                # meta optimizer (note substract 1 because this is an array
-                meta_optimizer.opt_step_hist[optimizer_steps-1] += 1
+
             if i % 20 == 0 and i != 0:
 
                 meta_logger.info("INFO-track -----------------------------------------------------")
@@ -262,9 +263,12 @@ def main():
                                plot_func=PLOT_VALIDATION_FUNCS,
                                steps=opt_steps, num_of_plots=3)
     if args.learner == 'act':
-        exper.opt_step_hist = meta_optimizer.opt_step_hist
+        # exper.opt_step_hist = meta_optimizer.opt_step_hist
         exper.epoch_stats['qt_hist'] = meta_optimizer.qt_hist
         exper.epoch_stats['opt_step_hist'] = meta_optimizer.opt_step_hist
+        # save the results of the validation statistics
+        exper.val_stats['qt_hist'] = meta_optimizer.qt_hist_val
+        exper.val_stats['opt_step_hist'] = meta_optimizer.opt_step_hist_val
 
     end_run(exper, meta_optimizer, diff_func_list)
 
