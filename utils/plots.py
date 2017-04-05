@@ -46,7 +46,7 @@ def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=
     else:
         raise ValueError("loss_type {} not supported".format(loss_type))
     x_vals = range(1, exper.epoch+1, 1)
-    plt.plot(x_vals, train_loss, 'r', label="train-loss")
+    plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
 
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
@@ -66,7 +66,7 @@ def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=
             if x_vals[-1] != exper.epoch:
                 x_vals.append(exper.epoch)
 
-    plt.plot(x_vals, val_loss, 'b', label="valid-loss")
+    plt.plot(x_vals[1:], val_loss[1:], 'b', label="valid-loss")
     plt.legend(loc="best")
     plt.title("Train/validation loss {}-epochs/{}-opt-steps/{}-loss-func".format(exper.epoch,
                                                                                  num_opt_steps,
@@ -88,7 +88,7 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
     plt.xlabel("epochs")
     plt.ylabel("parameter error")
     x_vals = range(1, exper.epoch+1, 1)
-    plt.plot(x_vals, exper.epoch_stats['param_error'], 'r', label="train-loss")
+    plt.plot(x_vals[2:], exper.epoch_stats['param_error'][2:], 'r', label="train-loss")
 
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
@@ -108,7 +108,7 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
             if x_vals[-1] != exper.epoch:
                 x_vals.append(exper.epoch)
 
-    plt.plot(x_vals, exper.val_stats['param_error'], 'b', label="valid-loss")
+    plt.plot(x_vals[1:], exper.val_stats['param_error'][1:], 'b', label="valid-loss")
     plt.legend(loc="best")
     plt.title("Train/validation param-error {}-epochs/{}-opt-steps/{}-loss-func".format(exper.epoch,
                                                                                  exper.avg_num_opt_steps,
@@ -137,12 +137,12 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     o_mean = int(round(np.sum(index * norms)))
     plt.figure(figsize=(height, width))
     plt.bar(index, norms, bar_width, color='b', align='center',
-            label="p(T) distribution (q={:.3f})".format(config.continue_prob))
+            label="with q(continue)={:.3f}".format(config.continue_prob))
     # plot mean value again...in red
     plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
-    plt.xlabel("optimization steps")
-    plt.ylabel("probability")
-    plt.title("Distribution of optimization steps T (E[T|{}]={})".format(config.T, o_mean), **title_font)
+    plt.xlabel("Number of optimization steps")
+    plt.ylabel("Proportion")
+    plt.title("Distribution of optimization steps (E[T|{}]={})".format(config.T, o_mean), **title_font)
     plt.legend(loc="best")
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, config.T_dist_fig_name + "_" + data_set + config.dflt_plot_ext)
@@ -176,11 +176,16 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
     if len(plot_idx) == 0:
         plot_idx = [int(exper.avg_num_opt_steps + i) for i in range(-config.qt_mean_range, config.qt_mean_range+1)]
+        # in case idx=1 in list remove, because probs for 1 step are always 1.
+        if 1 in plot_idx:
+            plot_idx.remove(1)
+
         if data_set == 'val':
             # for now we make only one plot for the validation statistics because we fixed the # of steps to 4
             # determine number of plots we can make
             if np.sum(opt_step_hist > 5) == 1:
                 plot_idx = [np.argmax(opt_step_hist) + 1]
+                num_of_plots = len(plot_idx)
             else:
                 if np.sum(opt_step_hist > 5) > 3:
                     num_of_plots = 3
@@ -192,6 +197,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             # training, always enough values at our hand
             check = plot_idx[:]
             for idx in check:
+                # if we don't have any results for this number of steps than remove from list
                 if idx not in res_qts:
                     plot_idx.remove(idx)
 
@@ -209,7 +215,8 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
         plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center')
         plt.xticks(index)
-        plt.xlabel("Steps")
+        if i == num_of_plots or i == num_of_plots - 1:
+            plt.xlabel("Steps")
         if i % 2 == 0:
             # TODO hide yticks for this subplots, looks better
             pass

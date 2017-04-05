@@ -34,22 +34,24 @@ PLOT_VALIDATION_FUNCS = True
 
 parser = argparse.ArgumentParser(description='PyTorch Meta-learner')
 
-parser.add_argument('--optimizer_steps', type=int, default=80, metavar='N',
+parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
 parser.add_argument('--functions_per_epoch', type=int, default=100, metavar='N',
                     help='updates per epoch (default: 100)')
 parser.add_argument('--max_epoch', type=int, default=5, metavar='N',
-                    help='number of epoch (default: 10000)')
+                    help='number of epoch (default: 5)')
 parser.add_argument('--hidden_size', type=int, default=20, metavar='N',
                     help='hidden size of the meta optimizer (default: 20)')
+parser.add_argument('--num_hidden_act', type=int, default=20, metavar='N',
+                    help='hidden size of the ACT meta optimizer (default: 20)')
 parser.add_argument('--num_layers', type=int, default=2, metavar='N',
-                    help='number of LSTM layers (default: 2)')
+                    help='number of LSTM layers (default: 2) for all LSTMs')
 parser.add_argument('--use_cuda', action='store_true', default=False,
                     help='enables CUDA training')
 parser.add_argument('--eval_freq', type=int, default=5, metavar='N',
-                    help='frequency print epoch statistics (default: 10)')
+                    help='frequency print epoch statistics (default: 5)')
 parser.add_argument('--q2D', action='store_true', default=False,
                     help='using 2D quadratic functions')
 parser.add_argument('--save_log', action='store_true', default=False,
@@ -57,7 +59,8 @@ parser.add_argument('--save_log', action='store_true', default=False,
 parser.add_argument('--save_diff_funcs', action='store_true', default=False,
                     help='whether or not to save the detected difficult to optimize functions')
 parser.add_argument('--model', type=str, default="meta_learner_v1",
-                    help='model name that will be used for saving the model to file or load if pickle file is present')
+                    help='model name that will be used for saving the model to file or load if pickle file is present'
+                         'in model directory')
 parser.add_argument('--log_dir', type=str, default="default",
                     help='log directory under logs')
 parser.add_argument('--retrain', action='store_true', default=False,
@@ -66,14 +69,19 @@ parser.add_argument('--loss_type', type=str, default="MSE",
                     help='Loss of optimizer: 1) MSE 2) EVAL')
 parser.add_argument('--learner', type=str, default="act",
                     help='type of learner to use 1) manual (e.g. Adam) 2) meta 3) act')
-parser.add_argument('--version', type=str, default="V2",
-                    help='version of the ACT leaner (currently V1 and V2)')
+parser.add_argument('--version', type=str, default="V1",
+                    help='version of the ACT leaner (currently V1 (dflt) and V2)')
 
 args = parser.parse_args()
 args.cuda = args.use_cuda and torch.cuda.is_available()
+# Cuda is currently not implemented. Takes longer than CPU, even when testing just Variable/Tensors in python
+# interpreter
 args.cuda = False
+# only tested with 2 dimensional quadratic functions
 args.q2D = True
+# just always save the plot summaries (used in utils.end_run procedure
 args.save_log = True
+# save the functions that are identified as "difficult" during training (due to high loss) to a separate file
 args.save_diff_funcs = True
 
 
@@ -90,7 +98,7 @@ def main():
         pt_dist = TimeStepsDist(config.T, config.continue_prob)
         exper.avg_num_opt_steps = pt_dist.mean
     else:
-        args.version = "V1"
+        args.version = ""
         exper.avg_num_opt_steps = args.optimizer_steps
     # prepare the experiment
     exper.output_dir = prepare(prcs_args=args, exper=exper)
@@ -104,7 +112,7 @@ def main():
     diff_func_list = []
     if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
-        meta_optimizer = get_model(exper, retrain=args.retrain)
+        meta_optimizer = get_model(exper, retrain=args.retrain, logger=meta_logger)
         optimizer = optim.Adam(meta_optimizer.parameters(), lr=META_LR)
     else:
         # we're using one of the standard optimizers, initialized per function below
@@ -228,6 +236,8 @@ def main():
                     meta_logger.info("Final parameter values {:.2f}".format(q2_func.parameter.data.numpy()[0]))
             if args.learner == "act":
                 meta_optimizer.reset_final_loss()
+            elif exper.args.learner == 'meta':
+                meta_optimizer.reset_losses()
             # END OF SPECIFIC FUNCTION OPTIMIZATION
 
             # As evaluation measure we take the final error of the function we minimize (which is our loss) minus the
@@ -256,12 +266,12 @@ def main():
                 # the manual (e.g. SGD, Adam will be validated using full number of optimization steps
                 opt_steps = args.optimizer_steps
             else:
-                opt_steps = 4
+                opt_steps = config.max_val_opt_steps
 
             validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=meta_logger,
                                verbose=VALID_VERBOSE,
                                plot_func=PLOT_VALIDATION_FUNCS,
-                               steps=opt_steps, num_of_plots=3)
+                               steps=opt_steps, num_of_plots=config.num_val_plots)
     if args.learner == 'act':
         # exper.opt_step_hist = meta_optimizer.opt_step_hist
         exper.epoch_stats['qt_hist'] = meta_optimizer.qt_hist

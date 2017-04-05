@@ -23,6 +23,11 @@ class MetaConfig(object):
         self.color_map = 'summer'
         # filename that stores Experiment object dumped with dill
         self.exp_file_name = "exp_statistics.dll"
+        """
+            Plotting defaults
+        """
+        # number of functions to plot during validation
+        self.num_val_plots = 4
         # default plot file extension
         self.dflt_plot_ext = ".png"
         # filename of figure for loss
@@ -36,10 +41,15 @@ class MetaConfig(object):
         # bar-plot of q(t|T) distributions
         self.qt_dist_prefix = "qt_T_dist"
         self.qt_mean_range = 3
+        """
+            Important parameter for prior distribution P(T)
+        """
         # probability of continue computation
-        self.continue_prob = 0.8
+        self.continue_prob = 0.86
         # horizon for maximum number of timesteps
-        self.T = 8
+        self.T = 10
+
+        self.max_val_opt_steps = 10
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}

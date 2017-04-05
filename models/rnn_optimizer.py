@@ -60,6 +60,7 @@ class MetaLearner(nn.Module):
             # self.lstms.append(nn.LSTMCell(num_hidden, num_hidden))
 
         self.linear_out = nn.Linear(num_hidden, 1)
+        self.losses = []
 
     def cuda(self):
         super(MetaLearner, self).cuda()
@@ -141,6 +142,7 @@ class MetaLearner(nn.Module):
         else:
             raise ValueError("<{}> is not a valid option for loss_type.".format(loss_type))
 
+        self.losses.append(Variable(loss.data))
         return loss
         # return parameters
 
@@ -155,6 +157,9 @@ class MetaLearner(nn.Module):
             sum_grads += torch.sum(param.grad.data)
 
         return sum_grads
+
+    def reset_losses(self):
+        self.losses = []
 
 
 class WrapperOptimizee(object):
@@ -197,11 +202,11 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         # is used to compute the mean weights/probs over epochs
         self.qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
         # the same object for the validation data
-        self.qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.T + 1)])
+        self.qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, config.max_val_opt_steps + 1)])
         self.q_soft = None
         self.opt_step_hist = np.zeros(config.T)
         # the same object for the validation data
-        self.opt_step_hist_val = np.zeros(config.T)
+        self.opt_step_hist_val = np.zeros(config.max_val_opt_steps)
         # this is the LSTM for the ACT distribution
         self.act_linear1 = nn.Linear(num_inputs, num_hidden_act)
         self.act_ln1 = LayerNorm1D(num_hidden_act)

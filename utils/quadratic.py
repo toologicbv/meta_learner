@@ -181,25 +181,55 @@ class Quadratic2D(object):
 
         return result
 
-    def plot_func(self, fig_name=None, height=8, width=6, do_save=False, show=False, exper=None):
+    def plot_func(self, fig_name=None, height=8, width=6, do_save=False, show=False, exper=None, add_text=None):
 
         cm = plt.get_cmap(config.color_map)
         steps = (self.x_max - self.x_min) * 25
         x_range = np.linspace(self.x_min, self.x_max, steps)
         X, Y = np.meshgrid(x_range, x_range)
-        f_in = Variable(torch.FloatTensor(torch.cat((torch.from_numpy(X.ravel()).float(), torch.from_numpy(Y.ravel()).float()), 1).t()))
+        f_in = Variable(torch.FloatTensor(torch.cat((torch.from_numpy(X.ravel()).float(),
+                                                     torch.from_numpy(Y.ravel()).float()), 1).t()))
         Z = self.f(f_in)
         plt.figure(figsize=(height, width))
         plt.contourf(X, Y, Z.data.cpu().view(steps, steps).numpy(), steps)
         plt.plot(self.true_opt[0].data.cpu().numpy(), self.true_opt[1].data.cpu().numpy(), 'ro')
         # plot the gradient steps (lines) in different colors with increased transparency
         ax = plt.gca()
-        num_points = len(self.value_hist['x1'])
-        ax.set_prop_cycle(cycler('color', [cm(1. * i / (num_points - 1)) for i in range(num_points - 1)]))
-        for i in range(num_points - 1):
+        num_points = len(self.value_hist['x1']) - 1
+        # if we don't have too many steps, we plot the step number "next" to the gradient step in the plot
+        if num_points <= 5:
+            plot_text = True
+        else:
+            plot_text = False
+        ax.set_prop_cycle(cycler('color', [cm(1.15 * i / (num_points)) for i in range(num_points)]))
+        for i in range(num_points):
             ax.plot(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2], 'o-')
-            # ax.arrow(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2])
-        plt.title(self.poly_desc)
+            # add the step number, although this still plots the number sometimes slightly off
+            if plot_text and i == num_points - 1:
+                a_color = "yellow"
+                plt.annotate(str(i+1), xy=(int(self.value_hist['x1'][i+1]), int(self.value_hist['x2'][i+1])), size=8,
+                             color=a_color)
+
+        plt.title(self.poly_desc + " (steps={})".format(num_points))
+        plt.axis('off')
+
+        # Now let's add the q(t) probs and losses for this function if we're training ACT learner
+        if add_text[0] is not None and add_text[1] is not None:
+            text = "q(t) values {}".format(add_text[0]) + "\n" + "losses {}".format(add_text[1])
+            annotation = True
+        elif add_text[1] is not None:
+            # we end up here if we're are training the meta learner without ACT, so we only have losses
+            text = "losses {}".format(add_text[1])
+            annotation = True
+        else:
+            annotation = False
+
+        if annotation:
+            plt.annotate(text,
+                         xy=(0.5, 0), xytext=(0, 0),
+                         xycoords=('axes fraction', 'figure fraction'),
+                         textcoords='offset points',
+                         size=8, ha='center', va='bottom')
 
         if do_save:
             dt = datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
@@ -212,7 +242,7 @@ class Quadratic2D(object):
             else:
                 fig_name = fig_name + "_" + exp_label + dt + "_" + str(num_points) + "st.png"
 
-            plt.savefig(fig_name, bbox_inches='tight')
+            plt.savefig(fig_name) # , bbox_inches='tight')
             print("INFO - Successfully saved fig %s" % fig_name)
 
         if show:

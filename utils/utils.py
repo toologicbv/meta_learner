@@ -10,6 +10,7 @@ from pytz import timezone
 import argparse
 import logging
 import numpy as np
+from collections import OrderedDict
 
 import models.rnn_optimizer
 from models.rnn_optimizer import MetaLearner, WrapperOptimizee
@@ -51,7 +52,7 @@ def print_flags(exper_args, logger):
 
 
 def softmax(x):
-    """Compute softmax values for each sets of scores in x."""
+    """Compute softmax values for each sets of scores in x. Expecting numpy arrays"""
     e_x = np.exp(x - np.max(x))
     return e_x / e_x.sum()
 
@@ -77,6 +78,7 @@ def preprocess_gradients(x):
 
 
 def get_experiment(file_to_exp):
+
     file_to_exp = os.path.join(config.log_root_path, os.path.join(file_to_exp, config.exp_file_name))
     try:
         with open(file_to_exp, 'rb') as f:
@@ -98,20 +100,25 @@ def create_def_argparser(**kwargs):
     args.hidden_size = 20
     args.retrain = kwargs['retrain']
     args.loss_type = kwargs['loss_type']
+    args.truncated_bptt_step = kwargs['truncated_bptt_step']
 
     return args
 
 
-def get_model(exper, retrain=False):
+def get_model(exper, retrain=False, logger=None):
 
     if exper.args.q2D:
         q2_func = Quadratic2D(use_cuda=exper.args.cuda)
     else:
         q2_func = Quadratic(use_cuda=exper.args.cuda)
     if exper.args.learner == "act":
+        # currently two versions of AML in use. V1 is now the preferred, which has the 2nd LSTM for the
+        # q(t|T, theta) approximation incorporated into the first LSTM (basically one loop, where V2 has
+        # 2 separate loops and works on the mean of the gradients, where V1 works on the individual parameters
         act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version)
         meta_optimizer = act_class(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
                                                num_hidden=exper.args.hidden_size,
+                                               num_hidden_act=exper.args.num_hidden_act,
                                                use_cuda=exper.args.cuda)
     else:
         meta_optimizer = MetaLearner(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
@@ -123,29 +130,29 @@ def get_model(exper, retrain=False):
             # try to load model
             if os.path.exists(exper.model_path):
                 meta_optimizer.load_state_dict(torch.load(exper.model_path))
-                print("INFO - loaded existing model from file {}".format(exper.model_path))
+                logger.info("INFO - loaded existing model from file {}".format(exper.model_path))
                 loaded = True
             else:
-                print("Warning - model not found in {}".format(exper.model_path))
+                logger.info("Warning - model not found in {}".format(exper.model_path))
 
         if exper.args.model is not None and not loaded:
             model_file_name = os.path.join(config.model_path, (exper.args.model + config.save_ext))
             if os.path.exists(model_file_name):
                 meta_optimizer.load_state_dict(torch.load(model_file_name))
-                print("INFO - loaded existing model from file {}".format(model_file_name))
+                logger.info("INFO - loaded existing model from file {}".format(model_file_name))
                 loaded = True
 
         if not loaded:
-            print("Warning - retrain was enabled but model <{}> does not exist. "
-                  "Training a new model with this name.".format(exper.args.model))
+            logger.info("Warning - retrain was enabled but model <{}> does not exist. "
+                        "Training a new model with this name.".format(exper.args.model))
 
     else:
-        print("INFO - training a new model {}".format(exper.args.model))
+        logger.info("INFO - training a new model {}".format(exper.args.model))
     meta_optimizer.name = exper.args.model
 
     if exper.args.cuda:
         meta_optimizer.cuda()
-    print(meta_optimizer.state_dict().keys())
+    # print(meta_optimizer.state_dict().keys())
 
     return meta_optimizer
 
@@ -170,13 +177,20 @@ class Experiment(object):
     def __init__(self, run_args, config=None):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
+                          "step_losses": OrderedDict([(i, np.zeros(i+1)) for i in
+                                                      np.arange(1, config.max_val_opt_steps + 1)])}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
         # self.opt_step_hist = None
         self.avg_num_opt_steps = 0
         self.config = config
+
+    def reset_val_stats(self):
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
+                          "step_losses": OrderedDict([(i, np.zeros(i+1)) for i in
+                                                      np.arange(1, config.max_val_opt_steps + 1)])}
 
 
 def save_exper(exper):
