@@ -92,34 +92,34 @@ def create_def_argparser(**kwargs):
 
     args = argparse.Namespace()
     args.cuda = kwargs['cuda']
-    args.q2D = kwargs['q2D']
     args.model = kwargs['model']
     args.log_dir = kwargs['log_dir']
     args.learner = kwargs['learner']
     args.num_layers = 2
     args.hidden_size = 20
     args.retrain = kwargs['retrain']
-    args.loss_type = kwargs['loss_type']
     args.truncated_bptt_step = kwargs['truncated_bptt_step']
+    args.lr = kwargs['lr']
 
     return args
 
 
 def get_model(exper, retrain=False, logger=None):
 
-    if exper.args.q2D:
-        q2_func = Quadratic2D(use_cuda=exper.args.cuda)
-    else:
-        q2_func = Quadratic(use_cuda=exper.args.cuda)
+    q2_func = Quadratic2D(use_cuda=exper.args.cuda)
+
+    if exper.args.model == "default":
+        exper.args.model = exper.args.learner + exper.args.version + "_lr" + "{:.0e}".format(exper.args.lr) + "_" + \
+            exper.args.optimizer + "_" + str(int(exper.avg_num_opt_steps)) + "ops"
+
     if exper.args.learner == "act":
         # currently two versions of AML in use. V1 is now the preferred, which has the 2nd LSTM for the
         # q(t|T, theta) approximation incorporated into the first LSTM (basically one loop, where V2 has
         # 2 separate loops and works on the mean of the gradients, where V1 works on the individual parameters
         act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version)
         meta_optimizer = act_class(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
-                                               num_hidden=exper.args.hidden_size,
-                                               num_hidden_act=exper.args.num_hidden_act,
-                                               use_cuda=exper.args.cuda)
+                                   num_hidden=exper.args.hidden_size,
+                                   use_cuda=exper.args.cuda)
     else:
         meta_optimizer = MetaLearner(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
@@ -178,19 +178,20 @@ class Experiment(object):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
-                          "step_losses": OrderedDict([(i, np.zeros(i+1)) for i in
-                                                      np.arange(1, config.max_val_opt_steps + 1)])}
+                          "step_losses": OrderedDict(),
+                          "step_param_losses": OrderedDict()}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
         # self.opt_step_hist = None
         self.avg_num_opt_steps = 0
+        self.val_avg_num_opt_steps = 0
         self.config = config
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
-                          "step_losses": OrderedDict([(i, np.zeros(i+1)) for i in
-                                                      np.arange(1, config.max_val_opt_steps + 1)])}
+                          "step_losses": OrderedDict(),
+                          "step_param_losses": OrderedDict()}
 
 
 def save_exper(exper):
@@ -208,7 +209,8 @@ def prepare(prcs_args, exper):
         prcs_args.log_dir = config.exper_prefix + \
                             str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
                                 '%Y-%m-%d %H:%M:%S.%f')[:-7],
-                                ' ', '_') + "_" + create_exper_label(exper)
+                                ' ', '_') + "_" + create_exper_label(exper) + \
+                            "_lr" + "{:.0e}".format(exper.args.lr) + "_" + exper.args.optimizer
         prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
 
     else:
@@ -233,7 +235,7 @@ def end_run(experiment, model, func_list):
         torch.save(model.state_dict(), model_path)
         experiment.model_path = model_path
         print("INFO - Successfully saved model parameters to {}".format(model_path))
-    if experiment.args.save_diff_funcs:
+    if experiment.args.save_diff_funcs and len(func_list) > 0:
         diff_func_file = os.path.join(experiment.output_dir, "diff_funcs.dll")
         with open(diff_func_file, 'wb') as f:
             dill.dump(func_list, f)
@@ -250,3 +252,25 @@ def end_run(experiment, model, func_list):
             plot_qt_probs(experiment, data_set="train", save=True)
             plot_qt_probs(experiment, data_set="val", save=True)
         param_error_plot(experiment, save=True)
+
+
+def detailed_train_info(logger, func, args, learner, step, optimizer_steps, error):
+    logger.info("INFO-track -----------------------------------------------------")
+    logger.info("{}-th function (op-steps {}): loss {:.4f}".format(step, optimizer_steps, error))
+    logger.info(func.poly_desc)
+    logger.info("Initial parameter values ({:.2f},{:.2f})".format(
+        func.initial_parms[0].data.numpy()[0],
+        func.initial_parms[1].data.numpy()[0]))
+    logger.info("True parameter values ({:.2f},{:.2f})".format(
+        func.true_opt[0].data.numpy()[0],
+        func.true_opt[1].data.numpy()[0]))
+    logger.info("Final parameter values ({:.2f},{:.2f})".format(
+        func.parameter[0].data.numpy()[0],
+        func.parameter[1].data.numpy()[0]))
+    if args.learner == 'act':
+        logger.debug("Final qt-probabilities")
+        logger.debug("{}".format(np.array_str(learner.q_soft.data.squeeze().numpy())))
+        logger.debug("raw-values {}".format(
+            np.array_str(learner.q_t.data.squeeze().numpy())))
+        logger.debug("losses {}".format(
+            np.array_str(learner.losses.data.squeeze().numpy())))

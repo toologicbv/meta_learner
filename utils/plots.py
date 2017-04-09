@@ -12,19 +12,35 @@ def create_exper_label(exper):
 
     retrain = "_retrain" if exper.args.retrain else ""
     label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
-        str(int(exper.avg_num_opt_steps)) + "ops_" + exper.args.loss_type + retrain
+        str(int(exper.avg_num_opt_steps)) + "ops" + retrain
 
     return label1
 
 
-def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=False, show=False):
-    title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
-    plt.figure(figsize=(height, width))
-    plt.xlabel("epochs")
+def create_x_val_array(exper, loss):
+    x_vals = [i for i in range(exper.epoch + 1) if i % exper.args.eval_freq == 0]
+
+    if exper.args.eval_freq == 1:
+        x_vals = x_vals[1:]
+    elif exper.args.eval_freq == exper.epoch:
+        # eval frequency and total number of epochs are the same, therefore
+        # one evaluation moments exper.epoch
+        x_vals = [exper.epoch]
+    else:
+        x_vals = x_vals[1:]
+        if len(x_vals) == len(loss):
+            if x_vals[-1] != exper.epoch:
+                x_vals[-1] = exper.epoch
+        else:
+            if x_vals[-1] != exper.epoch:
+                x_vals.append(exper.epoch)
+    return x_vals
+
+
+def get_exper_loss_data(exper, loss_type, fig_name=None):
     exper_label = "_" + create_exper_label(exper)
     dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
-
-    if loss_type == "normal":
+    if loss_type == "loss":
         if exper.args.learner == "act":
             num_opt_steps = exper.avg_num_opt_steps
         else:
@@ -35,7 +51,7 @@ def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=
         plt.ylabel("loss")
         if fig_name is None:
             fig_name = os.path.join(exper.output_dir, config.loss_fig_name + exper_label + dt + config.dflt_plot_ext)
-    elif loss_type == "act":
+    elif loss_type == "act_loss":
         num_opt_steps = exper.avg_num_opt_steps
         train_loss = exper.epoch_stats['act_loss']
         val_loss = exper.val_stats['act_loss']
@@ -45,32 +61,31 @@ def loss_plot(exper, fig_name=None, loss_type="normal", height=8, width=6, save=
                                     config.dflt_plot_ext)
     else:
         raise ValueError("loss_type {} not supported".format(loss_type))
+
+    return num_opt_steps, train_loss, val_loss, fig_name
+
+
+def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False):
+
+    num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
+    title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
+    plt.figure(figsize=(height, width))
+    plt.xlabel("epochs")
     x_vals = range(1, exper.epoch+1, 1)
     plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
 
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
-    x_vals = [i for i in range(exper.epoch+1) if i % exper.args.eval_freq == 0]
-    if exper.args.eval_freq == 1:
-        x_vals = x_vals[1:]
-    elif exper.args.eval_freq == exper.epoch:
-        # eval frequency and total number of epochs are the same, therefore
-        # two evaluation moments 1 and exper.epoch
-        x_vals = [1, exper.epoch]
-    else:
-        x_vals[0] = 1
-        if len(x_vals) == len(val_loss):
-            if x_vals[-1] != exper.epoch:
-                x_vals[-1] = exper.epoch
-        else:
-            if x_vals[-1] != exper.epoch:
-                x_vals.append(exper.epoch)
 
-    plt.plot(x_vals[1:], val_loss[1:], 'b', label="valid-loss")
+    x_vals = create_x_val_array(exper, val_loss)
+
+    if x_vals[0] <= 5:
+        offset = 1
+    else:
+        offset = 0
+    plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
     plt.legend(loc="best")
-    plt.title("Train/validation loss {}-epochs/{}-opt-steps/{}-loss-func".format(exper.epoch,
-                                                                                 num_opt_steps,
-                                                                                 exper.args.loss_type), **title_font)
+    plt.title("Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps), **title_font)
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
@@ -92,27 +107,16 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
 
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
-    x_vals = [i for i in range(exper.epoch + 1) if i % exper.args.eval_freq == 0]
-    if exper.args.eval_freq == 1:
-        x_vals = x_vals[1:]
-    elif exper.args.eval_freq == exper.epoch:
-        # eval frequency and total number of epochs are the same, therefore
-        # two evaluation moments 1 and exper.epoch
-        x_vals = [1, exper.epoch]
-    else:
-        x_vals[0] = 1
-        if len(x_vals) == len(exper.val_stats['param_error']):
-            if x_vals[-1] != exper.epoch:
-                x_vals[-1] = exper.epoch
-        else:
-            if x_vals[-1] != exper.epoch:
-                x_vals.append(exper.epoch)
 
-    plt.plot(x_vals[1:], exper.val_stats['param_error'][1:], 'b', label="valid-loss")
+    x_vals = create_x_val_array(exper, exper.val_stats['param_error'])
+    if x_vals[0] <= 5:
+        offset = 1
+    else:
+        offset = 0
+    plt.plot(x_vals[offset:], exper.val_stats['param_error'][offset:], 'b', label="valid-loss")
     plt.legend(loc="best")
-    plt.title("Train/validation param-error {}-epochs/{}-opt-steps/{}-loss-func".format(exper.epoch,
-                                                                                 exper.avg_num_opt_steps,
-                                                                                 exper.args.loss_type), **title_font)
+    plt.title("Train/validation param-error {}-epochs/{}-opt-steps".format(exper.epoch, exper.avg_num_opt_steps),
+              **title_font)
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, config.param_error_fig_name + exper_label + dt + config.dflt_plot_ext)
     if save:
@@ -232,3 +236,55 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
     if show:
         plt.show()
     plt.close()
+
+
+def plot_best_val_result(expers, height=8, width=12, do_show=True):
+    num_of_expers = len(expers)
+
+    best_val_runs = [0 for i in range(num_of_expers)]
+    lowest_value = [0 for i in range(num_of_expers)]
+    idx_lowest_value = [0 for i in range(num_of_expers)]
+    p_colors = ['orange', 'red', 'dodgerblue', 'green', 'darkviolet']
+    plot_title = "Final avg parameter error per step for 2D-Quadratics (100 validation functions)"
+    fig = plt.figure(figsize=(width, height))
+    plt.title(plot_title)
+    style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
+             [4, 4, 2, 8, 2, 2]]
+
+    for e in np.arange(num_of_expers):
+        res_dict = expers[e].val_stats["step_param_losses"]
+        keys = res_dict.keys()
+        res = res_dict[keys[len(keys) - i]]
+        model = expers[e].args.model
+        min_param_value = 999.
+
+        for val_run in keys:
+            idx_min = np.argmin(res_dict[val_run])
+            if min_param_value > res_dict[val_run][idx_min]:
+                best_val_runs[e] = val_run
+                lowest_value[e] = res_dict[val_run][idx_min]
+                min_param_value = lowest_value[e]
+                idx_lowest_value[e] = idx_min
+        print("model: {} best val run {} = {:.4f} / step {}".format(model, best_val_runs[e],
+                                                                    lowest_value[e], idx_lowest_value[e]))
+        if hasattr(expers[e], "val_avg_num_opt_steps"):
+            pass
+            """
+                TO DO, plot the step where ACT would stop on average
+            """
+            # print("val_avg_num_opt_steps {}".format(expers[e].val_avg_num_opt_steps))
+        index = np.arange(1, len(res_dict[best_val_runs[e]]) + 1)
+
+        #
+        plt.semilogy(index, res_dict[best_val_runs[e]], color=p_colors[e], dashes=style[e], linewidth=2.,
+                     label="{}({})".format(model, best_val_runs[e]))
+        plt.xticks(index, index - 1)
+        plt.xlabel("Number of optimization steps")
+        plt.ylabel("avg final param error")
+        plt.legend(loc="best")
+
+    if do_show:
+        plt.show()
+    plt.close()
+
+    return best_val_runs, lowest_value

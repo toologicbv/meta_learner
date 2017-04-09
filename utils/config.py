@@ -45,10 +45,12 @@ class MetaConfig(object):
             Important parameter for prior distribution P(T)
         """
         # probability of continue computation
-        self.continue_prob = 0.86
+        # self.continue_prob = 0.86
+        self.continue_prob = 0.89
         # horizon for maximum number of timesteps
-        self.T = 10
-
+        # self.T = 10 # avg = 5 with 0.82
+        # self.T = 20 # avg = 7 with 0.86
+        self.T = 25 # avg = 10 with 0.89
         self.max_val_opt_steps = 10
 
         # some fonts defaults for headers of plots
