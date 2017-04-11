@@ -243,9 +243,9 @@ def end_run(experiment, model, func_list):
                                                                                              diff_func_file))
     if experiment.args.save_log:
         save_exper(experiment)
-        loss_plot(experiment, loss_type="normal", save=True)
+        loss_plot(experiment, loss_type="loss", save=True)
         if experiment.args.learner == "act":
-            loss_plot(experiment, loss_type="act", save=True)
+            loss_plot(experiment, loss_type="act_loss", save=True)
             # plot histogram of T distribution (number of optimization steps during training)
             plot_dist_optimization_steps(experiment, data_set="train", save=True)
             plot_dist_optimization_steps(experiment, data_set="val", save=True)

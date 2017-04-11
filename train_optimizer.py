@@ -46,8 +46,8 @@ parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
-parser.add_argument('--functions_per_epoch', type=int, default=200, metavar='N',
-                    help='updates per epoch (default: 200)')
+parser.add_argument('--functions_per_epoch', type=int, default=400, metavar='N',
+                    help='updates per epoch (default: 400)')
 parser.add_argument('--max_epoch', type=int, default=5, metavar='N',
                     help='number of epoch (default: 5)')
 parser.add_argument('--hidden_size', type=int, default=20, metavar='N',

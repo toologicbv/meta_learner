@@ -32,7 +32,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         plot_idx = [(i + 1) * (len(val_set) // num_of_plots) - 1 for i in range(num_of_plots)]
     num_of_funcs = len(val_set)
 
-    meta_logger.info("INFO - Epoch {}: Validating meta-learner with {} functions".format(exper.epoch, num_of_funcs))
+    meta_logger.info("INFO - Epoch {}: Validating model {} with {} functions".format(exper.epoch, exper.args.model,
+                                                                                     num_of_funcs))
     total_loss = 0
     total_param_loss = 0
     total_act_loss = 0
@@ -135,8 +136,10 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         str_losses = np.array_str(np_losses)
         if exper.args.learner == "act":
             # get prior probs for this number of optimizer steps
-            kl_prior_dist = ConditionalTimeStepDist(T=opt_steps, q_prob=config.continue_prob)
-            priors = Variable(torch.from_numpy(kl_prior_dist.pmfunc(np.arange(1, opt_steps + 1))).float())
+            # TODO currently we set T=max_steps because we are not stopping at the optimal step!!!
+            kl_prior_dist = ConditionalTimeStepDist(T=max_steps, q_prob=config.continue_prob)
+            # TODO again max_steps need to be adjusted later here when we really stop!!!
+            priors = Variable(torch.from_numpy(kl_prior_dist.pmfunc(np.arange(1, max_steps + 1))).float())
             act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val')
             total_act_loss += act_loss.data
             str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
