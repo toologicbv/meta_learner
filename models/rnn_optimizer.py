@@ -44,8 +44,9 @@ def kl_divergence(q_probs=None, prior_probs=None, do_average=True):
 
 class MetaLearner(nn.Module):
 
-    def __init__(self, func, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False):
+    def __init__(self, func, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False, lstm_bias=False):
         super(MetaLearner, self).__init__()
+        self.bias = False
         self.name = "default"
         self.opt_wrapper = func
         self.hidden_size = num_hidden
@@ -56,7 +57,7 @@ class MetaLearner(nn.Module):
         self.ln1 = LayerNorm1D(num_hidden)
         self.lstms = nn.ModuleList()
         for i in range(num_layers):
-            self.lstms.append(LayerNormLSTMCell(num_hidden, num_hidden))
+            self.lstms.append(LayerNormLSTMCell(num_hidden, num_hidden, forget_gate_bias=-1, use_bias=self.bias))
             # self.lstms.append(nn.LSTMCell(num_hidden, num_hidden))
 
         self.linear_out = nn.Linear(num_hidden, 1)
@@ -206,8 +207,10 @@ class BatchWrapperOptimizees(object):
 
 
 class AdaptiveMetaLearnerV1(MetaLearner):
-    def __init__(self, func, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False):
-        super(AdaptiveMetaLearnerV1, self).__init__(func, num_inputs, num_hidden, num_layers, use_cuda)
+    def __init__(self, func, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False, bias=False):
+        super(AdaptiveMetaLearnerV1, self).__init__(func, num_inputs, num_hidden, num_layers,
+                                                    use_cuda, lstm_bias=bias)
+        self.bias = bias
         self.linear_grads = nn.Linear(self.num_params, 1)
         self.num_hidden_act = num_hidden
         # holds losses from each optimizer step
@@ -231,7 +234,8 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         self.act_ln1 = LayerNorm1D(self.num_hidden_act)
         self.act_lstms = nn.ModuleList()
         for i in range(num_layers):
-            self.act_lstms.append(LayerNormLSTMCell(self.num_hidden_act, self.num_hidden_act))
+            self.act_lstms.append(LayerNormLSTMCell(self.num_hidden_act, self.num_hidden_act, forget_gate_bias=-1,
+                                                    use_bias=self.bias))
 
         self.act_linear_out = nn.Linear(self.num_hidden_act, 1)
 

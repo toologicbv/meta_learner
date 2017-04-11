@@ -6,6 +6,7 @@ import shutil
 from config import config
 from datetime import datetime
 from pytz import timezone
+import yaml
 
 import argparse
 import logging
@@ -16,6 +17,22 @@ import models.rnn_optimizer
 from models.rnn_optimizer import MetaLearner, WrapperOptimizee
 from quadratic import Quadratic2D, Quadratic
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
+
+
+def setup_logging(exper, default_level=logging.INFO, env_key='LOG_CFG'):
+    """Setup logging configuration
+
+    """
+    path = os.path.join(exper.output_dir, config.logger_filename)
+    value = os.getenv(env_key, None)
+    if value:
+        path = value
+    if os.path.exists(path):
+        with open(path, 'rt') as f:
+            l_config = yaml.safe_load(f.read())
+        logging.config.dictConfig(l_config)
+    else:
+        logging.basicConfig(level=default_level)
 
 
 def create_logger(exper, file_handler=False):
@@ -187,6 +204,7 @@ class Experiment(object):
         self.avg_num_opt_steps = 0
         self.val_avg_num_opt_steps = 0
         self.config = config
+        self.comments = ""
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],

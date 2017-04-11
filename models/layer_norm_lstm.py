@@ -7,9 +7,9 @@ from layer_norm import LayerNorm1D
 
 class LayerNormLSTMCell(nn.Module):
 
-    def __init__(self, num_inputs, num_hidden, forget_gate_bias=-1):
+    def __init__(self, num_inputs, num_hidden, forget_gate_bias=-1, use_bias=True):
         super(LayerNormLSTMCell, self).__init__()
-
+        self.use_bias = use_bias
         self.forget_gate_bias = forget_gate_bias
         self.num_hidden = num_hidden
         self.fc_i2h = nn.Linear(num_inputs, 4 * num_hidden)
@@ -18,7 +18,7 @@ class LayerNormLSTMCell(nn.Module):
         self.ln_i2h = LayerNorm1D(4 * num_hidden)
         self.ln_h2h = LayerNorm1D(4 * num_hidden)
 
-        self.ln_h2o = LayerNorm1D(num_hidden)
+        self.ln_h2o = LayerNorm1D(num_hidden, use_bias=self.use_bias)
 
     def forward(self, inputs, state):
         hx, cx = state

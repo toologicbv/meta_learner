@@ -73,8 +73,10 @@ parser.add_argument('--learner', type=str, default="act",
                     help='type of learner to use 1) manual (e.g. Adam) 2) meta 3) act')
 parser.add_argument('--version', type=str, default="V1",
                     help='version of the ACT leaner (currently V1 (two separate LSTMS) and V2 (one LSTM)')
-parser.add_argument('--optimizer', type=str, default="Adam",
+parser.add_argument('--optimizer', type=str, default="adam",
                     help='which optimizer to use sgd, adam, adadelta, adagrad, rmsprop')
+parser.add_argument('--comments', type=str, default="",
+                    help='add extra comments to Experiment object')
 
 args = parser.parse_args()
 args.cuda = args.use_cuda and torch.cuda.is_available()
@@ -94,7 +96,9 @@ def main():
     else:
         SEED = 4325
     torch.manual_seed(SEED)
+    np.random.seed(SEED)
     exper = Experiment(args, config)
+    exper.comments = args.comments
     # get distribution P(T) over possible number of total timesteps
     if args.learner == "act":
         pt_dist = TimeStepsDist(config.T, config.continue_prob)
@@ -145,8 +149,6 @@ def main():
                 optimizer_steps = pt_dist.rvs(n=1)[0] + 1
                 prior_dist = ConditionalTimeStepDist(T=optimizer_steps, q_prob=config.continue_prob)
                 prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps + 1))).float())
-
-            meta_logger.debug("Number of optimization steps {}".format(optimizer_steps))
 
             for k in range(optimizer_steps):
                 # Keep states for truncated BPTT

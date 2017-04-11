@@ -17,7 +17,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     # we will probably call this procedure later in another context (to evaluate meta-learners)
     # so make sure the globals exist.
     if 'STD_OPT_LR' not in globals():
-        meta_logger.debug("create global")
         STD_OPT_LR = 4e-1
     # initialize stats arrays
     exper.val_stats["step_losses"][exper.epoch] = np.zeros(config.max_val_opt_steps + 1)
@@ -91,10 +90,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                     # we're currently not breaking out of the loop when do_stop is true, therefore we
                     # need this extra do_stop condition here in order not to compute it again
                     if len(qt_weights) >= 2 and not do_stop:
-                        do_stop = stop_computing(qt_weights, meta_logger)
-
-                        meta_logger.debug("losses {}".format(np.array_str(np.array([l.data.squeeze().numpy()[0]
-                                                                                    for l in meta_learner.losses]))))
+                        do_stop = stop_computing(qt_weights, meta_logger=None)
+                        # meta_logger.debug("losses {}".format(np.array_str(np.array([l.data.squeeze().numpy()[0]
+                        #                                                            for l in meta_learner.losses]))))
                 # Update the parameter of the function that is optimized
                 q_func.parameter.data.copy_(par_new)
             else:
@@ -149,11 +147,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                                                                  q_func.true_opt[1].data.numpy()[0]))
             meta_logger.info("\tFinal parameter values ({:.2f},{:.2f})".format(q_func.parameter[0].data.numpy()[0],
                                                                   q_func.parameter[1].data.numpy()[0]))
-            if exper.args.learner == 'act':
-                meta_logger.info("Final qt-probabilities")
-                meta_logger.info("raw:   {}".format(np.array_str(np.array(qt_weights))))
-                meta_logger.info("probs: {}".format(str_q_probs))
-                meta_logger.info("losses: {}".format(str_losses))
+            # if exper.args.learner == 'act':
+            #     meta_logger.info("Final qt-probabilities")
+            #     meta_logger.info("raw:   {}".format(np.array_str(np.array(qt_weights))))
+            #     meta_logger.info("probs: {}".format(str_q_probs))
+            #     meta_logger.info("losses: {}".format(str_losses))
 
         # only plot function in certain cases, last condition...exceptionally if we found one in 2 opt-steps
         if plot_func and f in plot_idx:
