@@ -56,7 +56,7 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
         num_opt_steps = exper.avg_num_opt_steps
         train_loss = exper.epoch_stats['act_loss']
         val_loss = exper.val_stats['act_loss']
-        plt.ylabel("loss")
+        plt.ylabel("act-loss")
         if fig_name is None:
             fig_name = os.path.join(exper.output_dir, config.act_loss_fig_name + exper_label + dt +
                                     config.dflt_plot_ext)
@@ -91,6 +91,10 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
         offset = 1
     else:
         offset = 0
+
+    print(x_vals[offset:])
+    print(val_loss)
+
     plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
     plt.legend(loc="best")
     plt.title("Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps), **title_font)
@@ -246,7 +250,8 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
     plt.close()
 
 
-def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False):
+def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
+                    loss_type='param_error'):
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -254,20 +259,27 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
     lowest_value = [0 for i in range(num_of_expers)]
     idx_lowest_value = [0 for i in range(num_of_expers)]
     p_colors = ['grey', 'orange', 'red', 'violet', 'dodgerblue', 'green', 'darkviolet']
-    plot_title = "Final avg parameter error per step for 2D-Quadratics"
-    if plot_best:
-        plot_title = "Best runs selected --- " + plot_title
-    else:
-        plot_title = "Last run selected --- " + plot_title
+
     plt.figure(figsize=(width, height))
-    plt.title(plot_title, **title_font)
     style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
              [4, 4, 2, 8, 2, 2]]
     iter_colors = cycle(p_colors)
     iter_styles = cycle(style)
 
     for e in np.arange(num_of_expers):
-        res_dict = expers[e].val_stats["step_param_losses"]
+        if loss_type == "param_error":
+            res_dict = expers[e].val_stats["step_param_losses"]
+            y_label = "avg final param error"
+            plot_title = "Final avg parameter error per step for 2D-Quadratics"
+        else:
+            res_dict = expers[e].val_stats["step_losses"]
+            y_label = "avg final loss"
+            plot_title = "Final avg loss per step for 2D-Quadratics"
+        if plot_best:
+            plot_title = "Best runs selected --- " + plot_title
+        else:
+            plot_title = "Last run selected --- " + plot_title
+
         keys = res_dict.keys()
         # res = res_dict[keys[len(keys) - i]]
         model = expers[e].args.model
@@ -300,12 +312,14 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
         index = np.arange(1, len(res_dict[best_val_runs[e]]) + 1)
 
         #
+
         plt.semilogy(index, res_dict[best_val_runs[e]], color=iter_colors.next(), dashes=iter_styles.next(),
                      linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
         plt.xticks(index, index - 1)
         plt.xlabel("Number of optimization steps")
-        plt.ylabel("avg final param error")
+        plt.ylabel(y_label)
         plt.legend(loc="best")
+        plt.title(plot_title, **title_font)
 
     if do_save:
         dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
@@ -325,13 +339,14 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
 
 
 def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True, do_save=False, offset=5,
-                      N=4, fig_name=None):
+                      N=4, fig_name=None, validation=False):
 
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
     p_colors = ['grey', 'orange', 'red', 'violet', 'dodgerblue', 'green', 'darkviolet']
-    plot_title = "Avg training loss per epoch for 2D-Quadratics (200 functions/epoch)"
+    plot_title = "Avg " + "validation" if validation else "training"  
+    plot_title += " loss per epoch for 2D-Quadratics"
     plt.figure(figsize=(width, height))
     plt.title(plot_title, **title_font)
     style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
@@ -341,21 +356,41 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
     for e in np.arange(num_of_expers):
 
         if loss_type == "loss":
-            if expers[e].args.learner == 'act':
-                loss = 'act_loss'
-            else:
-                loss = "loss"
-        else:
+            loss = "loss"
+        elif loss_type == 'act_loss':
+            loss = 'act_loss'
+        elif loss_type == 'param_error':
             loss = "param_error"
+        else:
+            raise ValueError("{} loss type is not supported".format(loss_type))
 
         num_opt_steps, train_loss, val_loss, _ = get_exper_loss_data(expers[e], loss)
 
         model = expers[e].args.model
-        x_vals = range(1, expers[e].epoch + 1, 1)
-        avg_train_loss = np.convolve(train_loss, np.ones((N,)) / N, mode='same')
-        # dashes=style[e]
-        plt.plot(x_vals[offset:], avg_train_loss[offset:], color=iter_colors.next(), linewidth=2.,
-                 label="{}({})".format(model, expers[e].epoch))
+
+        if not validation:
+            # training losses
+            x_vals = range(1, expers[e].epoch + 1, 1)
+            # act is only valid for act learners
+            if train_loss == []:
+                pass
+            else:
+                avg_train_loss = np.convolve(train_loss, np.ones((N,)) / N, mode='same')
+                plt.plot(x_vals[offset:], avg_train_loss[offset:], color=iter_colors.next(), linewidth=2.,
+                        label="{}({})".format(model, expers[e].epoch))
+        else:
+            # validation results
+            x_vals = create_x_val_array(expers[e], val_loss)
+
+            if x_vals[0] <= 5:
+                offset = 1
+            else:
+                offset = 0
+            if val_loss == []:
+                pass
+            else:
+                plt.plot(x_vals[offset:], val_loss[offset:], color=iter_colors.next(), linewidth=2., 
+                    label="{}({})".format(model, expers[e].epoch))
 
         if len(x_vals) <= 10:
             plt.xticks(x_vals)
@@ -369,6 +404,77 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
         dt = str.replace(str.replace(dt, ':', '_'), '-', '')
         if fig_name is None:
             fig_name = "loss_curves"
+        fig_name = os.path.join(config.figure_path, fig_name + dt + config.dflt_plot_ext)
+
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    if do_show:
+        plt.show()
+    plt.close()
+
+
+def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=False, fig_name=None, do_save=False):
+    num_of_expers = len(expers)
+    num_of_val_runs = len(expers[0].val_stats["step_param_losses"])
+
+    if num_of_plots == 0:
+        num_of_plots = num_of_val_runs
+
+    max_steps = len(expers[0].val_stats["step_param_losses"][expers[0].val_stats["step_param_losses"].keys()[0]])
+    index = np.arange(1, max_steps + 1)
+
+    plot_title = "Final avg parameter error for 2D-Quadratics"
+    fig = plt.figure(figsize=(width, height))
+    fig.suptitle(plot_title, **config.title_font)
+
+    p_colors = ['grey', 'orange', 'red', 'violet', 'dodgerblue', 'green', 'darkviolet']
+    style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
+             [4, 4, 2, 8, 2, 2]]
+
+    if num_of_plots == 1:
+        plot_cols = 1
+        fig.set_figheight(9)
+    elif num_of_plots == 2:
+        plot_cols = 1
+        fig.set_figheight(15)
+    else:
+        plot_cols = 2
+
+    for i in np.arange(1, num_of_plots + 1):
+
+        if i == 1:
+            ax1 = plt.subplot(num_of_plots, plot_cols, i)
+        else:
+            _ = plt.subplot(num_of_plots, plot_cols, i, sharey=ax1)
+
+        if i == num_of_plots or i == num_of_plots - 1:
+            plt.xlabel("Number of optimization steps")
+        if i % 2 != 0:
+            plt.ylabel("Final error")
+        if num_of_plots > 2:
+            fig.set_figheight(25)
+        iter_colors = cycle(p_colors)
+        iter_styles = cycle(style)
+        for e in np.arange(num_of_expers):
+            res_dict = expers[e].val_stats["step_param_losses"]
+            keys = res_dict.keys()
+            # could be that not all experiments have the same number of val runs
+            if i <= len(keys):
+                res = res_dict[keys[len(keys) - i]]
+                model = expers[e].args.model
+                # plt.bar(index + (e*bar_width), res,  bar_width,  color=bar_colors[e], log=True,
+                #        align="center", label="{}({})".format(model, keys[len(keys)-i]))
+                # plt.xticks(index + bar_width / 2, index-1)
+                plt.semilogy(index, res, color=iter_colors.next(), dashes=iter_styles.next(), linewidth=2.,
+                             label="{}({})".format(model, keys[len(keys) - i]))
+                plt.legend(loc="best", prop={'size': 8})
+
+    if do_save:
+        dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
+        dt = str.replace(str.replace(dt, ':', '_'), '-', '')
+        if fig_name is None:
+            fig_name = "param_loss_per_step"
         fig_name = os.path.join(config.figure_path, fig_name + dt + config.dflt_plot_ext)
 
         plt.savefig(fig_name, bbox_inches='tight')

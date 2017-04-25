@@ -12,11 +12,12 @@ from utils.probs import ConditionalTimeStepDist
 
 
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
-                       num_of_plots=3, save_plot=True, show_plot=False, diff_func_list=None):
+                       num_of_plots=3, save_plot=True, show_plot=False):
     global STD_OPT_LR
     # we will probably call this procedure later in another context (to evaluate meta-learners)
     # so make sure the globals exist.
     if 'STD_OPT_LR' not in globals():
+        meta_logger.debug("create global")
         STD_OPT_LR = 4e-1
     # initialize stats arrays
     exper.val_stats["step_losses"][exper.epoch] = np.zeros(config.max_val_opt_steps + 1)
@@ -90,9 +91,10 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                     # we're currently not breaking out of the loop when do_stop is true, therefore we
                     # need this extra do_stop condition here in order not to compute it again
                     if len(qt_weights) >= 2 and not do_stop:
-                        do_stop = stop_computing(qt_weights, meta_logger=None)
-                        # meta_logger.debug("losses {}".format(np.array_str(np.array([l.data.squeeze().numpy()[0]
-                        #                                                            for l in meta_learner.losses]))))
+                        do_stop = stop_computing(qt_weights, meta_logger)
+
+                        meta_logger.debug("losses {}".format(np.array_str(np.array([l.data.squeeze().numpy()[0]
+                                                                                    for l in meta_learner.losses]))))
                 # Update the parameter of the function that is optimized
                 q_func.parameter.data.copy_(par_new)
             else:
@@ -147,11 +149,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                                                                  q_func.true_opt[1].data.numpy()[0]))
             meta_logger.info("\tFinal parameter values ({:.2f},{:.2f})".format(q_func.parameter[0].data.numpy()[0],
                                                                   q_func.parameter[1].data.numpy()[0]))
-            # if exper.args.learner == 'act':
-            #     meta_logger.info("Final qt-probabilities")
-            #     meta_logger.info("raw:   {}".format(np.array_str(np.array(qt_weights))))
-            #     meta_logger.info("probs: {}".format(str_q_probs))
-            #     meta_logger.info("losses: {}".format(str_losses))
+            if exper.args.learner == 'act':
+                meta_logger.info("Final qt-probabilities")
+                meta_logger.info("raw:   {}".format(np.array_str(np.array(qt_weights))))
+                meta_logger.info("probs: {}".format(str_q_probs))
+                meta_logger.info("losses: {}".format(str_losses))
 
         # only plot function in certain cases, last condition...exceptionally if we found one in 2 opt-steps
         if plot_func and f in plot_idx:
@@ -168,10 +170,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         if verbose and f in plot_idx:
             meta_logger.info("\tValidation - final error: {:.4}".format(loss_diff[0]))
 
-        if not exper.args.learner == 'manual' and param_loss > 2. and exper.epoch == exper.args.max_epoch:
-            # add this function to the list of "difficult" functions. can be used later for analysis
-            # and will be saved in log directory as "dill" dump
-            diff_func_list.append(q_func)
 
     """
         ****************** END OF VALIDATION **********************
@@ -183,12 +181,13 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     exper.val_stats["step_param_losses"][exper.epoch] *= 1. / (f + 1)
     exper.val_stats["step_param_losses"][exper.epoch] = np.around(exper.val_stats["step_param_losses"][exper.epoch],
                                                                   decimals=4)
+    exper.val_stats["loss"].append(total_loss[0])
     if exper.args.learner == "act":
         total_act_loss *= 1. / (f + 1)
         exper.val_stats["act_loss"].append(total_act_loss[0])
         exper.val_avg_num_opt_steps = int(np.around(np.mean(np.array(opt_stop_steps)), decimals=0))
+        meta_logger.info("INFO - Avg number of steps: {}".format(exper.val_avg_num_opt_steps))
 
-    exper.val_stats["loss"].append(total_loss[0])
     exper.val_stats["param_error"].append(total_param_loss)
     meta_logger.info("INFO - Epoch {}: Final validation average loss / param-loss: {:.4}/{:.4}".format(exper.epoch,
                                                                                                        total_loss[0],
