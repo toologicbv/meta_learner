@@ -7,6 +7,8 @@ from collections import OrderedDict
 from datetime import datetime
 from pytz import timezone
 from itertools import cycle
+from probs import ConditionalTimeStepDist
+from torch.autograd import Variable
 
 
 def create_exper_label(exper):
@@ -73,7 +75,7 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
     return num_opt_steps, train_loss, val_loss, fig_name
 
 
-def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False):
+def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False, validation=True):
 
     num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
@@ -92,10 +94,8 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     else:
         offset = 0
 
-    print(x_vals[offset:])
-    print(val_loss)
-
-    plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
+    if validation:
+        plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
     plt.legend(loc="best")
     plt.title("Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps), **title_font)
     if save:
@@ -170,8 +170,9 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     plt.close()
 
 
-def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False, plot_idx=[]):
-    bar_width = 0.5
+def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False, plot_idx=[],
+                  plot_prior=False):
+    bar_width = 0.3
     if data_set == "train":
         T = len(exper.epoch_stats["qt_hist"])
         opt_step_hist = exper.epoch_stats["opt_step_hist"]
@@ -199,7 +200,12 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         if data_set == 'val':
             # for now we make only one plot for the validation statistics because we fixed the # of steps to 4
             # determine number of plots we can make
-            if np.sum(opt_step_hist > 5) == 1:
+            if np.sum(opt_step_hist != 0) == 1:
+                num_of_plots = 1
+                height = 10
+                width = 25
+                plot_idx = [np.argmax(opt_step_hist) + 1]
+            elif np.sum(opt_step_hist > 5) == 1:
                 plot_idx = [np.argmax(opt_step_hist) + 1]
                 num_of_plots = len(plot_idx)
             else:
@@ -225,11 +231,17 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
     fig.suptitle(plot_title, **config.title_font)
     for i in range(1, num_of_plots + 1):
         index = range(1, plot_idx[i - 1] + 1)
+        T = len(index)
         if i == 1:
             ax1 = plt.subplot(num_of_plots, 2, i)
         else:
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
+
         plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center')
+        if plot_prior:
+            kl_prior_dist = ConditionalTimeStepDist(T=T, q_prob=config.continue_prob)
+            priors = kl_prior_dist.pmfunc(np.arange(0, T))
+            plt.bar(np.array(index)+bar_width, priors, bar_width, color='r', align='center')
         plt.xticks(index)
         if i == num_of_plots or i == num_of_plots - 1:
             plt.xlabel("Steps")

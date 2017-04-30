@@ -50,20 +50,23 @@ def print_flags(exper_args, logger):
         logger.info(key + ' : ' + str(value))
 
 
-def softmax(x):
+def softmax(x, dim=1):
     """Compute softmax values for each sets of scores in x. Expecting numpy arrays"""
-    e_x = np.exp(x - np.max(x))
-    return e_x / e_x.sum()
+    e_x = np.exp(x - np.max(x, dim, keepdims=True))
+
+    return e_x / e_x.sum(axis=dim, keepdims=True)
 
 
-def stop_computing(q_logits, meta_logger=None):
-    q_probs = softmax(q_logits)
-    if meta_logger is not None:
-        meta_logger.debug("q_probs {}".format(np.array_str(q_probs)))
-    if q_probs[-1] <= q_probs[-2]:
-        return True
-    else:
-        return False
+def stop_computing(q_probs, threshold=0.8):
+    """
+    Used during validation to determine the moment to stop computation based on qt-values
+
+    :param q_probs: contains the qt probabilities up to horizon T: [batch_size, opt_steps]
+    :return: vector of booleans [batch_size]
+    """
+    cumsum = np.cumsum(q_probs, 1)
+    stops = np.cumsum(q_probs, 1)[:, -2] > threshold
+    return stops
 
 
 def preprocess_gradients(x):
@@ -127,12 +130,14 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
         # 2 separate loops and works on the mean of the gradients, where V1 works on the individual parameters
         # only use first 2 characters of args.version e.g. V1 instead of V1.1
         act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version[0:2])
-        meta_optimizer = act_class(num_params_optimizee, num_layers=exper.args.num_layers,
+        meta_optimizer = act_class(num_params_optimizee,
+                                   num_layers=exper.args.num_layers,
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
                                    output_bias=output_bias)
     else:
-        meta_optimizer = MetaLearner(num_params_optimizee, num_layers=exper.args.num_layers,
+        meta_optimizer = MetaLearner(num_params_optimizee,
+                                     num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
                                      use_cuda=exper.args.cuda,
                                      output_bias=output_bias)
@@ -169,11 +174,13 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     return meta_optimizer
 
 
-def load_val_data(path_specs=None):
+def load_val_data(path_specs=None, size=10000, noise_sigma=1., dim=2):
+
+    file_name = config.val_file_name_suffix + str(size) + "_" + str(noise_sigma) + "_" + str(dim) + "d.dll"
     if path_specs is not None:
-        load_file = path_specs
+        load_file = os.path.join(path_specs, file_name)
     else:
-        load_file = os.path.join(config.data_path, config.validation_funcs)
+        load_file = os.path.join(config.data_path, file_name)
     try:
         with open(load_file, 'rb') as f:
             val_funcs = dill.load(f)
@@ -191,7 +198,8 @@ class Experiment(object):
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
                           "step_losses": OrderedDict(),
-                          "step_param_losses": OrderedDict()}
+                          "step_param_losses": OrderedDict(),
+                          "qt_dist": {}}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -241,7 +249,7 @@ def prepare(prcs_args, exper):
     return log_dir
 
 
-def end_run(experiment, model):
+def end_run(experiment, model, validation=True):
     if not experiment.args.learner == 'manual' and model.name is not None:
         model_path = os.path.join(experiment.output_dir, model.name + config.save_ext)
         torch.save(model.state_dict(), model_path)
@@ -249,34 +257,31 @@ def end_run(experiment, model):
         print("INFO - Successfully saved model parameters to {}".format(model_path))
 
     save_exper(experiment)
-    loss_plot(experiment, loss_type="loss", save=True)
+    loss_plot(experiment, loss_type="loss", save=True, validation=validation)
     if experiment.args.learner == "act":
         loss_plot(experiment, loss_type="act_loss", save=True)
         # plot histogram of T distribution (number of optimization steps during training)
         plot_dist_optimization_steps(experiment, data_set="train", save=True)
         plot_dist_optimization_steps(experiment, data_set="val", save=True)
         plot_qt_probs(experiment, data_set="train", save=True)
-        plot_qt_probs(experiment, data_set="val", save=True)
+        plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True)
     param_error_plot(experiment, save=True)
 
 
-def detailed_train_info(logger, func, args, learner, step, optimizer_steps, error):
+def detailed_train_info(logger, func, f_idx, args, learner, step, optimizer_steps, error):
     logger.info("INFO-track -----------------------------------------------------")
-    logger.info("{}-th function (op-steps {}): loss {:.4f}".format(step, optimizer_steps, error))
-    logger.info(func.poly_desc)
-    logger.info("Initial parameter values ({:.2f},{:.2f})".format(
-        func.initial_parms[0].data.numpy()[0],
-        func.initial_parms[1].data.numpy()[0]))
-    logger.info("True parameter values ({:.2f},{:.2f})".format(
-        func.true_opt[0].data.numpy()[0],
-        func.true_opt[1].data.numpy()[0]))
-    logger.info("Final parameter values ({:.2f},{:.2f})".format(
-        func.parameter[0].data.numpy()[0],
-        func.parameter[1].data.numpy()[0]))
-    if args.learner == 'act':
-        logger.debug("Final qt-probabilities")
-        logger.debug("{}".format(np.array_str(learner.q_soft.data.squeeze().numpy())))
-        logger.debug("raw-values {}".format(
-            np.array_str(learner.q_t.data.squeeze().numpy())))
-        logger.debug("losses {}".format(
-            np.array_str(learner.losses.data.squeeze().numpy())))
+    logger.info("{}-th batch (op-steps {}): loss {:.4f}".format(step, optimizer_steps, error))
+    logger.info("Example function: {}".format(func.poly_desc(f_idx)))
+    p_init = func.initial_params[f_idx, :].data.numpy().squeeze()
+    logger.info("Initial parameter values {}".format(np.array_str(p_init, precision=3)))
+    p_true = func.true_params[f_idx, :].data.numpy().squeeze()
+    logger.info("True parameter values {}".format(np.array_str(p_true, precision=3)))
+    params = func.params[f_idx, :].data.numpy().squeeze()
+    logger.info("Final parameter values {})".format(np.array_str(params, precision=3)))
+    # if args.learner == 'act':
+    #     logger.debug("Final qt-probabilities")
+    #     logger.debug("{}".format(np.array_str(learner.q_soft.data.squeeze().numpy())))
+    #     logger.debug("raw-values {}".format(
+    #         np.array_str(learner.q_t.data.squeeze().numpy())))
+    #     logger.debug("losses {}".format(
+    #         np.array_str(learner.losses.data.squeeze().numpy())))
