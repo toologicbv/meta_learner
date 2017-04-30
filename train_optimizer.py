@@ -250,7 +250,7 @@ def main():
         if args.learner == 'act':
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
-            meta_logger.debug("Average number of optimization steps {}".format(avg_opt_steps))
+            meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(epoch+1, avg_opt_steps))
 
         exper.epoch_stats["loss"].append(final_loss[0])
         exper.epoch_stats["param_error"].append(param_loss[0])

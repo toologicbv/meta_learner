@@ -135,7 +135,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         # TODO again max_steps need to be adjusted later here when we really stop!!!
         priors = Variable(torch.from_numpy(kl_prior_dist.pmfunc(np.arange(1, max_steps + 1))).float())
         priors = priors.expand(val_set.num_of_funcs, max_steps)
-        total_act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data
+        total_act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data.squeeze()[0]
         str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
         exper.val_stats["qt_dist"][exper.epoch] = np.mean(q_probs, 0)
 
@@ -177,7 +177,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
         exper.val_stats["act_loss"].append(total_act_loss)
         exper.val_avg_num_opt_steps = int(np.mean(opt_steps))
-        meta_logger.info("INFO - Avg number of steps: {}".format(exper.val_avg_num_opt_steps))
+        meta_logger.info("INFO - Average stopping-step: {}".format(exper.val_avg_num_opt_steps))
         meta_logger.debug("{} CDF q(t) {}".format(exper.epoch, np.array_str(np.cumsum(np.mean(q_probs, 0)),
                                                                             precision=4)))
         meta_logger.info("INFO - Epoch {}: Final validation average ACT-loss: {:.4}".format(exper.epoch,
