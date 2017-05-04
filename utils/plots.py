@@ -203,7 +203,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             if np.sum(opt_step_hist != 0) == 1:
                 num_of_plots = 1
                 height = 10
-                width = 25
+                width = 8
                 plot_idx = [np.argmax(opt_step_hist) + 1]
             elif np.sum(opt_step_hist > 5) == 1:
                 plot_idx = [np.argmax(opt_step_hist) + 1]
@@ -229,20 +229,25 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
     fig = plt.figure(figsize=(width, height))
     fig.suptitle(plot_title, **config.title_font)
+
     for i in range(1, num_of_plots + 1):
         index = range(1, plot_idx[i - 1] + 1)
         T = len(index)
-        if i == 1:
+        if i == 1 and num_of_plots == 1:
+            ax1 = plt.subplot(num_of_plots, 1, i)
+        elif i == 1:
             ax1 = plt.subplot(num_of_plots, 2, i)
         else:
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
 
-        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center')
+        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center', label="q(t)")
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=T, q_prob=config.continue_prob)
             priors = kl_prior_dist.pmfunc(np.arange(0, T))
-            plt.bar(np.array(index)+bar_width, priors, bar_width, color='r', align='center')
+            plt.bar(np.array(index)+bar_width, priors, bar_width, color='r', align='center', label="prior p(t|T)")
         plt.xticks(index)
+        if plot_prior:
+            plt.legend(loc="best")
         if i == num_of_plots or i == num_of_plots - 1:
             plt.xlabel("Steps")
         if i % 2 == 0:
@@ -263,7 +268,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
 
 def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
-                    loss_type='param_error'):
+                    loss_type='param_error', max_step=None, sort_exper=None, log_scale=True):
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -282,15 +287,17 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
         if loss_type == "param_error":
             res_dict = expers[e].val_stats["step_param_losses"]
             y_label = "avg final param error"
-            plot_title = "Final avg parameter error per step for 2D-Quadratics"
+            plot_title = "Final avg parameter error per step"
         else:
             res_dict = expers[e].val_stats["step_losses"]
             y_label = "avg final loss"
-            plot_title = "Final avg loss per step for 2D-Quadratics"
+            plot_title = "Final avg loss per step"
         if plot_best:
-            plot_title = "Best runs selected --- " + plot_title
+            plot_title = "Best validation run selected --- " + plot_title
         else:
-            plot_title = "Last run selected --- " + plot_title
+            plot_title = "Last validation run --- " + plot_title
+        if sort_exper is not None:
+            plot_title += " (" + sort_exper + ")"
 
         keys = res_dict.keys()
         # res = res_dict[keys[len(keys) - i]]
@@ -321,12 +328,16 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
             # print("val_avg_num_opt_steps {}".format(expers[e].val_avg_num_opt_steps))
         else:
             stop_step = config.max_val_opt_steps
-        index = np.arange(1, len(res_dict[best_val_runs[e]]) + 1)
-
-        #
-
-        plt.semilogy(index, res_dict[best_val_runs[e]], color=iter_colors.next(), dashes=iter_styles.next(),
-                     linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
+        if max_step is None:
+            max_step = len(res_dict[best_val_runs[e]])
+        index = np.arange(1, len(res_dict[best_val_runs[e]]) + 1)[0:max_step]
+        if log_scale:
+            plt.semilogy(index, res_dict[best_val_runs[e]][0:max_step], color=iter_colors.next(), dashes=iter_styles.next(),
+                         linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
+        else:
+            plt.plot(index, res_dict[best_val_runs[e]][0:max_step], color=iter_colors.next(),
+                         dashes=iter_styles.next(),
+                         linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
         plt.xticks(index, index - 1)
         plt.xlabel("Number of optimization steps")
         plt.ylabel(y_label)

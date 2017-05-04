@@ -97,10 +97,15 @@ def main():
     exper = Experiment(args, config)
     # get distribution P(T) over possible number of total timesteps
     if args.learner == "act":
+        if args.version[0:2] not in ['V1', 'V2']:
+            raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(args.version))
         pt_dist = TimeStepsDist(config.T, config.continue_prob)
         exper.avg_num_opt_steps = pt_dist.mean
     else:
         exper.avg_num_opt_steps = args.optimizer_steps
+        if args.learner == 'meta' and args.version[0:2] == 'V2':
+            pt_dist = TimeStepsDist(config.T, config.continue_prob)
+            exper.avg_num_opt_steps = pt_dist.mean
     # prepare the experiment
     exper.output_dir = prepare(prcs_args=args, exper=exper)
     # get our logger (one to std-out and one to file)
@@ -146,14 +151,19 @@ def main():
             forward_steps = 0
             if args.learner != 'act':
                 optimizer_steps = args.optimizer_steps
+                if args.learner == 'meta' and args.version[0:2] == 'V2':
+                    optimizer_steps = pt_dist.rvs(n=1)[0]
+                    avg_opt_steps.append(optimizer_steps)
             else:
                 # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
                 # add one to choice because we actually want values between [1, config.T]
-                optimizer_steps = pt_dist.rvs(n=1)[0] + 1
+                optimizer_steps = pt_dist.rvs(n=1)[0]
                 avg_opt_steps.append(optimizer_steps)
                 prior_dist = ConditionalTimeStepDist(T=optimizer_steps, q_prob=config.continue_prob)
-                # TODO: this "np.arange(1, optimizer_steps + 1)" somehow strikes me, we should start at 0...sort it out
-                prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(0, optimizer_steps))).float())
+                # The range that we pass to pmfunc (to compute the priors of p(t|T)) ranges from 1...T
+                # because we define t as the "trial number of the first success"!
+                prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps+1),
+                                                                          normalize=True)).float())
                 # we need to expand the prior probs to the size of the batch
                 prior_probs = prior_probs.expand(args.batch_size, prior_probs.size(0))
 
@@ -175,7 +185,7 @@ def main():
                 else:
                     forward_steps += 1
 
-                loss = reg_funcs.compute_loss(average=True)
+                loss = reg_funcs.compute_loss(average=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(torch.ones(args.batch_size))
                 # feed the RNN with the gradient of the error surface function
@@ -190,6 +200,7 @@ def main():
                     delta_param, delta_qt = meta_optimizer.meta_update(reg_funcs)
                     par_new = reg_funcs.params - delta_param
                     qt_param = qt_param + delta_qt
+
                     loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average=True)
                     meta_optimizer.q_t.append(qt_param)
                     loss_sum = loss_sum + loss_step
@@ -251,6 +262,9 @@ def main():
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
             meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(epoch+1, avg_opt_steps))
+        if args.learner == 'meta' and args.version[0:2] == "V2":
+            avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
+            meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(epoch + 1, avg_opt_steps))
 
         exper.epoch_stats["loss"].append(final_loss[0])
         exper.epoch_stats["param_error"].append(param_loss[0])

@@ -14,6 +14,19 @@ from itertools import cycle
 from cycler import cycler
 
 
+def get_axis_ranges(init_params, true_params, delta=2, steps=100):
+    if init_params > true_params:
+        max_dim = init_params + delta
+        min_dim = true_params - delta
+    else:
+        max_dim = true_params + delta
+        min_dim = init_params - delta
+
+    axis_range = np.linspace(min_dim, max_dim, steps)
+
+    return axis_range
+
+
 def get_true_params(loc=0., scale=4, size=(2, 1)):
     np_params = np.random.normal(loc=loc, scale=scale, size=size)
     return Variable(torch.FloatTensor(torch.from_numpy(np_params).float()), requires_grad=False)
@@ -107,9 +120,13 @@ class RegressionFunction(object):
         self.params = Variable(self.params.data, requires_grad=True)
 
     def compute_loss(self, average=True):
-
+        """
+        compute regression loss and if applicable apply average over functions
+        :param average:
+        :return: loss (Variable)
+        """
         if average:
-            N = float(self.n_samples)
+            N = float(self.num_of_funcs)
         else:
             N = 1.
         loss = 1/N * 0.5 * 1/self.noise_sigma * torch.sum((self.y - self.y_t)**2, 1)
@@ -122,6 +139,11 @@ class RegressionFunction(object):
         return loss
 
     def param_error(self, average=True):
+        """
+        computes parameter error and if applicable apply average over functions
+        :param average:
+        :return: parameter loss/error (Variable)
+        """
         if average:
             N = float(self.num_of_funcs)
         else:
@@ -145,6 +167,27 @@ class RegressionFunction(object):
 
     def get_y_values(self, params):
         return torch.mm(params, self.xp)
+
+    def plot_contour(self, f_idx=0, delta=2):
+        np_init_params = self.initial_params[f_idx, :].data.numpy()
+        torch_params = self.true_params[f_idx, :].unsqueeze(0)
+        np_params = self.true_params[f_idx, :].data.numpy()
+        y_true = get_f_values(self.xp, torch_params)
+        steps = (delta + delta) * 25
+        x_range = get_axis_ranges(np_init_params[0], np_params[0], delta=delta, steps=steps)
+        y_range = get_axis_ranges(np_init_params[1], np_params[1], delta=delta, steps=steps)
+        X, Y = np.meshgrid(x_range, y_range)
+        f_in = Variable(torch.FloatTensor(torch.cat((torch.from_numpy(X.ravel()).float(),
+                                                     torch.from_numpy(Y.ravel()).float()), 1)))
+        Z_mean = get_f_values(self.xp, f_in)
+        Y_true = y_true.expand_as(Z_mean)
+        Z = add_noise(Z_mean, noise=self.noise)
+
+        error = 0.5 * 1 / self.noise_sigma * torch.sum((Z - Y_true) ** 2, 1)
+
+        plt.contourf(X, Y, error.data.cpu().view(steps, steps).numpy(), steps)
+
+        return [x_range.min(), x_range.max(), y_range.min(), y_range.max()]
 
     def plot_func(self, f_idx, fig_name=None, height=8, width=6, do_save=False, show=False, exper=None, steps=None):
         p_colors = ['navajowhite', 'aqua', 'orange', 'red', 'yellowgreen', 'lightcoral', 'violet', 'dodgerblue',
@@ -222,6 +265,7 @@ class RegressionFunction(object):
         plt.figure(figsize=(height, width))
         plt.title(l_title)
         ax = plt.gca()
+        axis_ranges = self.plot_contour(f_idx)
         plt.scatter(self.true_params[f_idx, 0].data.cpu().numpy(), self.true_params[f_idx, 1].data.cpu().numpy(),
                     color="red", marker="H", s=400, alpha=0.5)
         losses = []
@@ -231,7 +275,7 @@ class RegressionFunction(object):
                 params = self.param_hist[i][f_idx, :].unsqueeze(0)
                 y_t = torch.mm(params, self.xp).data.numpy().squeeze()
                 y = self.y.data.numpy()[f_idx, :]
-                loss = 1/float(y.shape[0]) * 0.5 * 1/self.noise_sigma * np.sum((y - y_t)**2)
+                loss = 0.5 * 1/self.noise_sigma * np.sum((y - y_t)**2)
                 losses.append(loss)
                 x_array = [self.param_hist[i][f_idx, 0].data.numpy()[0],
                            self.param_hist[i+1][f_idx, 0].data.numpy()[0]]
@@ -244,12 +288,19 @@ class RegressionFunction(object):
                     x_pos = int(self.param_hist[i+1][f_idx, 0].data.numpy()[0])
                     y_pos = int(self.param_hist[i+1][f_idx, 1].data.numpy()[0])
                     plt.annotate(str(i+1), xy=(x_pos, y_pos), size=8, color=a_color)
-
+            # compute the last loss, e.g. in case we have 10 opt steps we have 11 parameters in our history
+            # because the initial one counts as t_0
+            params = self.param_hist[i+1][f_idx, :].unsqueeze(0)
+            y_t = torch.mm(params, self.xp).data.numpy().squeeze()
+            y = self.y.data.numpy()[f_idx, :]
+            loss = 0.5 * 1 / self.noise_sigma * np.sum((y - y_t) ** 2)
+            losses.append(loss)
         # ax.axes.get_xaxis().set_ticks([])
         # ax.axes.get_yaxis().set_ticks([])
-        ax.set_axis_bgcolor('lightslategray')
+        # ax.set_axis_bgcolor('lightslategray')
         ax.grid(True)
-
+        ax.set_xlim([axis_ranges[0], axis_ranges[1]])
+        ax.set_ylim([axis_ranges[2], axis_ranges[3]])
         # if add_text[0] is not None and add_text[1] is not None:
         #     text = "q(t) values {}".format(add_text[0]) + "\n" + "losses {}".format(add_text[1])
         #     annotation = True

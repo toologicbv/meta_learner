@@ -264,7 +264,7 @@ def end_run(experiment, model, validation=True):
         plot_dist_optimization_steps(experiment, data_set="train", save=True)
         plot_dist_optimization_steps(experiment, data_set="val", save=True)
         plot_qt_probs(experiment, data_set="train", save=True)
-        plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True)
+        plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
     param_error_plot(experiment, save=True)
 
 

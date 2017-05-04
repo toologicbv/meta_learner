@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def find_nearest(array,value):
+def find_nearest(array, value):
     idx = (np.abs(array-value)).argmin()
     return idx, array[idx]
 
@@ -23,23 +23,20 @@ class TimeStepsDist(object):
 
     a call to this distribution object returns indices into density array
     """
-    def __init__(self, T=100, q_prob=0.9, sort=True, transform=lambda x: x):
+    def __init__(self, T=100, q_prob=0.9, transform=lambda x: x):
         # construct the range of possible discrete values. T denotes the absolute horizon aka support for this
         # distribution
-        t_range = np.arange(0, T)
+        t_range = np.arange(1, T+1)
         self.T = T
         self.q_prob = q_prob
         pdf = self.pmfunc(t_range, normalize=True)
         self.shape = pdf.shape
         self.pdf = pdf.ravel()
-        self.sort = sort
         self.transform = transform
         # a pdf can not be negative
         assert(np.all(self.pdf >= 0))
         # sort the pdf by magnitude
-        if self.sort:
-            self.sortindex = np.argsort(self.pdf, axis=None)
-            self.pdf = self.pdf[self.sortindex]
+
         # construct the cumulative distribution function
         self.cdf = np.cumsum(self.pdf)
         self.probs = None
@@ -55,7 +52,7 @@ class TimeStepsDist(object):
         if normalize:
             assert self.T == len(t)
 
-        pmf = self.q_prob ** t * (1. - self.q_prob ** (t + 1)) * (1. - self.q_prob ** 2)
+        pmf = self.q_prob ** (t-1) * (1. - self.q_prob ** t) * (1. - self.q_prob ** 2)
         if np.sum(pmf) < 1. and normalize:
             pmf = 1./np.sum(pmf) * pmf
         return pmf
@@ -79,17 +76,11 @@ class TimeStepsDist(object):
         # pick numbers which are uniformly random over the cumulative distribution function
         choice = np.random.uniform(high=self.sum, size=n)
         # find the indices corresponding to this point on the CDF
-        index = np.zeros(len(choice)).astype(int)
-        for i in range(len(choice)):
-            index[i], _ = find_nearest(self.cdf, choice[i])
-
         index = np.searchsorted(self.cdf, choice)
         self.probs = self.pdf[index]
-        # if necessary, map the indices back to their original ordering
-        if self.sort:
-            index = self.sortindex[index]
-            self.probs = self.pdf[index]
-
+        # because index numbering starts at 0 and we are returning the values for the random variable
+        # "trial number of the first success (Bernoulli experiment)" we increment all indices by 1
+        index += 1
         # is this a discrete or piecewise continuous distribution?
         if probs:
             return self.probs, self.transform(index)
@@ -104,25 +95,21 @@ class ConditionalTimeStepDist(object):
     of time-steps used for function optimization
 
     """
-    def __init__(self, T=100, q_prob=0.9, sort=True, interpolation=False, transform=lambda x: x):
+    def __init__(self, T=100, q_prob=0.9, interpolation=False, transform=lambda x: x):
         # construct the range of possible discrete values. T denotes the absolute horizon aka support for this
         # distribution
 
-        t_range = np.arange(0, T)
+        t_range = np.arange(1, T+1)
         self.T = T
         self.q_prob = q_prob
         pdf = self.pmfunc(t_range, normalize=True)
         self.shape = pdf.shape
         self.pdf = pdf.ravel()
-        self.sort = sort
         self.interpolation = interpolation
         self.transform = transform
         # a pdf can not be negative
         assert(np.all(self.pdf >= 0))
-        # sort the pdf by magnitude
-        if self.sort:
-            self.sortindex = np.argsort(self.pdf, axis=None)
-            self.pdf = self.pdf[self.sortindex]
+
         # construct the cumulative distribution function
         self.cdf = np.cumsum(self.pdf)
         self.probs = None
@@ -137,7 +124,7 @@ class ConditionalTimeStepDist(object):
         if normalize:
             assert self.T == len(t)
         p = 1 - self.q_prob
-        pmf = (p * self.q_prob**t) / (1 - self.q_prob**(self.T+1))
+        pmf = (p * self.q_prob**(t-1)) / (1 - self.q_prob**(self.T))
         if np.sum(pmf) < 1. and normalize:
             pmf = 1./np.sum(pmf) * pmf
         return pmf
@@ -156,17 +143,11 @@ class ConditionalTimeStepDist(object):
         # pick numbers which are uniformly random over the cumulative distribution function
         choice = np.random.uniform(high=self.sum, size=n)
         # find the indices corresponding to this point on the CDF
-        index = np.zeros(len(choice)).astype(int)
-        for i in range(len(choice)):
-            index[i], _ = find_nearest(self.cdf, choice[i])
-
+        index = np.searchsorted(self.cdf, choice)
         self.probs = self.pdf[index]
-        # if necessary, map the indices back to their original ordering
-        if self.sort:
-            index = self.sortindex[index]
-            self.probs = self.pdf[index]
-
-        index = np.where(index == 0, 1, index)
+        # because index numbering starts at 0 and we are returning the values for the random variable
+        # "trial number of the first success (Bernoulli experiment)" we increment all indices by 1
+        index += 1
         # is this a discrete or piecewise continuous distribution?
         if self.interpolation:
             index += + np.random.uniform(size=index.shape)
