@@ -174,9 +174,14 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     return meta_optimizer
 
 
-def load_val_data(path_specs=None, size=10000, noise_sigma=1., dim=2):
+def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, non_linear_base=False, logger=None):
+    if non_linear_base:
+        base = "nonlinear"
+    else:
+        base = "linear"
 
-    file_name = config.val_file_name_suffix + str(size) + "_" + str(noise_sigma) + "_" + str(dim) + "d.dll"
+    file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
+                str(dim) + "d_" + base + ".dll"
     if path_specs is not None:
         load_file = os.path.join(path_specs, file_name)
     else:
@@ -184,7 +189,7 @@ def load_val_data(path_specs=None, size=10000, noise_sigma=1., dim=2):
     try:
         with open(load_file, 'rb') as f:
             val_funcs = dill.load(f)
-        print("INFO - validation set loaded from {}".format(load_file))
+        logger.info("INFO - validation set loaded from {}".format(load_file))
     except:
         raise IOError("Can't open file {}".format(load_file))
 
@@ -199,7 +204,7 @@ class Experiment(object):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
                           "step_losses": OrderedDict(),
                           "step_param_losses": OrderedDict(),
-                          "qt_dist": {}}
+                          "qt_dist": {}, "ll_loss": {}, "kl_div": {}, "kl_entropy": {}}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -211,7 +216,7 @@ class Experiment(object):
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
                           "step_losses": OrderedDict(),
-                          "step_param_losses": OrderedDict()}
+                          "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {}}
 
 
 def save_exper(exper):

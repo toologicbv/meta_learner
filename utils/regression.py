@@ -54,11 +54,22 @@ def add_noise(y, noise=None):
     return y + noise.expand_as(y)
 
 
-def construct_poly_x(x, degree=2):
+def construct_poly_base(x, degree=2):
     x_numpy = x.data.numpy()
     x_array = []
     for i in range(1, degree + 1):
         x_array.append(x_numpy[:, np.newaxis] ** i)
+
+    X = np.concatenate(x_array, axis=1).T
+    X = Variable(torch.from_numpy(X).float())
+    return X
+
+
+def construct_linear_base(x):
+    x_numpy = x.data.numpy()
+    x_array = []
+    x_array.append(np.ones((x.size(0), 1)))
+    x_array.append(x_numpy[:, np.newaxis])
 
     X = np.concatenate(x_array, axis=1).T
     X = Variable(torch.from_numpy(X).float())
@@ -73,12 +84,13 @@ def get_f_values(X, params):
 class RegressionFunction(object):
 
     def __init__(self, n_funcs=100, n_samples=100, param_sigma=4., noise_sigma=1.,
-                 x_min=-2, x_max=2, poly_degree=2, use_cuda=False):
+                 x_min=-2, x_max=2, poly_degree=2, use_cuda=False, non_linear=False):
         self.use_cuda = use_cuda # TODO not implemented yet
         self.noise_sigma = noise_sigma
         self.num_of_funcs = n_funcs
         self.n_samples = n_samples
         self.degree = poly_degree
+        self.non_linear = non_linear
         self.true_params = get_true_params(size=(n_funcs, poly_degree),
                                            scale=param_sigma)
         tensor_params = init_params(self.true_params.size())
@@ -86,7 +98,10 @@ class RegressionFunction(object):
         self.initial_params = self.params.clone()
 
         self.x = Variable(torch.linspace(x_min, x_max, n_samples))
-        self.xp = construct_poly_x(self.x, degree=poly_degree)
+        if non_linear:
+            self.xp = construct_poly_base(self.x, degree=poly_degree)
+        else:
+            self.xp = construct_linear_base(self.x)
         self.mean_values = get_f_values(self.xp, self.true_params)
         self.noise = get_noise(size=self.mean_values.size(1), sigma=noise_sigma)
         self.y = add_noise(self.mean_values, noise=self.noise)
@@ -132,6 +147,13 @@ class RegressionFunction(object):
         loss = 1/N * 0.5 * 1/self.noise_sigma * torch.sum((self.y - self.y_t)**2, 1)
         return loss
 
+    def compute_neg_ll(self, average_over_funcs=False):
+        ll = 0.5 * 1 / self.noise_sigma * torch.sum((self.y - self.y_t)**2, 1) + \
+             self.n_samples / 2 * (np.log(self.noise_sigma) + np.log(2 * np.pi))
+        if average_over_funcs:
+            ll = torch.mean(ll, 0).squeeze()
+        return ll
+
     @staticmethod
     def compute_loss_1func(sigma, y, y_hat):
         N = y.size(1)
@@ -160,9 +182,12 @@ class RegressionFunction(object):
             f_params = self.true_params.data.numpy()[idx, :]
         else:
             f_params = self.params.data.numpy()[idx, :]
-        descr = r'${:.3} x$'.format(f_params[0])
+        descr = r'${:.3} $'.format(f_params[0])
         for i in range(1, self.degree):
-            descr += r'$+ {:.3} x^{}$ '.format(f_params[i], i+1)
+            if self.non_linear:
+                descr += r'$+ {:.3} x^{}$ '.format(f_params[i], i+1)
+            else:
+                descr += r'$+ {:.3} x$ '.format(f_params[i])
         return descr
 
     def get_y_values(self, params):
@@ -209,20 +234,21 @@ class RegressionFunction(object):
 
         plt.plot(x, y_mean, 'b-', lw=2, label=r'$f(x)$')
         plt.plot(x, y_samples, 'go', markersize=2, label=r'samples $\sigma={:.2}$'.format(self.noise_sigma))
-        for i in steps:
-            p_t = self.param_hist[i][f_idx, :].unsqueeze(0)
-            y_t = torch.mm(p_t, self.xp).data.numpy().squeeze()
-            c = iter_colors.next()
-            # print("Color {}/{} ({:.3}/{:.3})".format(c, i, p_t.data.numpy()[0, 0], p_t.data.numpy()[0, 1]))
-            plt.plot(x, y_t, lw=1, dashes=iter_styles.next(), color=c,
-                     label=r'$\hat{{f}}_{}(x)$'.format(i))
-            if i % 2 == 0:
-                x0 = x[0]
-                y0 = y_t[0]
-            else:
-                x0 = x[-1]
-                y0 = y_t[-1]
-            plt.text(x0, y0, str(i), size=10, color=c)
+        if steps is not None:
+            for i in steps:
+                p_t = self.param_hist[i][f_idx, :].unsqueeze(0)
+                y_t = torch.mm(p_t, self.xp).data.numpy().squeeze()
+                c = iter_colors.next()
+                # print("Color {}/{} ({:.3}/{:.3})".format(c, i, p_t.data.numpy()[0, 0], p_t.data.numpy()[0, 1]))
+                plt.plot(x, y_t, lw=1, dashes=iter_styles.next(), color=c,
+                         label=r'$\hat{{f}}_{}(x)$'.format(i))
+                if i % 2 == 0:
+                    x0 = x[0]
+                    y0 = y_t[0]
+                else:
+                    x0 = x[-1]
+                    y0 = y_t[-1]
+                plt.text(x0, y0, str(i), size=10, color=c)
         plt.plot(x, y, 'r-', lw=3, dashes=[4, 2, 2, 4, 2, 4], label=r'$\hat{{f}}_{{}}(x)$'.format(num_points))
         plt.text(x[-1], y[-1], str(num_points), size=10, color='red')
         plt.legend(loc="best", prop={'size': 8})

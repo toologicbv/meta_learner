@@ -45,13 +45,13 @@ class MetaConfig(object):
             Important parameter for prior distribution P(T)
         """
         # probability of continue computation
-        # self.continue_prob = 0.8
+        self.continue_prob = 0.8
         # self.continue_prob = 0.925
         # self.continue_prob = 0.53
-        self.continue_prob = 0.66
+        # self.continue_prob = 0.66
         # self.continue_prob = 0.73
+        # self.continue_prob = 0.88
         # self.continue_prob = 0.9
-        # self.continue_prob = 0.95
         # horizon for maximum number of timesteps
         self.T = 10 # avg = 5 with 0.82
         # self.T = 20 # avg = 7 with 0.86 or 5ops with 0.8
@@ -60,7 +60,7 @@ class MetaConfig(object):
         # self.T = 30 # avg = 14 with 0.94
         # self.T = 40 # avg = 20 with 0.96 or 15 with 0.925
         # self.T = 45 # avg = 20 with 0.95
-        self.max_val_opt_steps = 10
+        self.max_val_opt_steps = 100
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}

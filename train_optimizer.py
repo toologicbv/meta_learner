@@ -25,7 +25,8 @@ STD_OPT_LR = 4e-1
 VALID_VERBOSE = False
 TRAIN_VERBOSE = False
 PLOT_VALIDATION_FUNCS = True
-NOISE_SIGMA = 2.5
+NOISE_SIGMA = 1.0
+ANNEAL_LR = False
 
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adadelta': torch.optim.Adadelta, # Adadelta
@@ -45,12 +46,12 @@ parser.add_argument('--lr', type=float, default=1e-3, metavar='N',
                     help='default learning rate for optimizer (default: 1e-3)')
 parser.add_argument('--batch_size', type=int, default=100, metavar='N',
                     help='number of functions per batch (default: 100)')
-parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
-                    help='number of meta optimizer steps (default: 100)')
+parser.add_argument('--optimizer_steps', type=int, default=10, metavar='N',
+                    help='number of meta optimizer steps (default: 10)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
 parser.add_argument('--functions_per_epoch', type=int, default=5000, metavar='N',
-                    help='updates per epoch (default: 2000)')
+                    help='updates per epoch (default: 5000)')
 parser.add_argument('--x_samples', type=int, default=100, metavar='N',
                     help='number of values to sample from true regression function (default: 100)')
 parser.add_argument('--max_epoch', type=int, default=5, metavar='N',
@@ -76,6 +77,8 @@ parser.add_argument('--version', type=str, default="V1",
                     help='version of the ACT leaner (currently V1 (two separate LSTMS) and V2 (one LSTM)')
 parser.add_argument('--optimizer', type=str, default="adam",
                     help='which optimizer to use sgd, adam, adadelta, adagrad, rmsprop')
+parser.add_argument('--poly_non_linear', action='store_true', default=False,
+                    help="Construct linear base for polynomial regression functions.")
 parser.add_argument('--comments', type=str, default="", help="add comments to describe specific parameter settings")
 
 args = parser.parse_args()
@@ -83,6 +86,9 @@ args.cuda = args.use_cuda and torch.cuda.is_available()
 # Cuda is currently not implemented. Takes longer than CPU, even when testing just Variable/Tensors in python
 # interpreter
 args.cuda = False
+
+if not args.poly_non_linear:
+    assert args.poly_degree == 2, "Linear base for regression can be only of degree 2"
 
 
 def main():
@@ -113,12 +119,14 @@ def main():
     # print the argument flags
     print_flags(args, meta_logger)
     # load the validation functions
-    val_funcs = load_val_data(size=MAX_VAL_FUNCS, noise_sigma=NOISE_SIGMA, dim=args.poly_degree)
-
+    val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.poly_degree,
+                              logger=meta_logger,
+                              non_linear_base=args.poly_non_linear)
+    lr = args.lr
     if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
         meta_optimizer = get_model(exper, args.poly_degree, retrain=args.retrain, logger=meta_logger)
-        optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=args.lr)
+        optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
@@ -130,6 +138,12 @@ def main():
         final_loss = 0.0
         final_act_loss = 0.
         param_loss = 0.
+        # if annealing learning rate & train longer than 25 epochs, lower learning rate
+        if epoch != 0 and epoch % 25 == 0 and not args.learner == 'manual' and lr > 1e-6 and ANNEAL_LR:
+            lr *= 0.1
+            optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
+            meta_logger.info("Current learning rate: {:.4}".format(lr))
+
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
         # ALSO NOTE:
@@ -141,7 +155,7 @@ def main():
         for i in range(num_of_batches):
             reg_funcs = RegressionFunction(n_funcs=args.batch_size, n_samples=args.x_samples,
                                            noise_sigma=NOISE_SIGMA, poly_degree=args.poly_degree,
-                                           use_cuda=args.cuda)
+                                           use_cuda=args.cuda, non_linear=args.poly_non_linear)
 
             # if we're using a standard optimizer
             if args.learner == 'manual':
@@ -185,7 +199,7 @@ def main():
                 else:
                     forward_steps += 1
 
-                loss = reg_funcs.compute_loss(average=False)
+                loss = reg_funcs.compute_neg_ll(average_over_funcs=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(torch.ones(args.batch_size))
                 # feed the RNN with the gradient of the error surface function
@@ -209,7 +223,7 @@ def main():
                     # we're just using one of the pre-delivered optimizers, update function parameters
                     meta_optimizer.step()
                     # compute loss after update
-                    loss_step = reg_funcs.compute_loss(average=False)
+                    loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False)
 
                 reg_funcs.params.grad.data.zero_()
 

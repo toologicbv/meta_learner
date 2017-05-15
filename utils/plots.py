@@ -8,7 +8,6 @@ from datetime import datetime
 from pytz import timezone
 from itertools import cycle
 from probs import ConditionalTimeStepDist
-from torch.autograd import Variable
 
 
 def create_exper_label(exper):
@@ -177,12 +176,12 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         T = len(exper.epoch_stats["qt_hist"])
         opt_step_hist = exper.epoch_stats["opt_step_hist"]
         qt_hist = exper.epoch_stats["qt_hist"]
-        plot_title = "Training - q(t) distributions for different T (mean={})".format(int(exper.avg_num_opt_steps))
+        plot_title = "Training - q(t) distribution for different T (mean={})".format(int(exper.avg_num_opt_steps))
     else:
         T = len(exper.val_stats["qt_hist"])
         opt_step_hist = exper.val_stats["opt_step_hist"]
         qt_hist = exper.val_stats["qt_hist"]
-        plot_title = "Validation - q(t) distributions "
+        plot_title = "Validation - q(t) distribution for {} optimization steps".format(config.max_val_opt_steps)
 
     res_qts = OrderedDict()
     for i in range(1, T + 1):
@@ -227,7 +226,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
     else:
         num_of_plots = len(plot_idx)
 
-    fig = plt.figure(figsize=(width, height))
+    fig = plt.figure(figsize=(height, width))
     fig.suptitle(plot_title, **config.title_font)
 
     for i in range(1, num_of_plots + 1):
@@ -244,8 +243,9 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=T, q_prob=config.continue_prob)
             priors = kl_prior_dist.pmfunc(np.arange(0, T))
-            plt.bar(np.array(index)+bar_width, priors, bar_width, color='r', align='center', label="prior p(t|T)")
-        plt.xticks(index)
+            plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center', label="prior p(t|T)")
+        if data_set == "train":
+            plt.xticks(index)
         if plot_prior:
             plt.legend(loc="best")
         if i == num_of_plots or i == num_of_plots - 1:
@@ -437,7 +437,8 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
     plt.close()
 
 
-def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=False, fig_name=None, do_save=False):
+def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=False, fig_name=None, do_save=False,
+                         log_scale=True, loss_type="param_error", max_step=None):
     num_of_expers = len(expers)
     num_of_val_runs = len(expers[0].val_stats["step_param_losses"])
 
@@ -480,17 +481,29 @@ def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=Fa
         iter_colors = cycle(p_colors)
         iter_styles = cycle(style)
         for e in np.arange(num_of_expers):
-            res_dict = expers[e].val_stats["step_param_losses"]
+            if loss_type == "param_error":
+                res_dict = expers[e].val_stats["step_param_losses"]
+            else:
+                res_dict = expers[e].val_stats["step_losses"]
             keys = res_dict.keys()
             # could be that not all experiments have the same number of val runs
             if i <= len(keys):
                 res = res_dict[keys[len(keys) - i]]
                 model = expers[e].args.model
+                if max_step is None:
+                    max_step = len(res)
                 # plt.bar(index + (e*bar_width), res,  bar_width,  color=bar_colors[e], log=True,
                 #        align="center", label="{}({})".format(model, keys[len(keys)-i]))
                 # plt.xticks(index + bar_width / 2, index-1)
-                plt.semilogy(index, res, color=iter_colors.next(), dashes=iter_styles.next(), linewidth=2.,
+                if log_scale:
+                    plt.semilogy(index[0:max_step], res[0:max_step], color=iter_colors.next(),
+                                 dashes=iter_styles.next(), linewidth=2.,
+                                label="{}({})".format(model, keys[len(keys) - i]))
+                else:
+                    plt.plot(index[0:max_step], res[0:max_step], color=iter_colors.next(),
+                             dashes=iter_styles.next(), linewidth=2.,
                              label="{}({})".format(model, keys[len(keys) - i]))
+
                 plt.legend(loc="best", prop={'size': 8})
 
     if do_save:
@@ -504,5 +517,57 @@ def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=Fa
         print("INFO - Successfully saved fig %s" % fig_name)
 
     if do_show:
+        plt.show()
+    plt.close()
+
+
+def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12, save=False, show=False,
+                      final_terms=False, log_qt=False, plot_prior=False):
+
+    assert data_set == "val", "Dataset {} not yet supported".format(data_set)
+    bar_width = 0.3
+    plot_title = "Separate KL-divergence components per optimization step"
+    fig = plt.figure(figsize=(width, height))
+    fig.suptitle(plot_title, **config.title_font)
+    index = np.arange(1, config.max_val_opt_steps + 1)
+    last_run = sorted(exper.val_stats["ll_loss"].keys())[-1]
+    ll_loss = exper.val_stats["ll_loss"][last_run]
+    kl_div = exper.val_stats["kl_div"][last_run]
+    kl_entropy = exper.val_stats["kl_entropy"][last_run]
+
+    if final_terms:
+        qt_probs = np.exp(exper.val_stats["kl_entropy"][last_run])
+        ll_loss *= qt_probs
+        kl_div *= qt_probs
+        kl_entropy *= qt_probs
+    ax1 = plt.subplot(2, 1, 1)
+    ax1.bar(index, ll_loss, bar_width, color='b', align='center', label="neg-ll")
+    ax1.bar(np.array(index) + bar_width, kl_div, bar_width, color='r',
+            align='center', label="log p(t|{})".format(exper.config.max_val_opt_steps))
+    if log_qt:
+        if not final_terms:
+            qt_probs = np.exp(exper.val_stats["kl_entropy"][last_run])
+        ax1.bar(np.array(index) + 2 * bar_width, kl_entropy, bar_width, color='g',
+                align='center', label="log q(t|{})".format(exper.config.max_val_opt_steps))
+
+    ax1.legend(loc="best")
+    if log_qt:
+        ax2 = plt.subplot(2, 1, 2)
+        ax2.bar(index, qt_probs, bar_width, color='b', align='center', label="q(t|{})".format(config.max_val_opt_steps))
+        if plot_prior:
+            kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
+            priors = kl_prior_dist.pmfunc(np.arange(0, exper.config.max_val_opt_steps))
+            ax2.bar(np.array(index) + bar_width, priors, bar_width, color='orange', align='center',
+                    label="prior p(t|{})".format(exper.config.max_val_opt_steps))
+
+        ax2.legend(loc="best")
+
+    if fig_name is None:
+        fig_name = "_" + data_set + "_" + create_exper_label(exper)
+        fig_name = os.path.join(exper.output_dir, "kl_parts_" + fig_name + ".png")
+    if save:
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+    if show:
         plt.show()
     plt.close()

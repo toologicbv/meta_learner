@@ -62,7 +62,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         if i % exper.args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
             meta_learner.reset_lstm(keep_states=False)
 
-        loss = val_set.compute_loss(average=False)
+        loss = val_set.compute_neg_ll(average_over_funcs=False)
         if verbose and not exper.args.learner == 'manual' and i % 2 == 0:
             for f_idx in plot_idx:
                 meta_logger.info("\tStep {}: current loss {:.4f}".format(str(i+1), loss.squeeze().data[f_idx]))
@@ -87,13 +87,14 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                 qt_weights.append(qt_param.data.numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to
                 # compute the final ACT loss
-                _ = meta_learner.step_loss(val_set, par_new, average=True)
+                step_loss = meta_learner.step_loss(val_set, par_new, average=True)
                 meta_learner.q_t.append(qt_param)
                 # we're currently not breaking out of the loop when do_stop is true, therefore we
                 # need this extra do_stop condition here in order not to compute it again
                 if len(qt_weights) >= 2:
                     q_logits = np.concatenate(qt_weights, 1)
-                    q_probs = softmax(np.array(-q_logits))
+                    # q_probs = softmax(np.array(-q_logits))
+                    q_probs = softmax(np.array(q_logits))
                     do_stop = stop_computing(q_probs, threshold=config.qt_threshold)
 
             # Update the parameter of the function that is optimized
@@ -114,7 +115,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
     # make another step to register final loss
 
-    loss = torch.sum(torch.mean(val_set.compute_loss(average=False), 0)).data.squeeze().numpy()[0].astype(float)
+    loss = torch.sum(torch.mean(val_set.compute_neg_ll(average_over_funcs=False), 0)).data.squeeze().numpy()[0].astype(float)
     param_loss = val_set.param_error(average=True).data.numpy()[0].astype(float)
     # add to total loss
     total_param_loss += param_loss
@@ -147,7 +148,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         for f in plot_idx:
             meta_logger.info("\tf{}: true parameter values: {})".format(str(i+1),
                                                                         np.array_str(val_set.true_params.data.numpy()[f, :])))
-            meta_logger.info("\tf{}: final parameter values ({:.2f},{:.2f})".format(str(i+1),
+            meta_logger.info("\tf{}: final parameter values ({})".format(str(i+1),
                                                                         np.array_str(val_set.params.data.numpy()[f, :])))
         if exper.args.learner == 'act':
             meta_logger.info("Final qt-probabilities")
@@ -163,12 +164,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                                    add_text=None)
         # q_func.plot_func(fig_name=fig_name_prefix, show=show_plot, do_save=save_plot, exper=exper,
         #                 add_text=(str_q_probs, str_losses))
-    if exper.args.learner == 'act':
-        # reset some variables of the meta learner otherwise the training procedures will have serious problems
-        meta_learner.reset_final_loss()
-    elif exper.args.learner == 'meta':
-        meta_learner.reset_losses()
-
     """
         ****************** END OF VALIDATION **********************
                 Register results for this validation run
@@ -180,7 +175,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                                                                   decimals=3)
     exper.val_stats["loss"].append(total_loss)
     if exper.args.learner == "act":
-
+        exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
+        exper.val_stats["kl_div"][exper.epoch] = meta_learner.kl_div
+        exper.val_stats["kl_entropy"][exper.epoch] = meta_learner.kl_entropy
         exper.val_stats["act_loss"].append(total_act_loss)
         exper.val_avg_num_opt_steps = int(np.mean(opt_steps))
         meta_logger.info("INFO - Average stopping-step: {}".format(exper.val_avg_num_opt_steps))
@@ -200,3 +197,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                                                                                    exper.epoch], precision=4)))
 
     meta_logger.info("--------------------------- End of validation --------------------------------------------")
+    if exper.args.learner == 'act':
+        # reset some variables of the meta learner otherwise the training procedures will have serious problems
+        meta_learner.reset_final_loss()
+    elif exper.args.learner == 'meta':
+        meta_learner.reset_losses()
+
