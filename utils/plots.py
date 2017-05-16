@@ -241,8 +241,10 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
         plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center', label="q(t)")
         if plot_prior:
-            kl_prior_dist = ConditionalTimeStepDist(T=T, q_prob=config.continue_prob)
-            priors = kl_prior_dist.pmfunc(np.arange(0, T))
+            kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
+            print(exper.config.max_val_opt_steps, exper.config.continue_prob)
+            priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
+            print(priors[0:10])
             plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center', label="prior p(t|T)")
         if data_set == "train":
             plt.xticks(index)
@@ -369,7 +371,7 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
 
     p_colors = ['grey', 'orange', 'red', 'violet', 'dodgerblue', 'green', 'darkviolet']
     plot_title = "Avg " + "validation" if validation else "training"  
-    plot_title += " loss per epoch for 2D-Quadratics"
+    plot_title += " loss per epoch"
     plt.figure(figsize=(width, height))
     plt.title(plot_title, **title_font)
     style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
@@ -448,10 +450,15 @@ def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=Fa
     max_steps = len(expers[0].val_stats["step_param_losses"][expers[0].val_stats["step_param_losses"].keys()[0]])
     index = np.arange(1, max_steps + 1)
 
-    plot_title = "Final avg parameter error for 2D-Quadratics"
+    plot_title = "Final average "
     fig = plt.figure(figsize=(width, height))
+    if loss_type == "param_error":
+        plot_title += "parameter error ({})".format("regression")
+        y_label = "Final error"
+    else:
+        plot_title += "loss ({})".format("regression")
+        y_label = "Final loss"
     fig.suptitle(plot_title, **config.title_font)
-
     p_colors = ['grey', 'orange', 'red', 'violet', 'dodgerblue', 'green', 'darkviolet']
     style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
              [4, 4, 2, 8, 2, 2]]
@@ -475,7 +482,7 @@ def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=Fa
         if i == num_of_plots or i == num_of_plots - 1:
             plt.xlabel("Number of optimization steps")
         if i % 2 != 0:
-            plt.ylabel("Final error")
+            plt.ylabel(y_label)
         if num_of_plots > 2:
             fig.set_figheight(25)
         iter_colors = cycle(p_colors)
@@ -485,6 +492,7 @@ def plot_parm_loss_steps(expers, height=25, width=15, num_of_plots=0, do_show=Fa
                 res_dict = expers[e].val_stats["step_param_losses"]
             else:
                 res_dict = expers[e].val_stats["step_losses"]
+
             keys = res_dict.keys()
             # could be that not all experiments have the same number of val runs
             if i <= len(keys):
@@ -529,7 +537,7 @@ def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12,
     plot_title = "Separate KL-divergence components per optimization step"
     fig = plt.figure(figsize=(width, height))
     fig.suptitle(plot_title, **config.title_font)
-    index = np.arange(1, config.max_val_opt_steps + 1)
+    index = np.arange(1, exper.config.max_val_opt_steps + 1)
     last_run = sorted(exper.val_stats["ll_loss"].keys())[-1]
     ll_loss = exper.val_stats["ll_loss"][last_run]
     kl_div = exper.val_stats["kl_div"][last_run]
@@ -544,6 +552,8 @@ def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12,
     ax1.bar(index, ll_loss, bar_width, color='b', align='center', label="neg-ll")
     ax1.bar(np.array(index) + bar_width, kl_div, bar_width, color='r',
             align='center', label="log p(t|{})".format(exper.config.max_val_opt_steps))
+    ax1.set_xlabel("Number of optimization steps")
+    ax1.set_ylabel("log probability")
     if log_qt:
         if not final_terms:
             qt_probs = np.exp(exper.val_stats["kl_entropy"][last_run])
@@ -553,18 +563,23 @@ def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12,
     ax1.legend(loc="best")
     if log_qt:
         ax2 = plt.subplot(2, 1, 2)
-        ax2.bar(index, qt_probs, bar_width, color='b', align='center', label="q(t|{})".format(config.max_val_opt_steps))
+        ax2.set_title("Approximated q(t) distribtuion")
+        ax2.bar(index, qt_probs, bar_width, color='b', align='center', label="q(t|{})".format(exper.config.max_val_opt_steps))
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
-            priors = kl_prior_dist.pmfunc(np.arange(0, exper.config.max_val_opt_steps))
+            priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
             ax2.bar(np.array(index) + bar_width, priors, bar_width, color='orange', align='center',
                     label="prior p(t|{})".format(exper.config.max_val_opt_steps))
 
         ax2.legend(loc="best")
+        ax2.set_xlabel("Number of optimization steps")
+        ax2.set_ylabel("probability")
 
     if fig_name is None:
         fig_name = "_" + data_set + "_" + create_exper_label(exper)
-        fig_name = os.path.join(exper.output_dir, "kl_parts_" + fig_name + ".png")
+        fig_name = os.path.join(exper.output_dir, "kl_parts" + fig_name + ".png")
+    else:
+        fig_name = os.path.join(exper.output_dir, fig_name + ".png")
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
