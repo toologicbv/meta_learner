@@ -200,11 +200,12 @@ class Experiment(object):
 
     def __init__(self, run_args, config=None):
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {}}
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(),
                           "step_param_losses": OrderedDict(),
-                          "qt_dist": {}, "ll_loss": {}, "kl_div": {}, "kl_entropy": {}}
+                          "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
+                          "loss_funcs": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -212,11 +213,13 @@ class Experiment(object):
         self.avg_num_opt_steps = 0
         self.val_avg_num_opt_steps = 0
         self.config = config
+        self.val_funcs = None
 
     def reset_val_stats(self):
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(),
-                          "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {}}
+                          "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
+                          "qt_funcs": OrderedDict(), "loss_funcs": []}
 
 
 def save_exper(exper):

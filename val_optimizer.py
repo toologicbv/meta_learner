@@ -12,7 +12,7 @@ from utils.probs import ConditionalTimeStepDist
 
 
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
-                       num_of_plots=3, save_plot=True, show_plot=False):
+                       num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False):
     global STD_OPT_LR
     # we will probably call this procedure later in another context (to evaluate meta-learners)
     # so make sure the globals exist.
@@ -20,8 +20,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_logger.debug("create global")
         STD_OPT_LR = 4e-1
     # initialize stats arrays
-    exper.val_stats["step_losses"][exper.epoch] = np.zeros(config.max_val_opt_steps + 1)
-    exper.val_stats["step_param_losses"][exper.epoch] = np.zeros(config.max_val_opt_steps + 1)
+    exper.val_stats["step_losses"][exper.epoch] = np.zeros(exper.config.max_val_opt_steps + 1)
+    exper.val_stats["step_param_losses"][exper.epoch] = np.zeros(exper.config.max_val_opt_steps + 1)
 
     meta_logger.info("---------------------------------------------------------------------------------------")
     if val_set is None:
@@ -47,11 +47,13 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_learner = optim.Adam([val_set.params], lr=STD_OPT_LR)
         meta_learner.load_state_dict(state_dict)
     elif exper.args.learner == "act":
-        meta_learner.reset_final_loss()
+        meta_learner.reset_final_loss(exper.config)
 
     qt_weights = []
     do_stop = np.zeros(val_set.num_of_funcs, dtype=bool)  # initialize to False for all functions
     opt_steps = np.zeros(val_set.num_of_funcs)  # initialize to 0 for all functions
+    if save_qt_prob_funcs:
+        exper.val_stats["loss_funcs"] = np.zeros((val_set.num_of_funcs, max_steps+1))
     # for the act q-probabilities, will plot them on the figure for later inspection
     str_q_probs = None
     col_losses = []
@@ -62,7 +64,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         if i % exper.args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
             meta_learner.reset_lstm(keep_states=False)
 
-        loss = val_set.compute_neg_ll(average_over_funcs=False)
+        loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=True)
+        if save_qt_prob_funcs:
+            exper.val_stats["loss_funcs"][:, i] = loss.data.squeeze().numpy()
         if verbose and not exper.args.learner == 'manual' and i % 2 == 0:
             for f_idx in plot_idx:
                 meta_logger.info("\tStep {}: current loss {:.4f}".format(str(i+1), loss.squeeze().data[f_idx]))
@@ -77,7 +81,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
             if exper.args.learner == 'meta':
                 # gradient descent
                 par_new = val_set.params - delta_p
-                _ = meta_learner.step_loss(val_set, par_new, average=True)
+                _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
@@ -87,15 +91,19 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                 qt_weights.append(qt_param.data.numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to
                 # compute the final ACT loss
-                step_loss = meta_learner.step_loss(val_set, par_new, average=True)
+                _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
                 meta_learner.q_t.append(qt_param)
                 # we're currently not breaking out of the loop when do_stop is true, therefore we
                 # need this extra do_stop condition here in order not to compute it again
                 if len(qt_weights) >= 2:
                     q_logits = np.concatenate(qt_weights, 1)
-                    # q_probs = softmax(np.array(-q_logits))
                     q_probs = softmax(np.array(q_logits))
                     do_stop = stop_computing(q_probs, threshold=config.qt_threshold)
+                    # register q(t|T) statistics
+                    meta_learner.qt_hist_val[i+1] += np.mean(q_probs, 0)
+                    meta_learner.opt_step_hist_val[i+1 - 1] += 1
+                    if save_qt_prob_funcs:
+                        exper.val_stats["qt_funcs"][i+1] = q_probs
 
             # Update the parameter of the function that is optimized
             val_set.set_parameters(par_new)
@@ -114,8 +122,10 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         """
 
     # make another step to register final loss
-
-    loss = torch.sum(torch.mean(val_set.compute_neg_ll(average_over_funcs=False), 0)).data.squeeze().numpy()[0].astype(float)
+    loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=True)
+    if save_qt_prob_funcs:
+        exper.val_stats["loss_funcs"][:, i] = loss.data.squeeze().numpy()
+    loss = torch.sum(torch.mean(loss, 0)).data.squeeze().numpy()[0].astype(float)
     param_loss = val_set.param_error(average=True).data.numpy()[0].astype(float)
     # add to total loss
     total_param_loss += param_loss
@@ -142,7 +152,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         priors = priors.expand(val_set.num_of_funcs, max_steps)
         total_act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data.squeeze()[0]
         str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
-        exper.val_stats["qt_dist"][exper.epoch] = np.mean(q_probs, 0)
 
     if verbose:
         for f in plot_idx:
@@ -198,8 +207,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
     meta_logger.info("--------------------------- End of validation --------------------------------------------")
     if exper.args.learner == 'act':
+        # save the results of the validation statistics
+        exper.val_stats['qt_hist'][exper.epoch] = meta_learner.qt_hist_val
+        exper.val_stats['opt_step_hist'][exper.epoch] = meta_learner.opt_step_hist_val
         # reset some variables of the meta learner otherwise the training procedures will have serious problems
-        meta_learner.reset_final_loss()
+        meta_learner.reset_final_loss(exper.config)
     elif exper.args.learner == 'meta':
         meta_learner.reset_losses()
 

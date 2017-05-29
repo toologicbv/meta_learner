@@ -14,6 +14,32 @@ from itertools import cycle
 from cycler import cycler
 
 
+def neg_log_likelihood_loss(true_y, est_y, variance, N, sum_batch=False, size_average=False):
+    """
+    Negative log-likelihood calculation
+    if sum_batch=False the function returns a tensor [batch_size, 1]
+    otherwise a tensor of [1]
+
+    :param true_y: true target values
+    :param est_y:  estimated target values
+    :param variance: variance (sigma^2) of noise distribution
+    :param N: number of samples
+    :return: negative log-likelihood: ln p(y_true | x, weights, sigma^2)
+    """
+    if size_average:
+        avg = 1/float(N)
+    else:
+        avg = 1.
+    ll = avg * 0.5 * 1 / variance * \
+         torch.sum((true_y - est_y) ** 2, 1) + \
+           N / 2 * (np.log(variance) + np.log(2 * np.pi))
+    if sum_batch:
+        # we also sum over the mini-batch, dimension 0
+        ll = torch.sum(ll)
+
+    return ll
+
+
 def get_axis_ranges(init_params, true_params, delta=2, steps=100):
     if init_params > true_params:
         max_dim = init_params + delta
@@ -147,9 +173,9 @@ class RegressionFunction(object):
         loss = 1/N * 0.5 * 1/self.noise_sigma * torch.sum((self.y - self.y_t)**2, 1)
         return loss
 
-    def compute_neg_ll(self, average_over_funcs=False):
-        ll = 0.5 * 1 / self.noise_sigma * torch.sum((self.y - self.y_t)**2, 1) + \
-             self.n_samples / 2 * (np.log(self.noise_sigma) + np.log(2 * np.pi))
+    def compute_neg_ll(self, average_over_funcs=False, size_average=False):
+        ll = neg_log_likelihood_loss(self.y, self.y_t, self.noise_sigma, N=self.n_samples, sum_batch=False,
+                                     size_average=size_average)
         if average_over_funcs:
             ll = torch.mean(ll, 0).squeeze()
         return ll
@@ -338,7 +364,8 @@ class RegressionFunction(object):
         else:
             annotation = False
 
-        if annotation:
+        # if annotation:
+        if 1 == 0:
             plt.annotate(text,
                          xy=(0.5, 0), xytext=(0, 0),
                          xycoords=('axes fraction', 'figure fraction'),

@@ -122,6 +122,7 @@ def main():
     val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.poly_degree,
                               logger=meta_logger,
                               non_linear_base=args.poly_non_linear)
+    exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
@@ -199,14 +200,14 @@ def main():
                 else:
                     forward_steps += 1
 
-                loss = reg_funcs.compute_neg_ll(average_over_funcs=False)
+                loss = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=True)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(torch.ones(args.batch_size))
                 # feed the RNN with the gradient of the error surface function
                 if args.learner == 'meta':
                     delta_param = meta_optimizer.meta_update(reg_funcs)
                     par_new = reg_funcs.params - delta_param
-                    loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average=True)
+                    loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
                     loss_sum = loss_sum + loss_step
                     reg_funcs.set_parameters(par_new)
 
@@ -215,7 +216,7 @@ def main():
                     par_new = reg_funcs.params - delta_param
                     qt_param = qt_param + delta_qt
 
-                    loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average=True)
+                    loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
                     meta_optimizer.q_t.append(qt_param)
                     loss_sum = loss_sum + loss_step
                     reg_funcs.set_parameters(par_new)
@@ -223,7 +224,7 @@ def main():
                     # we're just using one of the pre-delivered optimizers, update function parameters
                     meta_optimizer.step()
                     # compute loss after update
-                    loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False)
+                    loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=True)
 
                 reg_funcs.params.grad.data.zero_()
 
@@ -255,7 +256,7 @@ def main():
                 detailed_train_info(meta_logger, reg_funcs, 0, args, meta_optimizer, i, optimizer_steps, error[0])
 
             if args.learner == "act":
-                meta_optimizer.reset_final_loss()
+                meta_optimizer.reset_final_loss(exper.config)
             elif exper.args.learner == 'meta':
                 meta_optimizer.reset_losses()
             # END OF SPECIFIC FUNCTION OPTIMIZATION
@@ -293,17 +294,18 @@ def main():
                 opt_steps = config.max_val_opt_steps
 
             validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=meta_logger,
-                                                verbose=VALID_VERBOSE,
-                                                plot_func=PLOT_VALIDATION_FUNCS,
-                                                max_steps=opt_steps,
-                                                num_of_plots=config.num_val_plots)
-    if args.learner == 'act':
+                               verbose=VALID_VERBOSE,
+                               plot_func=PLOT_VALIDATION_FUNCS,
+                               max_steps=opt_steps,
+                               num_of_plots=config.num_val_plots,
+                               save_qt_prob_funcs=True if epoch + 1 == args.max_epoch else False)
+        # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
+        if args.learner == 'act':
 
-        exper.epoch_stats['qt_hist'] = meta_optimizer.qt_hist
-        exper.epoch_stats['opt_step_hist'] = meta_optimizer.opt_step_hist
-        # save the results of the validation statistics
-        exper.val_stats['qt_hist'] = meta_optimizer.qt_hist_val
-        exper.val_stats['opt_step_hist'] = meta_optimizer.opt_step_hist_val
+            exper.epoch_stats['qt_hist'][exper.epoch] = meta_optimizer.qt_hist
+            exper.epoch_stats['opt_step_hist'][exper.epoch] = meta_optimizer.opt_step_hist
+
+            meta_optimizer.init_qt_statistics(exper.config)
 
     end_run(exper, meta_optimizer)
 

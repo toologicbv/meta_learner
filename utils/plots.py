@@ -138,13 +138,17 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
     plt.close()
 
 
-def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=8, width=6, save=False, show=False):
+def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=8, width=6, save=False, show=False,
+                                 epoch=None):
+    if epoch is None:
+        epoch = exper.epoch
+
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
     bar_width = 0.5
     if data_set == "train":
-        opt_step_hist = exper.epoch_stats["opt_step_hist"]
+        opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
     else:
-        opt_step_hist = exper.val_stats["opt_step_hist"]
+        opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
     # because we shift the distribution by 1 to start with t=1 until config.T we also need to increase the
     # indices here
     index = range(1, len(opt_step_hist) + 1)
@@ -170,18 +174,22 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
 
 
 def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False, plot_idx=[],
-                  plot_prior=False):
+                  plot_prior=False, epoch=None):
+    if epoch is None:
+        epoch = exper.epoch
+
     bar_width = 0.3
     if data_set == "train":
-        T = len(exper.epoch_stats["qt_hist"])
-        opt_step_hist = exper.epoch_stats["opt_step_hist"]
-        qt_hist = exper.epoch_stats["qt_hist"]
+        T = len(exper.epoch_stats["qt_hist"][epoch])
+        opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
+        qt_hist = exper.epoch_stats["qt_hist"][epoch]
         plot_title = "Training - q(t) distribution for different T (mean={})".format(int(exper.avg_num_opt_steps))
     else:
-        T = len(exper.val_stats["qt_hist"])
-        opt_step_hist = exper.val_stats["opt_step_hist"]
-        qt_hist = exper.val_stats["qt_hist"]
-        plot_title = "Validation - q(t) distribution for {} optimization steps".format(config.max_val_opt_steps)
+        T = len(exper.val_stats["qt_hist"][epoch])
+        opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
+        qt_hist = exper.val_stats["qt_hist"][epoch]
+        plot_title = "Validation - approximated q(t|{}) distribution (trained on E[T]={})".format(
+            config.max_val_opt_steps, int(exper.avg_num_opt_steps))
 
     res_qts = OrderedDict()
     for i in range(1, T + 1):
@@ -197,22 +205,10 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             plot_idx.remove(1)
 
         if data_set == 'val':
-            # for now we make only one plot for the validation statistics because we fixed the # of steps to 4
-            # determine number of plots we can make
-            if np.sum(opt_step_hist != 0) == 1:
-                num_of_plots = 1
-                height = 10
-                width = 8
-                plot_idx = [np.argmax(opt_step_hist) + 1]
-            elif np.sum(opt_step_hist > 5) == 1:
-                plot_idx = [np.argmax(opt_step_hist) + 1]
-                num_of_plots = len(plot_idx)
-            else:
-                if np.sum(opt_step_hist > 5) > 3:
-                    num_of_plots = 3
-                else:
-                    num_of_plots = int(np.sum(opt_step_hist > 5))
-                plot_idx = list(np.argsort(opt_step_hist)[::-1][0:num_of_plots] + 1)
+            num_of_plots = 1
+            height = 10
+            width = 8
+            plot_idx = [len(opt_step_hist)]
 
         else:
             # training, always enough values at our hand
@@ -239,17 +235,17 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         else:
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
 
-        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center', label="q(t)")
+        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center', label="q(t|{})".format(T))
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
-            print(exper.config.max_val_opt_steps, exper.config.continue_prob)
+            # print(exper.config.max_val_opt_steps, exper.config.continue_prob)
             priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
-            print(priors[0:10])
-            plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center', label="prior p(t|T)")
+            # print(priors[0:10])
+            plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center',
+                    label="prior p(t|{})".format(T))
         if data_set == "train":
             plt.xticks(index)
-        if plot_prior:
-            plt.legend(loc="best")
+        plt.legend(loc="best")
         if i == num_of_plots or i == num_of_plots - 1:
             plt.xlabel("Steps")
         if i % 2 == 0:

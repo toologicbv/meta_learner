@@ -53,7 +53,7 @@ class TimeStepsDist(object):
             assert self.T == len(t)
 
         pmf = self.q_prob ** (t-1) * (1. - self.q_prob ** t) * (1. - self.q_prob ** 2)
-        if np.sum(pmf) < 1. and normalize:
+        if np.sum(pmf) < 1. and normalize and self.T > 1:
             pmf = 1./np.sum(pmf) * pmf
         return pmf
 
@@ -125,7 +125,7 @@ class ConditionalTimeStepDist(object):
             assert self.T == len(t)
         p = 1 - self.q_prob
         pmf = (p * self.q_prob**(t-1)) / (1 - self.q_prob**(self.T))
-        if np.sum(pmf) < 1. and normalize:
+        if np.sum(pmf) < 1. and normalize and self.T > 1:
             pmf = 1./np.sum(pmf) * pmf
         return pmf
 
