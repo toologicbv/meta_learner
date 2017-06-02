@@ -80,22 +80,13 @@ def add_noise(y, noise=None):
     return y + noise.expand_as(y)
 
 
-def construct_poly_base(x, degree=2):
-    x_numpy = x.data.numpy()
+def sample_points(n_samples=100, ndim=2, x_min=-2., x_max=2.):
+
     x_array = []
-    for i in range(1, degree + 1):
-        x_array.append(x_numpy[:, np.newaxis] ** i)
-
-    X = np.concatenate(x_array, axis=1).T
-    X = Variable(torch.from_numpy(X).float())
-    return X
-
-
-def construct_linear_base(x):
-    x_numpy = x.data.numpy()
-    x_array = []
-    x_array.append(np.ones((x.size(0), 1)))
-    x_array.append(x_numpy[:, np.newaxis])
+    x_array.append(np.ones((n_samples, 1)))
+    for i in range(2, ndim + 1):
+        x_numpy = np.random.uniform(x_min, x_max, n_samples)
+        x_array.append(x_numpy[:, np.newaxis])
 
     X = np.concatenate(x_array, axis=1).T
     X = Variable(torch.from_numpy(X).float())
@@ -110,24 +101,20 @@ def get_f_values(X, params):
 class RegressionFunction(object):
 
     def __init__(self, n_funcs=100, n_samples=100, param_sigma=4., noise_sigma=1.,
-                 x_min=-2, x_max=2, poly_degree=2, use_cuda=False, non_linear=False):
+                 x_min=-2, x_max=2, x_dim=2, use_cuda=False):
         self.use_cuda = use_cuda # TODO not implemented yet
         self.noise_sigma = noise_sigma
         self.num_of_funcs = n_funcs
         self.n_samples = n_samples
-        self.degree = poly_degree
-        self.non_linear = non_linear
-        self.true_params = get_true_params(size=(n_funcs, poly_degree),
+        self.xdim = x_dim
+        self.true_params = get_true_params(size=(n_funcs, self.xdim),
                                            scale=param_sigma)
         tensor_params = init_params(self.true_params.size())
         self.params = Variable(tensor_params, requires_grad=True)
         self.initial_params = self.params.clone()
 
         self.x = Variable(torch.linspace(x_min, x_max, n_samples))
-        if non_linear:
-            self.xp = construct_poly_base(self.x, degree=poly_degree)
-        else:
-            self.xp = construct_linear_base(self.x)
+        self.xp = sample_points(self.n_samples, ndim=self.xdim, x_min=x_min, x_max=x_max)
         self.mean_values = get_f_values(self.xp, self.true_params)
         self.noise = get_noise(size=self.mean_values.size(1), sigma=noise_sigma)
         self.y = add_noise(self.mean_values, noise=self.noise)
@@ -209,11 +196,8 @@ class RegressionFunction(object):
         else:
             f_params = self.params.data.numpy()[idx, :]
         descr = r'${:.3} $'.format(f_params[0])
-        for i in range(1, self.degree):
-            if self.non_linear:
-                descr += r'$+ {:.3} x^{}$ '.format(f_params[i], i+1)
-            else:
-                descr += r'$+ {:.3} x$ '.format(f_params[i])
+        for i in range(1, self.xdim):
+            descr += r'$+ {:.3} x$ '.format(f_params[i])
         return descr
 
     def get_y_values(self, params):

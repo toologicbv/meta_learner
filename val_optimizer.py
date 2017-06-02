@@ -26,7 +26,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     meta_logger.info("---------------------------------------------------------------------------------------")
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
-        val_set = [RegressionFunction(n_funcs=10000, n_samples=100, noise_sigma=2.5, poly_degree=3)]
+        val_set = [RegressionFunction(n_funcs=10000, n_samples=100, noise_sigma=2.5, x_dim=3)]
         plot_idx = [0]
     else:
         plot_idx = [(i + 1) * (val_set.num_of_funcs // num_of_plots) - 1 for i in range(num_of_plots)]
@@ -64,7 +64,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         if i % exper.args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
             meta_learner.reset_lstm(keep_states=False)
 
-        loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=True)
+        loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
         if save_qt_prob_funcs:
             exper.val_stats["loss_funcs"][:, i] = loss.data.squeeze().numpy()
         if verbose and not exper.args.learner == 'manual' and i % 2 == 0:
@@ -122,7 +122,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         """
 
     # make another step to register final loss
-    loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=True)
+    loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
     if save_qt_prob_funcs:
         exper.val_stats["loss_funcs"][:, i] = loss.data.squeeze().numpy()
     loss = torch.sum(torch.mean(loss, 0)).data.squeeze().numpy()[0].astype(float)

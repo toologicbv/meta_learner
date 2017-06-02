@@ -65,8 +65,6 @@ class MetaLearner(nn.Module):
 
     def cuda(self):
         super(MetaLearner, self).cuda()
-        for i in range(len(self.lstms)):
-            self.lstms[i].cuda()
 
     def zero_grad(self):
         super(MetaLearner, self).zero_grad()
@@ -423,7 +421,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
         loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.get_y_values(new_parameters),
-                                       variance=optimizee_obj.noise_sigma, N=N, size_average=True)
+                                       variance=optimizee_obj.noise_sigma, N=N, size_average=False)
 
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor

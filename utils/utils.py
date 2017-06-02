@@ -174,14 +174,10 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     return meta_optimizer
 
 
-def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, non_linear_base=False, logger=None):
-    if non_linear_base:
-        base = "nonlinear"
-    else:
-        base = "linear"
+def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None):
 
     file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
-                str(dim) + "d_" + base + ".dll"
+                str(dim) + ".dll"
     if path_specs is not None:
         load_file = os.path.join(path_specs, file_name)
     else:
@@ -271,8 +267,8 @@ def end_run(experiment, model, validation=True):
         # plot histogram of T distribution (number of optimization steps during training)
         plot_dist_optimization_steps(experiment, data_set="train", save=True)
         plot_dist_optimization_steps(experiment, data_set="val", save=True)
-        plot_qt_probs(experiment, data_set="train", save=True)
-        plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+        # plot_qt_probs(experiment, data_set="train", save=True)
+        # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
     param_error_plot(experiment, save=True)
 
 

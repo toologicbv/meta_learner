@@ -24,7 +24,7 @@ MAX_VAL_FUNCS = 10000
 STD_OPT_LR = 4e-1
 VALID_VERBOSE = False
 TRAIN_VERBOSE = False
-PLOT_VALIDATION_FUNCS = True
+PLOT_VALIDATION_FUNCS = False
 NOISE_SIGMA = 1.0
 ANNEAL_LR = False
 
@@ -35,17 +35,17 @@ OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'rmsprop': torch.optim.RMSprop # RMSprop
                   }
 
-# python train_optimizer.py --max_epoch=40 --learner=act --version=V2.13 --eval_freq=5 --lr=1e-4
-# --functions_per_epoch=800 --optimizer=adam --comments="" --hidden_size=128
+# python train_optimizer.py --max_epoch=40 --learner=act --version=V2 --eval_freq=5 --lr=5e-5
+#  --hidden_size=40
 
 parser = argparse.ArgumentParser(description='PyTorch Meta-learner')
 
-parser.add_argument('--poly_degree', type=int, default=2, metavar='N',
-                    help='polynomial degree of the regression functions to optimize (default: 2)')
+parser.add_argument('--x_dim', type=int, default=10, metavar='N',
+                    help='dimensionality of the regression variable x (default: 10)')
 parser.add_argument('--lr', type=float, default=1e-3, metavar='N',
                     help='default learning rate for optimizer (default: 1e-3)')
-parser.add_argument('--batch_size', type=int, default=100, metavar='N',
-                    help='number of functions per batch (default: 100)')
+parser.add_argument('--batch_size', type=int, default=20, metavar='N',
+                    help='number of functions per batch (default: 20)')
 parser.add_argument('--optimizer_steps', type=int, default=10, metavar='N',
                     help='number of meta optimizer steps (default: 10)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
@@ -77,8 +77,6 @@ parser.add_argument('--version', type=str, default="V1",
                     help='version of the ACT leaner (currently V1 (two separate LSTMS) and V2 (one LSTM)')
 parser.add_argument('--optimizer', type=str, default="adam",
                     help='which optimizer to use sgd, adam, adadelta, adagrad, rmsprop')
-parser.add_argument('--poly_non_linear', action='store_true', default=False,
-                    help="Construct linear base for polynomial regression functions.")
 parser.add_argument('--comments', type=str, default="", help="add comments to describe specific parameter settings")
 
 args = parser.parse_args()
@@ -86,9 +84,6 @@ args.cuda = args.use_cuda and torch.cuda.is_available()
 # Cuda is currently not implemented. Takes longer than CPU, even when testing just Variable/Tensors in python
 # interpreter
 args.cuda = False
-
-if not args.poly_non_linear:
-    assert args.poly_degree == 2, "Linear base for regression can be only of degree 2"
 
 
 def main():
@@ -119,14 +114,13 @@ def main():
     # print the argument flags
     print_flags(args, meta_logger)
     # load the validation functions
-    val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.poly_degree,
-                              logger=meta_logger,
-                              non_linear_base=args.poly_non_linear)
+    val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
+                              logger=meta_logger)
     exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
-        meta_optimizer = get_model(exper, args.poly_degree, retrain=args.retrain, logger=meta_logger)
+        meta_optimizer = get_model(exper, args.x_dim, retrain=args.retrain, logger=meta_logger)
         optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
@@ -155,8 +149,8 @@ def main():
         avg_opt_steps = []
         for i in range(num_of_batches):
             reg_funcs = RegressionFunction(n_funcs=args.batch_size, n_samples=args.x_samples,
-                                           noise_sigma=NOISE_SIGMA, poly_degree=args.poly_degree,
-                                           use_cuda=args.cuda, non_linear=args.poly_non_linear)
+                                           noise_sigma=NOISE_SIGMA, x_dim=args.x_dim,
+                                           use_cuda=args.cuda)
 
             # if we're using a standard optimizer
             if args.learner == 'manual':
@@ -200,7 +194,7 @@ def main():
                 else:
                     forward_steps += 1
 
-                loss = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=True)
+                loss = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(torch.ones(args.batch_size))
                 # feed the RNN with the gradient of the error surface function
@@ -224,7 +218,7 @@ def main():
                     # we're just using one of the pre-delivered optimizers, update function parameters
                     meta_optimizer.step()
                     # compute loss after update
-                    loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=True)
+                    loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
 
                 reg_funcs.params.grad.data.zero_()
 

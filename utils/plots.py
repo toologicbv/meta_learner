@@ -145,10 +145,22 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
 
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
     bar_width = 0.5
+
     if data_set == "train":
-        opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
+        epoch_keys = exper.epoch_stats["opt_step_hist"].keys()
+        stats_dict = exper.epoch_stats["opt_step_hist"]
     else:
-        opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
+        epoch_keys = exper.val_stats["opt_step_hist"].keys()
+        stats_dict = exper.val_stats["opt_step_hist"]
+
+    for e, epoch_key in enumerate(epoch_keys):
+
+        if e == 0:
+            opt_step_hist = np.zeros(len(stats_dict[epoch_key]))
+            opt_step_hist += stats_dict[epoch_key]
+        else:
+            opt_step_hist += stats_dict[epoch_key]
+
     # because we shift the distribution by 1 to start with t=1 until config.T we also need to increase the
     # indices here
     index = range(1, len(opt_step_hist) + 1)
@@ -161,10 +173,11 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("Number of optimization steps")
     plt.ylabel("Proportion")
-    plt.title("Distribution of optimization steps (E[T|{}]={})".format(config.T, o_mean), **title_font)
+    plt.title("Distribution of optimization steps (E[T|{}]={})".format(exper.config.T, o_mean), **title_font)
     plt.legend(loc="best")
     if fig_name is None:
-        fig_name = os.path.join(exper.output_dir, config.T_dist_fig_name + "_" + data_set + config.dflt_plot_ext)
+        fig_name = os.path.join(exper.output_dir, exper.config.T_dist_fig_name + "_" + data_set +
+                                exper.config.dflt_plot_ext)
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
@@ -196,7 +209,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         if opt_step_hist[i - 1] != 0:
             res_qts[i] = qt_hist[i] * 1. / opt_step_hist[i - 1]
         else:
-            res_qts[i] = []
+            pass
 
     if len(plot_idx) == 0:
         plot_idx = [int(exper.avg_num_opt_steps + i) for i in range(-config.qt_mean_range, config.qt_mean_range+1)]
@@ -215,7 +228,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             check = plot_idx[:]
             for idx in check:
                 # if we don't have any results for this number of steps than remove from list
-                if idx not in res_qts:
+                if idx not in res_qts.keys():
                     plot_idx.remove(idx)
 
             num_of_plots = len(plot_idx)
@@ -244,6 +257,8 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center',
                     label="prior p(t|{})".format(T))
         if data_set == "train":
+            if len(index) > 15:
+                index = np.arange(1, len(index), 5)
             plt.xticks(index)
         plt.legend(loc="best")
         if i == num_of_plots or i == num_of_plots - 1:
