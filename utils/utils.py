@@ -13,8 +13,7 @@ import numpy as np
 from collections import OrderedDict
 
 import models.rnn_optimizer
-from models.rnn_optimizer import MetaLearner, WrapperOptimizee
-from quadratic import Quadratic2D, Quadratic
+from models.rnn_optimizer import MetaLearner
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 
 
@@ -51,20 +50,23 @@ def print_flags(exper_args, logger):
         logger.info(key + ' : ' + str(value))
 
 
-def softmax(x):
+def softmax(x, dim=1):
     """Compute softmax values for each sets of scores in x. Expecting numpy arrays"""
-    e_x = np.exp(x - np.max(x))
-    return e_x / e_x.sum()
+    e_x = np.exp(x - np.max(x, dim, keepdims=True))
+
+    return e_x / e_x.sum(axis=dim, keepdims=True)
 
 
-def stop_computing(q_logits, meta_logger=None):
-    q_probs = softmax(q_logits)
-    if meta_logger is not None:
-        meta_logger.debug("q_probs {}".format(np.array_str(q_probs)))
-    if q_probs[-1] <= q_probs[-2]:
-        return True
-    else:
-        return False
+def stop_computing(q_probs, threshold=0.8):
+    """
+    Used during validation to determine the moment to stop computation based on qt-values
+
+    :param q_probs: contains the qt probabilities up to horizon T: [batch_size, opt_steps]
+    :return: vector of booleans [batch_size]
+    """
+    cumsum = np.cumsum(q_probs, 1)
+    stops = np.cumsum(q_probs, 1)[:, -2] > threshold
+    return stops
 
 
 def preprocess_gradients(x):
@@ -92,38 +94,53 @@ def create_def_argparser(**kwargs):
 
     args = argparse.Namespace()
     args.cuda = kwargs['cuda']
-    args.q2D = kwargs['q2D']
     args.model = kwargs['model']
     args.log_dir = kwargs['log_dir']
     args.learner = kwargs['learner']
     args.num_layers = 2
     args.hidden_size = 20
     args.retrain = kwargs['retrain']
-    args.loss_type = kwargs['loss_type']
     args.truncated_bptt_step = kwargs['truncated_bptt_step']
+    args.lr = kwargs['lr']
 
     return args
 
 
-def get_model(exper, retrain=False, logger=None):
+def get_model(exper, num_params_optimizee, retrain=False, logger=None):
 
-    if exper.args.q2D:
-        q2_func = Quadratic2D(use_cuda=exper.args.cuda)
+    if exper.args.model == "default":
+        exper.args.model = exper.args.learner + exper.args.version + "_lr" + "{:.0e}".format(exper.args.lr) + "_" + \
+            exper.args.optimizer + "_" + str(int(exper.avg_num_opt_steps)) + "ops"
+
+    if exper.args.version == 'V1' or exper.args.version == 'V2' or exper.args.version == '':
+        output_bias = True
+    # V1.1/V2.1 = without output bias on last output layer
+    # V1.2/V2.2 = additionally got rid off normalization in LSTMCell layers and removed tanh before LSTM
+    #             already implemented in this version the tanh(linear(hx))
+    # V1.3/V2.3 = added parameter lambda_q that scales tanh(linear(hx-output)) for q_t parameter
+    elif exper.args.version[0:2] in ['V1', 'V2'] and (len(exper.args.version) == 4 or len(exper.args.version) == 5):
+        output_bias = False
+        logger.info("INFO - NOTE - LSTMs do not use output bias")
     else:
-        q2_func = Quadratic(use_cuda=exper.args.cuda)
+        raise ValueError("{} version is currently not supported".format(exper.args.version))
+
     if exper.args.learner == "act":
         # currently two versions of AML in use. V1 is now the preferred, which has the 2nd LSTM for the
         # q(t|T, theta) approximation incorporated into the first LSTM (basically one loop, where V2 has
         # 2 separate loops and works on the mean of the gradients, where V1 works on the individual parameters
-        act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version)
-        meta_optimizer = act_class(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
-                                               num_hidden=exper.args.hidden_size,
-                                               num_hidden_act=exper.args.num_hidden_act,
-                                               use_cuda=exper.args.cuda)
+        # only use first 2 characters of args.version e.g. V1 instead of V1.1
+        act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version[0:2])
+        meta_optimizer = act_class(num_params_optimizee,
+                                   num_layers=exper.args.num_layers,
+                                   num_hidden=exper.args.hidden_size,
+                                   use_cuda=exper.args.cuda,
+                                   output_bias=output_bias)
     else:
-        meta_optimizer = MetaLearner(WrapperOptimizee(q2_func), num_layers=exper.args.num_layers,
+        meta_optimizer = MetaLearner(num_params_optimizee,
+                                     num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
-                                     use_cuda=exper.args.cuda)
+                                     use_cuda=exper.args.cuda,
+                                     output_bias=output_bias)
     if retrain:
         loaded = False
         if exper.model_path is not None:
@@ -152,20 +169,23 @@ def get_model(exper, retrain=False, logger=None):
 
     if exper.args.cuda:
         meta_optimizer.cuda()
-    # print(meta_optimizer.state_dict().keys())
+    print(meta_optimizer.state_dict().keys())
 
     return meta_optimizer
 
 
-def load_val_data(path_specs=None):
+def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None):
+
+    file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
+                str(dim) + ".dll"
     if path_specs is not None:
-        load_file = path_specs
+        load_file = os.path.join(path_specs, file_name)
     else:
-        load_file = os.path.join(config.data_path, config.validation_funcs)
+        load_file = os.path.join(config.data_path, file_name)
     try:
         with open(load_file, 'rb') as f:
             val_funcs = dill.load(f)
-        print("INFO - validation set loaded from {}".format(load_file))
+        logger.info("INFO - validation set loaded from {}".format(load_file))
     except:
         raise IOError("Can't open file {}".format(load_file))
 
@@ -176,21 +196,26 @@ class Experiment(object):
 
     def __init__(self, run_args, config=None):
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": []}
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
-                          "step_losses": OrderedDict([(i, np.zeros(i+1)) for i in
-                                                      np.arange(1, config.max_val_opt_steps + 1)])}
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {}}
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
+                          "step_losses": OrderedDict(),
+                          "step_param_losses": OrderedDict(),
+                          "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
+                          "loss_funcs": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
         # self.opt_step_hist = None
         self.avg_num_opt_steps = 0
+        self.val_avg_num_opt_steps = 0
         self.config = config
+        self.val_funcs = None
 
     def reset_val_stats(self):
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": [], "opt_step_hist": [],
-                          "step_losses": OrderedDict([(i, np.zeros(i+1)) for i in
-                                                      np.arange(1, config.max_val_opt_steps + 1)])}
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
+                          "step_losses": OrderedDict(),
+                          "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
+                          "qt_funcs": OrderedDict(), "loss_funcs": []}
 
 
 def save_exper(exper):
@@ -208,7 +233,8 @@ def prepare(prcs_args, exper):
         prcs_args.log_dir = config.exper_prefix + \
                             str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
                                 '%Y-%m-%d %H:%M:%S.%f')[:-7],
-                                ' ', '_') + "_" + create_exper_label(exper)
+                                ' ', '_') + "_" + create_exper_label(exper) + \
+                            "_lr" + "{:.0e}".format(exper.args.lr) + "_" + exper.args.optimizer
         prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
 
     else:
@@ -227,26 +253,40 @@ def prepare(prcs_args, exper):
     return log_dir
 
 
-def end_run(experiment, model, func_list):
+def end_run(experiment, model, validation=True, on_server=False):
     if not experiment.args.learner == 'manual' and model.name is not None:
         model_path = os.path.join(experiment.output_dir, model.name + config.save_ext)
         torch.save(model.state_dict(), model_path)
         experiment.model_path = model_path
         print("INFO - Successfully saved model parameters to {}".format(model_path))
-    if experiment.args.save_diff_funcs:
-        diff_func_file = os.path.join(experiment.output_dir, "diff_funcs.dll")
-        with open(diff_func_file, 'wb') as f:
-            dill.dump(func_list, f)
-        print("INFO - Successfully saved selection of <{}> difficult functions to {}".format(len(diff_func_file),
-                                                                                             diff_func_file))
-    if experiment.args.save_log:
-        save_exper(experiment)
-        loss_plot(experiment, loss_type="normal", save=True)
+
+    save_exper(experiment)
+    if not on_server:
+        loss_plot(experiment, loss_type="loss", save=True, validation=validation)
         if experiment.args.learner == "act":
-            loss_plot(experiment, loss_type="act", save=True)
+            loss_plot(experiment, loss_type="act_loss", save=True)
             # plot histogram of T distribution (number of optimization steps during training)
             plot_dist_optimization_steps(experiment, data_set="train", save=True)
             plot_dist_optimization_steps(experiment, data_set="val", save=True)
             plot_qt_probs(experiment, data_set="train", save=True)
-            plot_qt_probs(experiment, data_set="val", save=True)
+            plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
         param_error_plot(experiment, save=True)
+
+
+def detailed_train_info(logger, func, f_idx, args, learner, step, optimizer_steps, error):
+    logger.info("INFO-track -----------------------------------------------------")
+    logger.info("{}-th batch (op-steps {}): loss {:.4f}".format(step, optimizer_steps, error))
+    logger.info("Example function: {}".format(func.poly_desc(f_idx)))
+    p_init = func.initial_params[f_idx, :].data.numpy().squeeze()
+    logger.info("Initial parameter values {}".format(np.array_str(p_init, precision=3)))
+    p_true = func.true_params[f_idx, :].data.numpy().squeeze()
+    logger.info("True parameter values {}".format(np.array_str(p_true, precision=3)))
+    params = func.params[f_idx, :].data.numpy().squeeze()
+    logger.info("Final parameter values {})".format(np.array_str(params, precision=3)))
+    # if args.learner == 'act':
+    #     logger.debug("Final qt-probabilities")
+    #     logger.debug("{}".format(np.array_str(learner.q_soft.data.squeeze().numpy())))
+    #     logger.debug("raw-values {}".format(
+    #         np.array_str(learner.q_t.data.squeeze().numpy())))
+    #     logger.debug("losses {}".format(
+    #         np.array_str(learner.losses.data.squeeze().numpy())))

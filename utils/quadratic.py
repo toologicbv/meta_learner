@@ -101,6 +101,7 @@ class Quadratic2D(object):
         self.use_cuda = use_cuda
         # self.W = Variable(torch.randn(5) * 8, requires_grad=False)
         self.W = Variable(torch.zeros(5))
+        # self.W = Variable(torch.zeros(3))
         init.normal(self.W)
         self.W.data.abs_()
 
@@ -110,6 +111,10 @@ class Quadratic2D(object):
                 torch.sum(torch.le(self.W, 0.1)).data.numpy()[0] != 0:
             init.normal(self.W)
             self.W.data.abs_()
+
+        # while (self.W[0].data.numpy()[0] * self.W[1].data.numpy()[0]) - self.W[2].data.numpy()[0] < 0:
+        #    init.normal(self.W)
+        #    self.W.data.abs_()
 
         self.x_min = x_min
         self.x_max = x_max
@@ -149,7 +154,8 @@ class Quadratic2D(object):
         if self.use_cuda:
             X = X.cuda()
             self.W = self.W.cuda()
-
+        # y = (self.W[0].expand_as(X[0])) * X[0]**2 + (self.W[1].expand_as(X[1])) * X[1]**2 + \
+        #    2 * self.W[2].expand_as(X[1]) * X[0] * X[1]
         y = ((X[0] - self.W[0].expand_as(X[0])) ** 2 / self.W[2].expand_as(X[0]) ** 2 +
             (X[1] - self.W[1].expand_as(X[1])) ** 2 / self.W[2].expand_as(X[1]) ** 2 + self.W[3].expand_as(X[1]))
         # omitting the last parameter after figuring out that this made the functions pretty hard to optimize
@@ -201,14 +207,16 @@ class Quadratic2D(object):
             plot_text = True
         else:
             plot_text = False
-        ax.set_prop_cycle(cycler('color', [cm(1.15 * i / (num_points)) for i in range(num_points)]))
-        for i in range(num_points):
-            ax.plot(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2], 'o-')
-            # add the step number, although this still plots the number sometimes slightly off
-            if plot_text and i == num_points - 1:
-                a_color = "yellow"
-                plt.annotate(str(i+1), xy=(int(self.value_hist['x1'][i+1]), int(self.value_hist['x2'][i+1])), size=8,
-                             color=a_color)
+
+        if num_points > 1:
+            ax.set_prop_cycle(cycler('color', [cm(1.15 * i / (num_points)) for i in range(num_points)]))
+            for i in range(num_points):
+                ax.plot(self.value_hist['x1'][i:i + 2], self.value_hist['x2'][i:i + 2], 'o-')
+                # add the step number, although this still plots the number sometimes slightly off
+                if plot_text and i == num_points - 1:
+                    a_color = "yellow"
+                    plt.annotate(str(i+1), xy=(int(self.value_hist['x1'][i+1]), int(self.value_hist['x2'][i+1])), size=8,
+                                 color=a_color)
 
         plt.title(self.poly_desc + " (steps={})".format(num_points))
         plt.axis('off')
@@ -351,7 +359,7 @@ class SimpleQuadratic(object):
 def create_exp_label(exper):
 
     label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
-                str(int(exper.avg_num_opt_steps)) + "ops_" + exper.args.loss_type
+                str(int(exper.avg_num_opt_steps)) + "ops"
 
     return label1
 
