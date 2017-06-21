@@ -1,5 +1,4 @@
 import numpy as np
-import os
 
 import torch
 import torch.optim as optim
@@ -26,7 +25,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     meta_logger.info("---------------------------------------------------------------------------------------")
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
-        val_set = [RegressionFunction(n_funcs=10000, n_samples=100, noise_sigma=2.5, x_dim=3)]
+        meta_logger.info("INFO - No validation set provided, generating new regression functions")
+        val_set = [RegressionFunction(n_funcs=10000, n_samples=100, noise_sigma=1.5, x_dim=10)]
         plot_idx = [0]
     else:
         plot_idx = [(i + 1) * (val_set.num_of_funcs // num_of_plots) - 1 for i in range(num_of_plots)]

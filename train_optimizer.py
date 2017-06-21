@@ -19,6 +19,7 @@ from val_optimizer import validate_optimizer
     this had to do with validation of model but tested without validation and result stays the same.
 """
 
+RUNS_ON_SERVER = False
 MAX_VAL_FUNCS = 10000
 # for standard optimizer which we compare to
 STD_OPT_LR = 4e-1
@@ -42,8 +43,8 @@ parser = argparse.ArgumentParser(description='PyTorch Meta-learner')
 
 parser.add_argument('--x_dim', type=int, default=10, metavar='N',
                     help='dimensionality of the regression variable x (default: 10)')
-parser.add_argument('--lr', type=float, default=1e-3, metavar='N',
-                    help='default learning rate for optimizer (default: 1e-3)')
+parser.add_argument('--lr', type=float, default=1e-5, metavar='N',
+                    help='default learning rate for optimizer (default: 1e-5)')
 parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                     help='number of functions per batch (default: 20)')
 parser.add_argument('--optimizer_steps', type=int, default=10, metavar='N',
@@ -92,7 +93,12 @@ def main():
         SEED = 2345
     else:
         SEED = 4325
-    torch.manual_seed(SEED)
+
+    if args.cuda:
+        torch.cuda.manual_seed(SEED)
+    else:
+        torch.manual_seed(SEED)
+
     np.random.seed(SEED)
     
     exper = Experiment(args, config)
@@ -188,6 +194,9 @@ def main():
                     # meta_logger.debug("DEBUG@step %d - Resetting LSTM" % k)
                     forward_steps = 1
                     meta_optimizer.reset_lstm(keep_states=keep_states)
+                    # kind of fake reset, the actual value of the function parameters are NOT changed, only
+                    # the pytorch Variable, in order to prevent the .backward() function to go beyond the truncated
+                    # BPTT steps
                     reg_funcs.reset_params()
                     loss_sum = 0
 
@@ -230,6 +239,7 @@ def main():
                     # meta_logger.info("Sum gradients {:.3}".format(meta_optimizer.sum_grads))
                     optimizer.step()
                     meta_optimizer.zero_grad()
+            # END of iterative function optimization. Compute final losses and probabilities
 
             # compute the final loss error for this function between last loss calculated and function min-value
             # error = torch.abs(loss_step.data - q2_func.min_value.data)
@@ -245,7 +255,7 @@ def main():
                 # set grads of meta_optimizer to zero after update parameters
                 meta_optimizer.zero_grad()
 
-            # Does it work? if necessary uncomment and see what the learner is doing
+            # Does it work? if necessary set TRAIN_VERBOSE to True
             if i % 20 == 0 and i != 0 and TRAIN_VERBOSE:
                 detailed_train_info(meta_logger, reg_funcs, 0, args, meta_optimizer, i, optimizer_steps, error[0])
 
@@ -253,11 +263,11 @@ def main():
                 meta_optimizer.reset_final_loss(exper.config)
             elif exper.args.learner == 'meta':
                 meta_optimizer.reset_losses()
-            # END OF SPECIFIC FUNCTION OPTIMIZATION
+            # END OF BATCH: FUNCTION OPTIMIZATION
 
             final_loss += error
             param_loss += reg_funcs.param_error(average=False).data
-        # end of an epoch, calculate average final loss/error and print summary
+        # END OF EPOCH, calculate average final loss/error and print summary
         # we computed the average loss per function in the batch! and added those losses to the final loss
         # therefore we only need to divide through the number of batches to end up with the average loss per function
         final_loss *= 1./float(num_of_batches)
@@ -279,6 +289,7 @@ def main():
         exper.epoch_stats["param_error"].append(param_loss[0])
         if args.learner == 'act':
             exper.epoch_stats["act_loss"].append(final_act_loss[0])
+        # if applicable, VALIDATE model performance
         if exper.epoch % args.eval_freq == 0 or epoch + 1 == args.max_epoch:
             # pass
             if args.learner == 'manual':
@@ -301,7 +312,7 @@ def main():
 
             meta_optimizer.init_qt_statistics(exper.config)
 
-    end_run(exper, meta_optimizer)
+    end_run(exper, meta_optimizer, on_server=RUNS_ON_SERVER)
 
 if __name__ == "__main__":
     main()

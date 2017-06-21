@@ -76,9 +76,9 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
 
 def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False, validation=True):
 
-    num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
     plt.figure(figsize=(height, width))
+    num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     plt.xlabel("epochs")
     x_vals = range(1, exper.epoch+1, 1)
     plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
@@ -196,7 +196,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         T = len(exper.epoch_stats["qt_hist"][epoch])
         opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
         qt_hist = exper.epoch_stats["qt_hist"][epoch]
-        plot_title = "Training - q(t) distribution for different T (mean={})".format(int(exper.avg_num_opt_steps))
+        plot_title = "Training - q(t|T) distribution for different T (mean={})".format(int(exper.avg_num_opt_steps))
     else:
         T = len(exper.val_stats["qt_hist"][epoch])
         opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
@@ -574,7 +574,7 @@ def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12,
     ax1.legend(loc="best")
     if log_qt:
         ax2 = plt.subplot(2, 1, 2)
-        ax2.set_title("Approximated q(t) distribtuion")
+        ax2.set_title("Approximated q(t) distribution")
         ax2.bar(index, qt_probs, bar_width, color='b', align='center', label="q(t|{})".format(exper.config.max_val_opt_steps))
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)

@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 from collections import OrderedDict
-from layer_norm_lstm import LayerNormLSTMCell
+from layer_lstm import LayerLSTMCell
 from utils.config import config
 from utils.regression import neg_log_likelihood_loss
 
@@ -58,7 +58,7 @@ class MetaLearner(nn.Module):
         self.linear1 = nn.Linear(num_inputs, num_hidden)
         self.lstms = nn.ModuleList()
         for i in range(num_layers):
-            self.lstms.append(LayerNormLSTMCell(num_hidden, num_hidden, forget_gate_bias=fg_bias))
+            self.lstms.append(LayerLSTMCell(num_hidden, num_hidden, forget_gate_bias=fg_bias))
 
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.losses = []
@@ -178,7 +178,7 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         # self.act_ln1 = LayerNorm1D(self.num_hidden_act)
         self.act_lstms = nn.ModuleList()
         for i in range(num_layers):
-            self.act_lstms.append(LayerNormLSTMCell(self.num_hidden_act, self.num_hidden_act, forget_gate_bias=1.))
+            self.act_lstms.append(LayerLSTMCell(self.num_hidden_act, self.num_hidden_act, forget_gate_bias=1.))
 
         self.lambda_q = nn.Parameter(torch.zeros(1, 1))
         torch.nn.init.uniform(self.lambda_q, -0.1, 0.1)
@@ -473,6 +473,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         if conf is None:
             T = config.T
             max_val_opt_steps = config.max_val_opt_steps
+            conf = config
         else:
             T = conf.T
             max_val_opt_steps = conf.max_val_opt_steps
@@ -486,7 +487,8 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         self.opt_step_hist_val = np.zeros(max_val_opt_steps)
         # temporary variables to proof that loss function is scale sensitive w.r.t. log-likelihood term and
         # kl terms
-        self.ll_loss = np.zeros(config.max_val_opt_steps)
-        self.kl_div = np.zeros(config.max_val_opt_steps)
-        self.kl_entropy = np.zeros(config.max_val_opt_steps)
+        self.ll_loss = np.zeros(conf.max_val_opt_steps)
+        self.kl_div = np.zeros(conf.max_val_opt_steps)
+        self.kl_entropy = np.zeros(conf.max_val_opt_steps)
+
 

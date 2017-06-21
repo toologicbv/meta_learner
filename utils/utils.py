@@ -253,7 +253,7 @@ def prepare(prcs_args, exper):
     return log_dir
 
 
-def end_run(experiment, model, validation=True):
+def end_run(experiment, model, validation=True, on_server=False):
     if not experiment.args.learner == 'manual' and model.name is not None:
         model_path = os.path.join(experiment.output_dir, model.name + config.save_ext)
         torch.save(model.state_dict(), model_path)
@@ -261,15 +261,16 @@ def end_run(experiment, model, validation=True):
         print("INFO - Successfully saved model parameters to {}".format(model_path))
 
     save_exper(experiment)
-    loss_plot(experiment, loss_type="loss", save=True, validation=validation)
-    if experiment.args.learner == "act":
-        loss_plot(experiment, loss_type="act_loss", save=True)
-        # plot histogram of T distribution (number of optimization steps during training)
-        plot_dist_optimization_steps(experiment, data_set="train", save=True)
-        plot_dist_optimization_steps(experiment, data_set="val", save=True)
-        # plot_qt_probs(experiment, data_set="train", save=True)
-        # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
-    param_error_plot(experiment, save=True)
+    if not on_server:
+        loss_plot(experiment, loss_type="loss", save=True, validation=validation)
+        if experiment.args.learner == "act":
+            loss_plot(experiment, loss_type="act_loss", save=True)
+            # plot histogram of T distribution (number of optimization steps during training)
+            plot_dist_optimization_steps(experiment, data_set="train", save=True)
+            plot_dist_optimization_steps(experiment, data_set="val", save=True)
+            plot_qt_probs(experiment, data_set="train", save=True)
+            plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+        param_error_plot(experiment, save=True)
 
 
 def detailed_train_info(logger, func, f_idx, args, learner, step, optimizer_steps, error):
