@@ -174,10 +174,12 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     return meta_optimizer
 
 
-def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None):
+def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None, file_name=None):
 
-    file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
-                str(dim) + ".dll"
+    if file_name is None:
+        file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
+                    str(dim) + ".dll"
+
     if path_specs is not None:
         load_file = os.path.join(path_specs, file_name)
     else:
@@ -264,13 +266,13 @@ def end_run(experiment, model, validation=True, on_server=False):
     if not on_server:
         loss_plot(experiment, loss_type="loss", save=True, validation=validation)
         if experiment.args.learner == "act":
-            loss_plot(experiment, loss_type="act_loss", save=True)
+            loss_plot(experiment, loss_type="act_loss", save=True, validation=validation)
             # plot histogram of T distribution (number of optimization steps during training)
-            plot_dist_optimization_steps(experiment, data_set="train", save=True)
-            plot_dist_optimization_steps(experiment, data_set="val", save=True)
+            # plot_dist_optimization_steps(experiment, data_set="train", save=True)
+            # plot_dist_optimization_steps(experiment, data_set="val", save=True)
             plot_qt_probs(experiment, data_set="train", save=True)
-            plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
-        param_error_plot(experiment, save=True)
+            # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+        # param_error_plot(experiment, save=True)
 
 
 def detailed_train_info(logger, func, f_idx, args, learner, step, optimizer_steps, error):

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
-from utils.regression import RegressionFunction
+from utils.regression import RegressionFunction, L2LQuadratic
 
 from utils.config import config
 from utils.utils import softmax, stop_computing
@@ -25,8 +25,13 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     meta_logger.info("---------------------------------------------------------------------------------------")
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
-        meta_logger.info("INFO - No validation set provided, generating new regression functions")
-        val_set = [RegressionFunction(n_funcs=10000, n_samples=100, noise_sigma=1.5, x_dim=10)]
+        meta_logger.info("INFO - No validation set provided, generating new functions")
+        if exper.problem == 'regression':
+            val_set = RegressionFunction(n_funcs=10000, n_samples=100, stddev=1., x_dim=10)
+        else:
+            val_set = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
+                                   use_cuda=exper.args.cuda)
+
         plot_idx = [0]
     else:
         plot_idx = [(i + 1) * (val_set.num_of_funcs // num_of_plots) - 1 for i in range(num_of_plots)]
@@ -36,8 +41,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     total_loss = 0
     total_param_loss = 0
     total_act_loss = 0
-    if exper.args.cuda:
-        val_set.enable_cuda()
     val_set.reset()
     if verbose:
         meta_logger.info("\tStart-value parameters {}".format(np.array_str(val_set.params.data.numpy()[np.array(plot_idx)])))
@@ -58,21 +61,27 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     str_q_probs = None
     col_losses = []
     col_param_losses = []
+    backward_ones = torch.ones(val_set.num_of_funcs)
+    if exper.args.cuda:
+        backward_ones = backward_ones.cuda()
     qt_param = Variable(torch.zeros(val_set.num_of_funcs, 1))
+    # Initialize hidden cell state of LSTM
+    if not exper.args.learner == 'manual':
+        meta_learner.reset_lstm(keep_states=False)
     for i in range(max_steps):
-
-        if i % exper.args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
-            meta_learner.reset_lstm(keep_states=False)
-
-        loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
+        if exper.args.problem == "quadratic":
+            loss = val_set.compute_loss(average=False)
+        else:
+            loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
         if save_qt_prob_funcs:
-            exper.val_stats["loss_funcs"][:, i] = loss.data.squeeze().numpy()
+            exper.val_stats["loss_funcs"][:, i] = loss.data.cpu().squeeze().numpy()
         if verbose and not exper.args.learner == 'manual' and i % 2 == 0:
             for f_idx in plot_idx:
-                meta_logger.info("\tStep {}: current loss {:.4f}".format(str(i+1), loss.squeeze().data[f_idx]))
-        loss.backward(torch.ones(val_set.num_of_funcs))
-        param_loss = val_set.param_error(average=True).data.numpy()[0].astype(float)
-        loss = torch.sum(torch.mean(loss, 0)).data.numpy()[0].astype(float)
+                meta_logger.info("\tStep {}: current loss {:.4f}".format(str(i+1), loss.squeeze().data[f_idx].cpu()))
+
+        loss.backward(backward_ones)
+        param_loss = val_set.param_error(average=True).data.cpu().numpy()[0].astype(float)
+        loss = torch.sum(torch.mean(loss, 0)).data.cpu().numpy()[0].astype(float)
         col_losses.append(loss)
         col_param_losses.append(param_loss)
 
@@ -81,7 +90,12 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
             if exper.args.learner == 'meta':
                 # gradient descent
                 par_new = val_set.params - delta_p
-                _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
+                if exper.args.problem == "quadratic":
+                    loss_step = val_set.compute_loss(average=True, params=par_new)
+                    meta_learner.losses.append(Variable(loss_step.data))
+                else:
+                    # Regression
+                    _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
@@ -122,11 +136,15 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         """
 
     # make another step to register final loss
-    loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
+    if exper.args.problem == "quadratic":
+        loss = val_set.compute_loss(average=False)
+    else:
+        loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
+
     if save_qt_prob_funcs:
-        exper.val_stats["loss_funcs"][:, i] = loss.data.squeeze().numpy()
-    loss = torch.sum(torch.mean(loss, 0)).data.squeeze().numpy()[0].astype(float)
-    param_loss = val_set.param_error(average=True).data.numpy()[0].astype(float)
+        exper.val_stats["loss_funcs"][:, i] = loss.data.cpu().squeeze().numpy()
+    loss = torch.sum(torch.mean(loss, 0)).data.cpu().squeeze().numpy()[0].astype(float)
+    param_loss = val_set.param_error(average=True).data.cpu().numpy()[0].astype(float)
     # add to total loss
     total_param_loss += param_loss
     total_loss += loss
@@ -150,6 +168,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         # TODO again max_steps need to be adjusted later here when we really stop!!!
         priors = Variable(torch.from_numpy(kl_prior_dist.pmfunc(np.arange(1, max_steps + 1), normalize=True)).float())
         priors = priors.expand(val_set.num_of_funcs, max_steps)
+        if exper.args.cuda:
+            priors = priors.cuda()
         total_act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data.squeeze()[0]
         str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
 

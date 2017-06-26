@@ -74,14 +74,18 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
     return num_opt_steps, train_loss, val_loss, fig_name
 
 
-def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False, validation=True):
+def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False, validation=True,
+              log_scale=False):
 
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
     plt.figure(figsize=(height, width))
     num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     plt.xlabel("epochs")
     x_vals = range(1, exper.epoch+1, 1)
-    plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
+    if log_scale:
+        plt.semilogy(x_vals[2:], train_loss[2:], 'r', label="train-loss")
+    else:
+        plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
 
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
@@ -351,6 +355,11 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
             plt.plot(index, res_dict[best_val_runs[e]][0:max_step], color=iter_colors.next(),
                          dashes=iter_styles.next(),
                          linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
+        if len(index) > 15:
+            print(len(index))
+            plt.xlim([0, len(index)+1])
+            index = np.arange(1, len(index)+1, 10)
+
         plt.xticks(index, index - 1)
         plt.xlabel("Number of optimization steps")
         plt.ylabel(y_label)

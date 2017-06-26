@@ -14,7 +14,7 @@ from itertools import cycle
 from cycler import cycler
 
 
-def neg_log_likelihood_loss(true_y, est_y, variance, N, sum_batch=False, size_average=False):
+def neg_log_likelihood_loss(true_y, est_y, stddev, N, sum_batch=False, size_average=False):
     """
     Negative log-likelihood calculation
     if sum_batch=False the function returns a tensor [batch_size, 1]
@@ -22,7 +22,7 @@ def neg_log_likelihood_loss(true_y, est_y, variance, N, sum_batch=False, size_av
 
     :param true_y: true target values
     :param est_y:  estimated target values
-    :param variance: variance (sigma^2) of noise distribution
+    :param stddev: standard deviation of normal distribution
     :param N: number of samples
     :return: negative log-likelihood: ln p(y_true | x, weights, sigma^2)
     """
@@ -30,9 +30,9 @@ def neg_log_likelihood_loss(true_y, est_y, variance, N, sum_batch=False, size_av
         avg = 1/float(N)
     else:
         avg = 1.
-    ll = avg * 0.5 * 1 / variance * \
+    ll = avg * 0.5 * 1 / stddev**2 * \
          torch.sum((true_y - est_y) ** 2, 1) + \
-           N / 2 * (np.log(variance) + np.log(2 * np.pi))
+           N / 2 * (np.log(stddev**2) + np.log(2 * np.pi))
     if sum_batch:
         # we also sum over the mini-batch, dimension 0
         ll = torch.sum(ll)
@@ -98,32 +98,157 @@ def get_f_values(X, params):
     return Y
 
 
-class RegressionFunction(object):
+def insert_samples_dim(X, size_dim1):
+    """
 
-    def __init__(self, n_funcs=100, n_samples=100, param_sigma=4., noise_sigma=1.,
-                 x_min=-2, x_max=2, x_dim=2, use_cuda=False):
-        self.use_cuda = use_cuda # TODO not implemented yet
-        self.noise_sigma = noise_sigma
-        self.num_of_funcs = n_funcs
-        self.n_samples = n_samples
-        self.xdim = x_dim
-        self.true_params = get_true_params(size=(n_funcs, self.xdim),
-                                           scale=param_sigma)
-        tensor_params = init_params(self.true_params.size())
-        self.params = Variable(tensor_params, requires_grad=True)
+    :param X: tensor of size [batch_size, num_params] that need to be extended with size_dim1
+    :param size_dim1: size of the dimension 1 to be inserted in X
+    :return: X of size [batch_size, size_dim1, num_params]
+    """
+
+    X = X.unsqueeze(X.dim())
+    X = X.expand(X.size(0), X.size(1), size_dim1)
+    X = torch.transpose(X, 1, 2)
+    return X
+
+
+class L2LQuadratic(object):
+    """Quadratic problem: f(x) = ||Wx - y||."""
+
+    def __init__(self, batch_size=128, num_dims=10, stddev=0.01, use_cuda=False):
+        """Builds loss graph."""
+        self.num_of_funcs = batch_size
+        self.noise_sigma = stddev
+        self.use_cuda = use_cuda
+        self.dim = num_dims
+        self.n_samples = 10
+
+        # Non-trainable variables.
+        w = torch.FloatTensor(batch_size, num_dims, num_dims)
+        self.W = Variable(init.uniform(w), requires_grad=False)
+        if self.use_cuda:
+            self.W = self.W.cuda()
+
+        y = torch.FloatTensor(batch_size, num_dims)
+        self.y = Variable(init.uniform(y), requires_grad=False)
+        if self.use_cuda:
+            self.y = self.y.cuda()
+
+        # Trainable variable.
+        # TODO...true parameters
+        # self.true_params = Variable(torch.zeros((batch_size, num_dims)))
+        self.true_params = Variable(self.get_true_params())
+        if self.use_cuda:
+            params = torch.FloatTensor(batch_size, num_dims).cuda()
+            self.params = Variable(init.normal(params, mean=0., std=stddev).cuda(), requires_grad=True)
+            self.true_params = self.true_params.cuda()
+        else:
+            params = torch.FloatTensor(batch_size, num_dims)
+            self.params = Variable(init.normal(params, mean=0., std=stddev), requires_grad=True)
+
         self.initial_params = self.params.clone()
 
-        self.x = Variable(torch.linspace(x_min, x_max, n_samples))
-        self.xp = sample_points(self.n_samples, ndim=self.xdim, x_min=x_min, x_max=x_max)
-        self.mean_values = get_f_values(self.xp, self.true_params)
-        self.noise = get_noise(size=self.mean_values.size(1), sigma=noise_sigma)
-        self.y = add_noise(self.mean_values, noise=self.noise)
         self.param_hist = {}
         self._add_param_values(self.initial_params)
 
-    def enable_cuda(self):
-        # TODO not implemented yet
-        raise NotImplementedError("Enable cuda is not yet implemented!")
+    def _add_param_values(self, parameters):
+        self.param_hist[len(self.param_hist)] = parameters
+
+    def set_parameters(self, parameters):
+        self._add_param_values(parameters)
+        self.params.data.copy_(parameters.data)
+
+    def reset_params(self):
+        # break the backward chain by declaring param Variable again with same Tensor values
+        if self.use_cuda:
+            self.params = Variable(self.params.data.cuda(), requires_grad=True)
+        else:
+            self.params = Variable(self.params.data, requires_grad=True)
+
+    def reset(self):
+        self.param_hist = {}
+        reset_params = self.initial_params.data.clone()
+        self.params = Variable(reset_params, requires_grad=True)
+        self._add_param_values(self.initial_params)
+
+    def compute_loss(self, average=True, params=None):
+        if params is None:
+            params = self.params
+        product = torch.squeeze(torch.bmm(self.W, params.unsqueeze(params.dim())))
+        if average:
+            loss = torch.mean(torch.sum((product - self.y) ** 2, 1))
+        else:
+            loss = torch.sum((product - self.y) ** 2, 1)
+
+        return loss
+
+    def param_error(self, average=True):
+        """
+        computes parameter error and if applicable apply average over functions
+        :param average:
+        :return: parameter loss/error (Variable)
+        """
+        if average:
+            N = float(self.num_of_funcs)
+        else:
+            N = 1
+        param_error = 1/N * torch.sum((self.true_params - self.params) ** 2)
+        return param_error.squeeze()
+
+    def get_true_params(self):
+        X = np.zeros((self.num_of_funcs, self.dim))
+
+        for i in np.arange(self.num_of_funcs):
+            A_plus = np.linalg.pinv(self.W.data.cpu().numpy()[i])
+            b = self.y.data.cpu().numpy()[i]
+            X[i, :] = np.squeeze(np.dot(A_plus, b))
+
+        return torch.from_numpy(X).float()
+
+    @property
+    def min_loss(self):
+        loss = self.compute_loss(params=self.true_params, average=True)
+        print(loss.data.cpu().numpy())
+        return loss
+
+
+class RegressionFunction(object):
+
+    def __init__(self, n_funcs=128, n_samples=10, param_sigma=4., stddev=0.01, x_dim=2, use_cuda=False):
+        self.use_cuda = use_cuda
+        self.stddev = stddev
+        self.num_of_funcs = n_funcs
+        self.n_samples = n_samples
+        self.xdim = x_dim
+        true_params = torch.FloatTensor(n_funcs, x_dim)
+        self.true_params = Variable(init.uniform(true_params), requires_grad=False)
+
+        if self.use_cuda:
+            params = torch.FloatTensor(n_funcs, x_dim).cuda()
+            self.params = Variable(init.normal(params, mean=0., std=stddev).cuda(), requires_grad=True)
+            self.true_params = self.true_params.cuda()
+        else:
+            params = torch.FloatTensor(n_funcs, x_dim)
+            self.params = Variable(init.normal(params, mean=0., std=stddev), requires_grad=True)
+
+        self.initial_params = self.params.clone()
+
+        w = torch.FloatTensor(self.num_of_funcs, self.n_samples, self.xdim)
+        self.W = Variable(init.uniform(w), requires_grad=False)
+        if self.use_cuda:
+            self.W = self.W.cuda()
+
+        self.y_no_noise = torch.squeeze(torch.bmm(self.W, self.true_params.unsqueeze(self.true_params.dim())))
+        noise = torch.FloatTensor(self.num_of_funcs, self.n_samples)
+        self.noise = Variable(init.normal(noise, std=stddev), requires_grad=False)
+        if self.use_cuda:
+            self.noise = self.noise.cuda()
+        self.y = self.y_no_noise + self.noise.expand_as(self.y_no_noise)
+        if self.use_cuda:
+            self.y = self.y.cuda()
+
+        self.param_hist = {}
+        self._add_param_values(self.initial_params)
 
     def set_parameters(self, parameters):
         self._add_param_values(parameters)
@@ -140,38 +265,45 @@ class RegressionFunction(object):
     def reset(self):
         self.param_hist = {}
         reset_params = self.initial_params.data.clone()
-        self.params = Variable(reset_params, requires_grad=True)
+        if self.use_cuda:
+            self.params = Variable(reset_params.cuda(), requires_grad=True)
+        else:
+            self.params = Variable(reset_params, requires_grad=True)
+
         self._add_param_values(self.initial_params)
 
     def reset_params(self):
         # break the backward chain by declaring param Variable again with same Tensor values
-        self.params = Variable(self.params.data, requires_grad=True)
+        if self.use_cuda:
+            self.params = Variable(self.params.data.cuda(), requires_grad=True)
+        else:
+            self.params = Variable(self.params.data, requires_grad=True)
 
-    def compute_loss(self, average=True):
+    def compute_loss(self, average=True, params=None):
         """
-        compute regression loss and if applicable apply average over functions
+        compute mean squared loss and if applicable apply average over functions
         :param average:
         :return: loss (Variable)
         """
+        if params is None:
+            params = self.params
+        if self.use_cuda and not params.cuda():
+            params = params.cuda()
+        # size of W = [batch, n_samples, xdim] and params = [batch, xdim]
+        product = torch.squeeze(torch.bmm(self.W, params.unsqueeze(params.dim())))
+
         if average:
-            N = float(self.num_of_funcs)
+            loss = torch.mean(torch.sum((product - self.y) ** 2, 1))
         else:
-            N = 1.
-        loss = 1/N * 0.5 * 1/self.noise_sigma * torch.sum((self.y - self.y_t)**2, 1)
+            loss = torch.sum((product - self.y) ** 2, 1)
         return loss
 
     def compute_neg_ll(self, average_over_funcs=False, size_average=False):
-        ll = neg_log_likelihood_loss(self.y, self.y_t, self.noise_sigma, N=self.n_samples, sum_batch=False,
+        ll = neg_log_likelihood_loss(self.y, self.y_t(), self.stddev, N=self.n_samples, sum_batch=False,
                                      size_average=size_average)
         if average_over_funcs:
             ll = torch.mean(ll, 0).squeeze()
         return ll
-
-    @staticmethod
-    def compute_loss_1func(sigma, y, y_hat):
-        N = y.size(1)
-        loss = 1 / float(N) * 0.5 * 1 / sigma * torch.sum((y - y_hat) ** 2, 1)
-        return loss
 
     def param_error(self, average=True):
         """
@@ -183,12 +315,14 @@ class RegressionFunction(object):
             N = float(self.num_of_funcs)
         else:
             N = 1
-        param_error = 1/N * 0.5 * torch.sum((self.true_params - self.params) ** 2)
+        param_error = 1/N * torch.sum((self.true_params - self.params) ** 2)
         return param_error.squeeze()
 
-    @property
-    def y_t(self):
-        return torch.mm(self.params, self.xp)
+    def y_t(self, params=None):
+        if params is None:
+            params = self.params
+
+        return torch.squeeze(torch.bmm(self.W, params.unsqueeze(params.dim())))
 
     def poly_desc(self, idx, f_true=True):
         if f_true:
@@ -201,24 +335,24 @@ class RegressionFunction(object):
         return descr
 
     def get_y_values(self, params):
-        return torch.mm(params, self.xp)
+        return torch.bmm(self.W, params)
 
     def plot_contour(self, f_idx=0, delta=2):
         np_init_params = self.initial_params[f_idx, :].data.numpy()
         torch_params = self.true_params[f_idx, :].unsqueeze(0)
         np_params = self.true_params[f_idx, :].data.numpy()
-        y_true = get_f_values(self.xp, torch_params)
+        y_true = get_f_values(torch_params, self.W[f_idx])
         steps = (delta + delta) * 25
         x_range = get_axis_ranges(np_init_params[0], np_params[0], delta=delta, steps=steps)
         y_range = get_axis_ranges(np_init_params[1], np_params[1], delta=delta, steps=steps)
         X, Y = np.meshgrid(x_range, y_range)
         f_in = Variable(torch.FloatTensor(torch.cat((torch.from_numpy(X.ravel()).float(),
                                                      torch.from_numpy(Y.ravel()).float()), 1)))
-        Z_mean = get_f_values(self.xp, f_in)
+        Z_mean = get_f_values(self.W[f_idx], f_in)
         Y_true = y_true.expand_as(Z_mean)
         Z = add_noise(Z_mean, noise=self.noise)
 
-        error = 0.5 * 1 / self.noise_sigma * torch.sum((Z - Y_true) ** 2, 1)
+        error = 0.5 * 1 / self.stddev**2 * torch.sum((Z - Y_true) ** 2, 1)
 
         plt.contourf(X, Y, error.data.cpu().view(steps, steps).numpy(), steps)
 
@@ -233,9 +367,9 @@ class RegressionFunction(object):
         iter_styles = cycle(style)
         num_points = len(self.param_hist) - 1
         x = self.x.data.numpy()
-        y_mean = self.mean_values.data.numpy()[f_idx, :]
+        y_mean = self.y_no_noise.data.numpy()[f_idx, :]
         y_samples = self.y.data.numpy()[f_idx, :]
-        y = self.y_t.data.numpy()[f_idx, :]
+        y = self.y_t().data.numpy()[f_idx, :]
         f_true_desc = r'$f(x)=$' + self.poly_desc(f_idx) + r'$ (steps={})$'.format(num_points) + "\n"
         f_approx_desc = r'$\hat{f}(x)=$' + self.poly_desc(f_idx, f_true=False)
         l_title = f_true_desc + f_approx_desc
@@ -243,11 +377,11 @@ class RegressionFunction(object):
         plt.title(l_title)
 
         plt.plot(x, y_mean, 'b-', lw=2, label=r'$f(x)$')
-        plt.plot(x, y_samples, 'go', markersize=2, label=r'samples $\sigma={:.2}$'.format(self.noise_sigma))
+        plt.plot(x, y_samples, 'go', markersize=2, label=r'samples $\sigma={:.2}$'.format(self.stddev))
         if steps is not None:
             for i in steps:
                 p_t = self.param_hist[i][f_idx, :].unsqueeze(0)
-                y_t = torch.mm(p_t, self.xp).data.numpy().squeeze()
+                y_t = torch.mm(self.W[f_idx], p_t).data.numpy().squeeze()
                 c = iter_colors.next()
                 # print("Color {}/{} ({:.3}/{:.3})".format(c, i, p_t.data.numpy()[0, 0], p_t.data.numpy()[0, 1]))
                 plt.plot(x, y_t, lw=1, dashes=iter_styles.next(), color=c,
@@ -309,9 +443,9 @@ class RegressionFunction(object):
             ax.set_prop_cycle(cycler('color', [cm(1.15 * i / (num_points)) for i in range(num_points)]))
             for i in range(num_points):
                 params = self.param_hist[i][f_idx, :].unsqueeze(0)
-                y_t = torch.mm(params, self.xp).data.numpy().squeeze()
+                y_t = torch.mm(self.self.W[f_idx], params).data.numpy().squeeze()
                 y = self.y.data.numpy()[f_idx, :]
-                loss = 0.5 * 1/self.noise_sigma * np.sum((y - y_t)**2)
+                loss = 0.5 * 1/self.stddev**2 * np.sum((y - y_t)**2)
                 losses.append(loss)
                 x_array = [self.param_hist[i][f_idx, 0].data.numpy()[0],
                            self.param_hist[i+1][f_idx, 0].data.numpy()[0]]
@@ -327,9 +461,9 @@ class RegressionFunction(object):
             # compute the last loss, e.g. in case we have 10 opt steps we have 11 parameters in our history
             # because the initial one counts as t_0
             params = self.param_hist[i+1][f_idx, :].unsqueeze(0)
-            y_t = torch.mm(params, self.xp).data.numpy().squeeze()
+            y_t = torch.mm(self.W[f_idx], params).data.numpy().squeeze()
             y = self.y.data.numpy()[f_idx, :]
-            loss = 0.5 * 1 / self.noise_sigma * np.sum((y - y_t) ** 2)
+            loss = 0.5 * 1 / self.stddev**2 * np.sum((y - y_t) ** 2)
             losses.append(loss)
         # ax.axes.get_xaxis().set_ticks([])
         # ax.axes.get_yaxis().set_ticks([])

@@ -32,7 +32,7 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
         print("Unexpected error:", sys.exc_info()[0])
         raise ValueError
 
-    if np.any(kl_div.data.numpy() < 0):
+    if np.any(kl_div.data.cpu().numpy() < 0):
         kl_np = kl_div.data.numpy()
         if np.any(kl_np[(kl_np < 0) & (kl_np < threshold)]):
             print("************* Negative KL-divergence *****************")
@@ -42,6 +42,30 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
             raise ValueError("KL divergence can't be less than zero {}".format(kl_str))
 
     return kl_div
+
+
+def init_stat_vars(conf=None):
+    if conf is None:
+        T = config.T
+        max_val_opt_steps = config.max_val_opt_steps
+        conf = config
+    else:
+        T = conf.T
+        max_val_opt_steps = conf.max_val_opt_steps
+
+    # is used to compute the mean weights/probs over epochs
+    qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, T + 1)])
+    # the same object for the validation data
+    qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, max_val_opt_steps + 1)])
+    opt_step_hist = np.zeros(T)
+    # the same object for the validation data
+    opt_step_hist_val = np.zeros(max_val_opt_steps)
+    # temporary variables to give some insights into the scale differences between log-likelihood terms and
+    # kl-divergence terms
+    ll_loss = np.zeros(conf.max_val_opt_steps)
+    kl_div = np.zeros(conf.max_val_opt_steps)
+    kl_entropy = np.zeros(conf.max_val_opt_steps)
+    return qt_hist, qt_hist_val, opt_step_hist, opt_step_hist_val, ll_loss, kl_div, kl_entropy
 
 
 class MetaLearner(nn.Module):
@@ -62,6 +86,9 @@ class MetaLearner(nn.Module):
 
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.losses = []
+        if self.use_cuda:
+            print("Using cuda for MetaLearner")
+            self.cuda()
 
     def cuda(self):
         super(MetaLearner, self).cuda()
@@ -94,7 +121,7 @@ class MetaLearner(nn.Module):
                Tensor shape: dim0=number of functions X dim1=number of parameters
             Coordinate wise processing:
         """
-        if self.use_cuda:
+        if self.use_cuda and not x.is_cuda:
             x = x.cuda()
 
         theta_out = []
@@ -121,6 +148,9 @@ class MetaLearner(nn.Module):
         :rtype: object
         """
         grads = Variable(optimizee_with_grads.params.grad.data)
+        if self.use_cuda:
+             grads = grads.cuda()
+
         delta_params = self(grads)
 
         return delta_params
@@ -131,20 +161,24 @@ class MetaLearner(nn.Module):
             avg = 1/float(optimizee_obj.num_of_funcs)
         else:
             avg = 1.
-        loss = avg * neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.get_y_values(new_parameters),
-                                             variance=optimizee_obj.noise_sigma, N=optimizee_obj.n_samples,
+        loss = avg * neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
+                                             stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
                                              sum_batch=True, size_average=False)
+        # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
         self.losses.append(Variable(loss.data))
         return loss
 
     @property
     def sum_grads(self):
         sum_grads = 0
+        print("In sum grads")
         for i, cells in enumerate(self.lstms):
             for j, module in enumerate(cells.children()):
                 for param_name, params in module._parameters.iteritems():
                     if params.grad is not None:
                         sum_grads += torch.sum(params.grad.data)
+                    else:
+                        print("WARNING - No gradients!!!!")
         # for param in self.parameters():
         #    sum_grads += torch.sum(param.grad.data)
 
@@ -169,7 +203,8 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         # currently we're only feeding the second LSTM with one parameter, the sum of the incoming gradients
         # of the optimizee
         self.act_num_params = self.num_params
-        self.init_qt_statistics()
+        self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
+            self.kl_entropy = init_stat_vars()
         self.eps = 1e-90
         # temporary terms --- end
         self.q_soft = None
@@ -292,19 +327,19 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         # number of steps is in dimension 1 of prior probabilities
         num_of_steps = prior_probs.size(1)
         # concatenate everything along dimension 1, the number of time-steps
-        self.losses = torch.cat(self.losses, 1)
+        losses = torch.cat(self.losses, 1)
         self.q_t = torch.cat(self.q_t, 1)
         self.q_soft = F.softmax(self.q_t.double())
         kl_loss = kl_divergence(q_probs=self.q_soft, prior_probs=prior_probs.double())
         # sum over horizon T (time-steps) and average over functions (dim0)
-        # loss = (torch.mean(torch.sum(self.q_soft * self.losses.double(), 1), 0) + torch.mean(kl_loss, 0)).squeeze()
-        loss = (torch.mean(torch.sum(self.q_soft * self.losses.double(), 1) + kl_loss, 0)).squeeze()
+        # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1), 0) + torch.mean(kl_loss, 0)).squeeze()
+        loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
         qts = torch.mean(self.q_soft, 0).data.squeeze().numpy()
         if run_type == 'train':
             self.qt_hist[num_of_steps] += qts
             self.opt_step_hist[num_of_steps - 1] += 1
         elif run_type == 'val':
-            self.ll_loss += torch.mean(self.losses.double(), 0).data.squeeze().numpy()
+            self.ll_loss += torch.mean(losses.double(), 0).data.squeeze().numpy()
             self.kl_div += torch.mean(torch.log(prior_probs.double() + self.eps), 0).data.squeeze().numpy()
             self.kl_entropy += torch.mean(torch.log(self.q_soft + self.eps), 0).data.squeeze().numpy()
 
@@ -316,25 +351,8 @@ class AdaptiveMetaLearnerV1(MetaLearner):
         self.q_soft = None
 
     def init_qt_statistics(self, conf=None):
-        if conf is None:
-            T = config.T
-            max_val_opt_steps = config.max_val_opt_steps
-        else:
-            T = conf.T
-            max_val_opt_steps = conf.max_val_opt_steps
-
-        # is used to compute the mean weights/probs over epochs
-        self.qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, T + 1)])
-        # the same object for the validation data
-        self.qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, max_val_opt_steps + 1)])
-        self.opt_step_hist = np.zeros(T)
-        # the same object for the validation data
-        self.opt_step_hist_val = np.zeros(max_val_opt_steps)
-        # temporary variables to proof that loss function is scale sensitive w.r.t. log-likelihood term and
-        # kl terms
-        self.ll_loss = np.zeros(config.max_val_opt_steps)
-        self.kl_div = np.zeros(config.max_val_opt_steps)
-        self.kl_entropy = np.zeros(config.max_val_opt_steps)
+        self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
+            self.kl_entropy = init_stat_vars()
 
 
 class AdaptiveMetaLearnerV2(MetaLearner):
@@ -351,17 +369,18 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # currently we're only feeding the second LSTM with one parameter, the sum of the incoming gradients
         # of the optimizee
         self.act_num_params = 1
-        self.init_qt_statistics()
+        self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
+            self.kl_entropy = init_stat_vars()
 
         self.eps = 1e-90
         # temporary terms --- end
         self.q_soft = None
         # Parameters of the model
         # self.input_batch_norm = torch.nn.BatchNorm1d(self.num_params)
-        self.lambda_q = nn.Parameter(torch.zeros(1, 1))
-        torch.nn.init.uniform(self.lambda_q, -0.1, 0.1)
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.act_linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
+        if self.use_cuda:
+            self.cuda()
 
     def zero_grad(self):
         super(AdaptiveMetaLearnerV2, self).zero_grad()
@@ -370,7 +389,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         super(AdaptiveMetaLearnerV2, self).reset_lstm(keep_states)
 
     def forward(self, x):
-        if self.use_cuda:
+        if self.use_cuda and not x.is_cuda:
             x = x.cuda()
 
         # x = self.input_batch_norm(x)
@@ -387,8 +406,6 @@ class AdaptiveMetaLearnerV2(MetaLearner):
                 self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
                 x_t = self.hx[t][i]
 
-            # q_t = F.tanh(self.act_linear_out(x_t))
-            # qt_out.append(self.lambda_q.expand_as(q_t) * q_t)
             q_t = self.act_linear_out(x_t)
             qt_out.append(q_t)
             theta_t = self.linear_out(x_t)
@@ -406,6 +423,8 @@ class AdaptiveMetaLearnerV2(MetaLearner):
             :return: delta theta, delta qt
         """
         grads = Variable(optimizee_with_grads.params.grad.data)
+        if self.use_cuda:
+             grads = grads.cuda()
         delta_theta, delta_qt = self(grads)
 
         return delta_theta, delta_qt
@@ -420,8 +439,8 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
-        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.get_y_values(new_parameters),
-                                       variance=optimizee_obj.noise_sigma, N=N, size_average=False)
+        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(params=new_parameters),
+                                       stddev=optimizee_obj.stddev, N=N, size_average=False)
 
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
@@ -446,49 +465,35 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # number of steps is in dimension 1 of prior probabilities
         num_of_steps = prior_probs.size(1)
         # concatenate everything along dimension 1, the number of time-steps
-        self.losses = torch.cat(self.losses, 1)
-        self.q_t = torch.cat(self.q_t, 1)
-        self.q_soft = F.softmax(self.q_t.double())
+        losses = torch.cat(self.losses, 1)
+        q_t = torch.cat(self.q_t, 1)
+        self.q_soft = F.softmax(q_t.double())
         kl_loss = kl_divergence(q_probs=self.q_soft, prior_probs=prior_probs.double())
         # sum over horizon T (time-steps) and average over functions (dim0)
-        # loss = (torch.mean(torch.sum(self.q_soft * self.losses.double(), 1), 0) + torch.mean(kl_loss, 0)).squeeze()
-        loss = (torch.mean(torch.sum(self.q_soft * self.losses.double(), 1) + kl_loss, 0)).squeeze()
-        qts = torch.mean(self.q_soft, 0).data.squeeze().numpy()
+        # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1), 0) + torch.mean(kl_loss, 0)).squeeze()
+        # q_help = Variable(torch.ones(self.q_soft.size()).double())
+        # if self.use_cuda:
+        #   q_help = q_help.cuda()
+        loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
+        qts = torch.mean(self.q_soft, 0).data.cpu().squeeze().numpy()
         if run_type == 'train':
             self.qt_hist[num_of_steps] += qts
             self.opt_step_hist[num_of_steps - 1] += 1
         elif run_type == 'val':
-            self.ll_loss += torch.mean(self.losses.double(), 0).data.squeeze().numpy()
-            self.kl_div += torch.mean(torch.log(prior_probs.double() + self.eps), 0).data.squeeze().numpy()
-            self.kl_entropy += torch.mean(torch.log(self.q_soft + self.eps), 0).data.squeeze().numpy()
+            self.ll_loss += torch.mean(losses.double(), 0).data.cpu().squeeze().numpy()
+            self.kl_div += torch.mean(torch.log(prior_probs.double() + self.eps), 0).data.cpu().squeeze().numpy()
+            self.kl_entropy += torch.mean(torch.log(self.q_soft + self.eps), 0).data.cpu().squeeze().numpy()
 
         return loss
 
-    def reset_final_loss(self, conf):
+    def reset_final_loss(self):
         self.losses = []
         self.q_t = []
         self.q_soft = None
 
     def init_qt_statistics(self, conf=None):
-        if conf is None:
-            T = config.T
-            max_val_opt_steps = config.max_val_opt_steps
-            conf = config
-        else:
-            T = conf.T
-            max_val_opt_steps = conf.max_val_opt_steps
+        self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
+            self.kl_entropy = init_stat_vars()
 
-        # is used to compute the mean weights/probs over epochs
-        self.qt_hist = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, T + 1)])
-        # the same object for the validation data
-        self.qt_hist_val = OrderedDict([(i, np.zeros(i)) for i in np.arange(1, max_val_opt_steps + 1)])
-        self.opt_step_hist = np.zeros(T)
-        # the same object for the validation data
-        self.opt_step_hist_val = np.zeros(max_val_opt_steps)
-        # temporary variables to proof that loss function is scale sensitive w.r.t. log-likelihood term and
-        # kl terms
-        self.ll_loss = np.zeros(conf.max_val_opt_steps)
-        self.kl_div = np.zeros(conf.max_val_opt_steps)
-        self.kl_entropy = np.zeros(conf.max_val_opt_steps)
 
 
