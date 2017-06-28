@@ -239,10 +239,13 @@ class RegressionFunction(object):
             self.W = self.W.cuda()
 
         self.y_no_noise = torch.squeeze(torch.bmm(self.W, self.true_params.unsqueeze(self.true_params.dim())))
+        if self.num_of_funcs ==1:
+            self.y_no_noise = self.y_no_noise.unsqueeze(0)
         noise = torch.FloatTensor(self.num_of_funcs, self.n_samples)
         self.noise = Variable(init.normal(noise, std=stddev), requires_grad=False)
         if self.use_cuda:
             self.noise = self.noise.cuda()
+
         self.y = self.y_no_noise + self.noise.expand_as(self.y_no_noise)
         if self.use_cuda:
             self.y = self.y.cuda()
@@ -291,6 +294,8 @@ class RegressionFunction(object):
             params = params.cuda()
         # size of W = [batch, n_samples, xdim] and params = [batch, xdim]
         product = torch.squeeze(torch.bmm(self.W, params.unsqueeze(params.dim())))
+        if self.num_of_funcs ==1:
+            product = product.unsqueeze(0)
 
         if average:
             loss = torch.mean(torch.sum((product - self.y) ** 2, 1))

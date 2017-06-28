@@ -109,18 +109,18 @@ def create_def_argparser(**kwargs):
 def get_model(exper, num_params_optimizee, retrain=False, logger=None):
 
     if exper.args.model == "default":
-        exper.args.model = exper.args.learner + exper.args.version + "_lr" + "{:.0e}".format(exper.args.lr) + "_" + \
-            exper.args.optimizer + "_" + str(int(exper.avg_num_opt_steps)) + "ops"
+        exper.args.model = exper.args.learner + exper.args.version + "_" + exper.args.problem + "_" + \
+            str(int(exper.avg_num_opt_steps)) + "ops"
 
     if exper.args.version == 'V1' or exper.args.version == 'V2' or exper.args.version == '':
-        output_bias = True
-    # V1.1/V2.1 = without output bias on last output layer
-    # V1.2/V2.2 = additionally got rid off normalization in LSTMCell layers and removed tanh before LSTM
-    #             already implemented in this version the tanh(linear(hx))
-    # V1.3/V2.3 = added parameter lambda_q that scales tanh(linear(hx-output)) for q_t parameter
-    elif exper.args.version[0:2] in ['V1', 'V2'] and (len(exper.args.version) == 4 or len(exper.args.version) == 5):
-        output_bias = False
-        logger.info("INFO - NOTE - LSTMs do not use output bias")
+        if hasattr(exper.args, 'output_bias'):
+            if exper.args.output_bias:
+                output_bias = True
+            else:
+                output_bias = False
+        else:
+            output_bias = True
+
     else:
         raise ValueError("{} version is currently not supported".format(exper.args.version))
 

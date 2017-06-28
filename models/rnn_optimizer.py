@@ -493,7 +493,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
     def init_qt_statistics(self, conf=None):
         self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
-            self.kl_entropy = init_stat_vars()
+            self.kl_entropy = init_stat_vars(conf)
 
 
 

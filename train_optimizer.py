@@ -26,9 +26,9 @@ STD_OPT_LR = 4e-1
 VALID_VERBOSE = False
 TRAIN_VERBOSE = False
 PLOT_VALIDATION_FUNCS = False
-NOISE_SIGMA = 0.01
+NOISE_SIGMA = 1.
 ANNEAL_LR = False
-ACT_TRUNC_BPTT = False
+ACT_TRUNC_BPTT = True
 
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adadelta': torch.optim.Adadelta, # Adadelta
@@ -85,7 +85,9 @@ parser.add_argument('--problem', type=str, default="quadratic", help="kind of op
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 
+parser.add_argument("--output_bias")
 args = parser.parse_args()
+args.output_bias = False
 args.cuda = args.use_cuda and torch.cuda.is_available()
 # Cuda is currently not implemented. Takes longer than CPU, even when testing just Variable/Tensors in python
 # interpreter
@@ -227,7 +229,6 @@ def main():
                     # BPTT steps
                     reg_funcs.reset_params()
                     loss_sum = 0
-
                 else:
                     forward_steps += 1
 
@@ -363,7 +364,8 @@ def main():
             #                   plot_func=PLOT_VALIDATION_FUNCS,
             #                   max_steps=opt_steps,
             #                   num_of_plots=config.num_val_plots,
-            #                   save_qt_prob_funcs=True if epoch + 1 == args.max_epoch else False)
+            #                   save_qt_prob_funcs=True if epoch + 1 == args.max_epoch else False
+                # save_model=True)
         # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
         if args.learner == 'act':
 

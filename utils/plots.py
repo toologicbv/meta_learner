@@ -200,12 +200,13 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         T = len(exper.epoch_stats["qt_hist"][epoch])
         opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
         qt_hist = exper.epoch_stats["qt_hist"][epoch]
-        plot_title = "Training - q(t|T) distribution for different T (mean={})".format(int(exper.avg_num_opt_steps))
+        plot_title = "Training " + exper.args.problem + "- q(t|T) distribution (E[T]={})".format(
+            int(exper.avg_num_opt_steps))
     else:
         T = len(exper.val_stats["qt_hist"][epoch])
         opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
         qt_hist = exper.val_stats["qt_hist"][epoch]
-        plot_title = "Validation - approximated q(t|{}) distribution (trained on E[T]={})".format(
+        plot_title = exper.args.problem + " / q(t|{}) distribution".format(
             config.max_val_opt_steps, int(exper.avg_num_opt_steps))
 
     res_qts = OrderedDict()
@@ -304,17 +305,13 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
         if loss_type == "param_error":
             res_dict = expers[e].val_stats["step_param_losses"]
             y_label = "avg final param error"
-            plot_title = "Final avg parameter error per step"
+            plot_title = sort_exper + " (avg parameter error per step)"
         else:
             res_dict = expers[e].val_stats["step_losses"]
             y_label = "avg final loss"
-            plot_title = "Final avg loss per step"
+            plot_title = sort_exper + " (avg loss per step)"
         if plot_best:
-            plot_title = "Best validation run selected --- " + plot_title
-        else:
-            plot_title = "Last validation run --- " + plot_title
-        if sort_exper is not None:
-            plot_title += " (" + sort_exper + ")"
+            plot_title = "Best run selected --- " + plot_title
 
         keys = res_dict.keys()
         # res = res_dict[keys[len(keys) - i]]
@@ -348,6 +345,10 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
         if max_step is None:
             max_step = len(res_dict[best_val_runs[e]])
         index = np.arange(1, len(res_dict[best_val_runs[e]]) + 1)[0:max_step]
+        y_min_value = np.min(res_dict[best_val_runs[e]][0:max_step])
+        y_max_value = np.max(res_dict[best_val_runs[e]][0:max_step])
+        y_min_value -= y_min_value * 0.1
+        y_max_value += y_max_value * 0.1
         if log_scale:
             plt.semilogy(index, res_dict[best_val_runs[e]][0:max_step], color=iter_colors.next(), dashes=iter_styles.next(),
                          linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
@@ -356,10 +357,9 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
                          dashes=iter_styles.next(),
                          linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
         if len(index) > 15:
-            print(len(index))
             plt.xlim([0, len(index)+1])
             index = np.arange(1, len(index)+1, 10)
-
+        plt.ylim([y_min_value, y_max_value])
         plt.xticks(index, index - 1)
         plt.xlabel("Number of optimization steps")
         plt.ylabel(y_label)
