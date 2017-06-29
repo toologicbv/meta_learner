@@ -8,7 +8,7 @@ from utils.regression import RegressionFunction, L2LQuadratic
 
 from utils.config import config
 from utils.utils import load_val_data, Experiment, prepare, end_run, get_model, print_flags
-from utils.utils import create_logger, detailed_train_info
+from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T
 from utils.probs import TimeStepsDist, ConditionalTimeStepDist
 from val_optimizer import validate_optimizer
 
@@ -52,8 +52,8 @@ parser.add_argument('--optimizer_steps', type=int, default=10, metavar='N',
                     help='number of meta optimizer steps (default: 10)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
-parser.add_argument('--functions_per_epoch', type=int, default=5000, metavar='N',
-                    help='updates per epoch (default: 5000)')
+parser.add_argument('--functions_per_epoch', type=int, default=10000, metavar='N',
+                    help='updates per epoch (default: 10000)')
 parser.add_argument('--x_samples', type=int, default=10, metavar='N',
                     help='number of values to sample from true regression function (default: 10)')
 parser.add_argument('--max_epoch', type=int, default=5, metavar='N',
@@ -80,7 +80,7 @@ parser.add_argument('--version', type=str, default="V1",
 parser.add_argument('--optimizer', type=str, default="adam",
                     help='which optimizer to use sgd, adam, adadelta, adagrad, rmsprop')
 parser.add_argument('--comments', type=str, default="", help="add comments to describe specific parameter settings")
-parser.add_argument('--problem', type=str, default="quadratic", help="kind of optimization problem (default quadratic")
+parser.add_argument('--problem', type=str, default="regression", help="kind of optimization problem (default quadratic")
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
@@ -142,6 +142,14 @@ def main():
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
         optimizer = None
+    # prepare epoch variables
+    backward_ones = torch.ones(args.batch_size)
+    if args.cuda:
+        backward_ones = backward_ones.cuda()
+    num_of_batches = args.functions_per_epoch // args.batch_size
+    if args.fixed_horizon and args.learner == "act":
+        prior_probs = construct_prior_p_t_T(args.optimizer_steps, config.continue_prob, args.batch_size,
+                                            args.cuda)
 
     for epoch in range(args.max_epoch):
         exper.epoch += 1
@@ -149,11 +157,6 @@ def main():
         final_loss = 0.0
         final_act_loss = 0.
         param_loss = 0.
-        # if annealing learning rate & train longer than 25 epochs, lower learning rate
-        if epoch != 0 and epoch % 25 == 0 and not args.learner == 'manual' and lr > 1e-6 and ANNEAL_LR:
-            lr *= 0.1
-            optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
-            meta_logger.info("Current learning rate: {:.4}".format(lr))
 
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
@@ -161,13 +164,17 @@ def main():
         #       for ACT models we sample for each batch the horizon T aka the number of optimization steps
         #       THEREFORE we should make sure that we have lots of batches per epoch e.g. 5000 functions and
         #       batch size of 50
-        num_of_batches = args.functions_per_epoch // args.batch_size
-        avg_opt_steps = []
-        backward_ones = torch.ones(args.batch_size)
-        if args.cuda:
-            backward_ones = backward_ones.cuda()
+
+        if (args.learner == "meta" and args.version == "V2") or \
+                (args.learner == "act" and not args.fixed_horizon):
+            avg_opt_steps = []
+        else:
+            # in all other cases we're working with a fixed optimization horizon H=args.optimizer_steps
+            avg_opt_steps = [args.optimizer_steps]
+            optimizer_steps = args.optimizer_steps
 
         for i in range(num_of_batches):
+
             if args.problem == "quadratic":
                 reg_funcs = L2LQuadratic(batch_size=args.batch_size, num_dims=args.x_dim, stddev=0.01,
                                          use_cuda=args.cuda)
@@ -176,36 +183,25 @@ def main():
                 reg_funcs = RegressionFunction(n_funcs=args.batch_size, n_samples=args.x_samples,
                                                stddev=NOISE_SIGMA, x_dim=args.x_dim,
                                                use_cuda=args.cuda)
-
             # if we're using a standard optimizer
             if args.learner == 'manual':
                 meta_optimizer = OPTIMIZER_DICT[args.optimizer]([reg_funcs.params], lr=STD_OPT_LR)
 
             # counter that we keep in order to enable BPTT
             forward_steps = 0
-            if args.learner != 'act':
-                optimizer_steps = args.optimizer_steps
-                if args.learner == 'meta' and args.version[0:2] == 'V2':
-                    optimizer_steps = pt_dist.rvs(n=1)[0]
-                    avg_opt_steps.append(optimizer_steps)
-            else:
+            # determine the number of optimization steps for this batch
+            if args.learner == 'meta' and args.version[0:2] == 'V2':
+                optimizer_steps = pt_dist.rvs(n=1)[0]
+                avg_opt_steps.append(optimizer_steps)
+            elif args.learner == 'act' and not args.fixed_horizon:
                 # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
                 # add one to choice because we actually want values between [1, config.T]
-                if not args.fixed_horizon:
-                    optimizer_steps = pt_dist.rvs(n=1)[0]
-                else:
-                    optimizer_steps = args.optimizer_steps
-
+                optimizer_steps = pt_dist.rvs(n=1)[0]
+                prior_probs = construct_prior_p_t_T(optimizer_steps, config.continue_prob, args.batch_size,
+                                                        args.cuda)
                 avg_opt_steps.append(optimizer_steps)
-                prior_dist = ConditionalTimeStepDist(T=optimizer_steps, q_prob=config.continue_prob)
-                # The range that we pass to pmfunc (to compute the priors of p(t|T)) ranges from 1...T
-                # because we define t as the "trial number of the first success"!
-                prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps+1),
-                                                                          normalize=True)).float())
-                if args.cuda:
-                    prior_probs = prior_probs.cuda()
-                # we need to expand the prior probs to the size of the batch
-                prior_probs = prior_probs.expand(args.batch_size, prior_probs.size(0))
+
+            # the q-parameter for the ACT model, initialize
             qt_param = Variable(torch.zeros(args.batch_size, 1))
             if args.cuda:
                 qt_param = qt_param.cuda()
@@ -231,17 +227,14 @@ def main():
                         loss_sum = 0
                     else:
                         forward_steps += 1
-                elif args.learner == 'act' and not ACT_TRUNC_BPTT:
-                    # at least V2 does not use truncated BPTT
-                    if k == 0:
-                        forward_steps = 1
-                        # initialize LSTM
-                        meta_optimizer.reset_lstm(keep_states=False)
-                        reg_funcs.reset_params()
-                        loss_sum = 0
-                else:
-                    # no action needed for other models
-                    pass
+                elif args.learner == 'act' and not ACT_TRUNC_BPTT and k == 0:
+                    # ACT model (if not using truncated BPTT) the LSTM hidden states will be only initialized
+                    # for the first optimization step
+                    forward_steps = 1
+                    # initialize LSTM
+                    meta_optimizer.reset_lstm(keep_states=False)
+                    reg_funcs.reset_params()
+                    loss_sum = 0
 
                 if args.problem == "quadratic":
                     loss = reg_funcs.compute_loss(average=False)
@@ -292,13 +285,12 @@ def main():
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
+                    # this is the part where we tried to implement truncated BPTT for the ACTV2 model
+                    # is only used if ACT_TRUNC_BPTT set to TRUE
                     elif args.learner == 'act' and args.version[0:2] == "V2" and ACT_TRUNC_BPTT:
                         T = k+1
-                        prior_dist = ConditionalTimeStepDist(T=T, q_prob=config.continue_prob)
-                        # The range that we pass to pmfunc (to compute the priors of p(t|T)) ranges from 1...T
-                        # because we define t as the "trial number of the first success"!
-                        prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, T + 1),
-                                                                                  normalize=True)).float())
+                        prior_probs = construct_prior_p_t_T(T, config.continue_prob, args.batch_size,
+                                                            args.cuda)
                         if args.cuda:
                             prior_probs = prior_probs.cuda()
                         # we need to expand the prior probs to the size of the batch

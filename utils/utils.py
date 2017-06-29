@@ -12,9 +12,11 @@ import logging
 import numpy as np
 from collections import OrderedDict
 
+from torch.autograd import Variable
 import models.rnn_optimizer
 from models.rnn_optimizer import MetaLearner
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
+from probs import ConditionalTimeStepDist
 
 
 def create_logger(exper, file_handler=False):
@@ -285,10 +287,16 @@ def detailed_train_info(logger, func, f_idx, args, learner, step, optimizer_step
     logger.info("True parameter values {}".format(np.array_str(p_true, precision=3)))
     params = func.params[f_idx, :].data.numpy().squeeze()
     logger.info("Final parameter values {})".format(np.array_str(params, precision=3)))
-    # if args.learner == 'act':
-    #     logger.debug("Final qt-probabilities")
-    #     logger.debug("{}".format(np.array_str(learner.q_soft.data.squeeze().numpy())))
-    #     logger.debug("raw-values {}".format(
-    #         np.array_str(learner.q_t.data.squeeze().numpy())))
-    #     logger.debug("losses {}".format(
-    #         np.array_str(learner.losses.data.squeeze().numpy())))
+
+
+def construct_prior_p_t_T(optimizer_steps, continue_prob, batch_size, cuda=False):
+
+    prior_dist = ConditionalTimeStepDist(T=optimizer_steps, q_prob=continue_prob)
+    # The range that we pass to pmfunc (to compute the priors of p(t|T)) ranges from 1...T
+    # because we define t as the "trial number of the first success"!
+    prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps + 1),
+                                                              normalize=True)).float())
+    if cuda:
+        prior_probs = prior_probs.cuda()
+    # we need to expand the prior probs to the size of the batch
+    return prior_probs.expand(batch_size, prior_probs.size(0))
