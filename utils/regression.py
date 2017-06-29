@@ -126,18 +126,20 @@ class L2LQuadratic(object):
         # Non-trainable variables.
         w = torch.FloatTensor(batch_size, num_dims, num_dims)
         self.W = Variable(init.uniform(w), requires_grad=False)
+        # self.W = Variable(init.normal(w, mean=1., std=stddev), requires_grad=False)
         if self.use_cuda:
             self.W = self.W.cuda()
 
         y = torch.FloatTensor(batch_size, num_dims)
         self.y = Variable(init.uniform(y), requires_grad=False)
+        # self.y = Variable(init.normal(y, mean=1., std=stddev), requires_grad=False)
         if self.use_cuda:
             self.y = self.y.cuda()
 
         # Trainable variable.
         # TODO...true parameters
-        # self.true_params = Variable(torch.zeros((batch_size, num_dims)))
-        self.true_params = Variable(self.get_true_params())
+        self.true_params = Variable(torch.zeros((batch_size, num_dims)))
+        # self.true_params = Variable(self.get_true_params())
         if self.use_cuda:
             params = torch.FloatTensor(batch_size, num_dims).cuda()
             self.params = Variable(init.normal(params, mean=0., std=stddev).cuda(), requires_grad=True)

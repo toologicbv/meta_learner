@@ -87,6 +87,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
         loss.backward(backward_ones)
         param_loss = val_set.param_error(average=True).data.cpu().numpy()[0].astype(float)
+        # remember dim 0 is batch size
         loss = torch.sum(torch.mean(loss, 0)).data.cpu().numpy()[0].astype(float)
         col_losses.append(loss)
         col_param_losses.append(param_loss)

@@ -344,27 +344,26 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
             stop_step = config.max_val_opt_steps
         if max_step is None:
             max_step = len(res_dict[best_val_runs[e]])
-        index = np.arange(1, len(res_dict[best_val_runs[e]]) + 1)[0:max_step]
-        y_min_value = np.min(res_dict[best_val_runs[e]][0:max_step])
-        y_max_value = np.max(res_dict[best_val_runs[e]][0:max_step])
-        y_min_value -= y_min_value * 0.1
-        y_max_value += y_max_value * 0.1
-
-        losses = expers[e].val_stats["loss_funcs"]
+        losses = expers[e].val_stats["loss_funcs"][:, 0:max_step]
         mean_losses = np.mean(losses, 0)
+        index = np.arange(0, len(mean_losses))[0:max_step]
         std_losses = np.std(losses, 0)
         mean_plus_std = mean_losses + std_losses
         mean_min_std = mean_losses - std_losses
         icolor = iter_colors.next()
-        print(mean_plus_std[0:10])
-        print(mean_losses[0:10])
-        print(mean_min_std[0:10])
+        print(mean_losses[max_step-5:])
+        print(std_losses[max_step - 5:])
+        y_min_value = np.min(mean_min_std)
+        y_max_value = np.max(mean_plus_std)
+        y_min_value -= y_min_value * 0.1
+        y_max_value += y_max_value * 0.1
+
         if log_scale:
             # res_dict[best_val_runs[e]][0:max_step]
 
             plt.semilogy(index, mean_losses, color=icolor, dashes=iter_styles.next(),
                          linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
-            plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
+            plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.1')
             plt.yscale("log")
         else:
             plt.plot(index, mean_losses, color=icolor,

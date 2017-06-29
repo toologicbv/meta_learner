@@ -130,6 +130,7 @@ def main():
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
                                   logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
     else:
+        val_funcs = None
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
                                   logger=meta_logger)
     # exper.val_funcs = val_funcs
@@ -157,6 +158,7 @@ def main():
         final_loss = 0.0
         final_act_loss = 0.
         param_loss = 0.
+        total_loss_steps = 0.
 
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
@@ -242,6 +244,8 @@ def main():
                     loss = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(backward_ones)
+                total_loss_steps += torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+
                 # print("Sum gradients ", torch.sum(reg_funcs.params.grad.data))
                 # feed the RNN with the gradient of the error surface function
                 if args.learner == 'meta':
@@ -308,7 +312,7 @@ def main():
 
             # compute the final loss error for this function between last loss calculated and function min-value
             error = loss_step.data
-
+            total_loss_steps += loss_step.data.cpu().squeeze().numpy()[0]
             # back-propagate ACT loss that was accumulated during optimization steps
             if args.learner == 'act' and not ACT_TRUNC_BPTT:
                 # processing ACT loss
@@ -331,16 +335,19 @@ def main():
 
             final_loss += error
             param_loss += reg_funcs.param_error(average=True).data
+
         # END OF EPOCH, calculate average final loss/error and print summary
         # we computed the average loss per function in the batch! and added those losses to the final loss
         # therefore we only need to divide through the number of batches to end up with the average loss per function
         final_loss *= 1./float(num_of_batches)
         param_loss *= 1./float(num_of_batches)
         final_act_loss *= 1./float(num_of_batches)
+        total_loss_steps *= 1./float(num_of_batches)
         end_epoch = time.time()
 
-        meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: average final loss {:.4f} / param-loss {:.4f}".format(
-              epoch+1, (end_epoch - start_epoch), final_loss[0], param_loss[0]))
+        meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: average total loss (over time-steps) {:.4f} /"
+                         " final loss {:.4f} / param-loss {:.4f}".format(epoch+1,
+                                (end_epoch - start_epoch), total_loss_steps, final_loss[0], param_loss[0]))
         if args.learner == 'act':
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
