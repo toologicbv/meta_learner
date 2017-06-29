@@ -28,7 +28,7 @@ TRAIN_VERBOSE = False
 PLOT_VALIDATION_FUNCS = False
 NOISE_SIGMA = 1.
 ANNEAL_LR = False
-ACT_TRUNC_BPTT = True
+ACT_TRUNC_BPTT = False
 
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adadelta': torch.optim.Adadelta, # Adadelta
@@ -37,9 +37,9 @@ OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'rmsprop': torch.optim.RMSprop # RMSprop
                   }
 
-# python train_optimizer.py --max_epoch=50 --learner=meta --optimizer_steps=100 --lr=1e-6 --batch_size=128
-# --hidden_size=40 --functions_per_epoch=10000 --use_cuda
-
+# python train_optimizer.py --max_epoch=10 --learner=act --version=V2 --lr=4e-6 --batch_size=125 --hidden_size=40
+# --functions_per_epoch=10000 --use_cuda --eval_freq=10 --optimizer_steps=100 --problem="regression"
+# --fixed_horizon --optimizer_steps=100
 
 parser = argparse.ArgumentParser(description='PyTorch Meta-learner')
 
@@ -89,9 +89,6 @@ parser.add_argument("--output_bias")
 args = parser.parse_args()
 args.output_bias = False
 args.cuda = args.use_cuda and torch.cuda.is_available()
-# Cuda is currently not implemented. Takes longer than CPU, even when testing just Variable/Tensors in python
-# interpreter
-# args.cuda = False
 
 
 def main():
@@ -129,13 +126,11 @@ def main():
     print_flags(args, meta_logger)
     # load the validation functions
     if args.problem == "quadratic":
-        pass
-        # val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-        #                          logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
+        val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
+                                  logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
     else:
-        pass
-        # val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-        #                          logger=meta_logger)
+        val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
+                                  logger=meta_logger)
     # exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
@@ -214,23 +209,38 @@ def main():
             if args.cuda:
                 qt_param = qt_param.cuda()
 
+            # outer loop with the optimization steps
             for k in range(optimizer_steps):
-                # Keep states for truncated BPTT
-                if k > args.truncated_bptt_step - 1:
-                    keep_states = True
+
+                if args.learner == 'meta' or (args.learner == "act" and ACT_TRUNC_BPTT):
+                    # meta model uses truncated BPTT
+                    # Keep states for truncated BPTT
+                    if k > args.truncated_bptt_step - 1:
+                        keep_states = True
+                    else:
+                        keep_states = False
+                    if k % args.truncated_bptt_step == 0 and not args.learner == 'manual':
+                        # meta_logger.debug("DEBUG@step %d - Resetting LSTM" % k)
+                        forward_steps = 1
+                        meta_optimizer.reset_lstm(keep_states=keep_states)
+                        # kind of fake reset, the actual value of the function parameters are NOT changed, only
+                        # the pytorch Variable, in order to prevent the .backward() function to go beyond the truncated
+                        # BPTT steps
+                        reg_funcs.reset_params()
+                        loss_sum = 0
+                    else:
+                        forward_steps += 1
+                elif args.learner == 'act' and not ACT_TRUNC_BPTT:
+                    # at least V2 does not use truncated BPTT
+                    if k == 0:
+                        forward_steps = 1
+                        # initialize LSTM
+                        meta_optimizer.reset_lstm(keep_states=False)
+                        reg_funcs.reset_params()
+                        loss_sum = 0
                 else:
-                    keep_states = False
-                if k % args.truncated_bptt_step == 0 and not args.learner == 'manual':
-                    # meta_logger.debug("DEBUG@step %d - Resetting LSTM" % k)
-                    forward_steps = 1
-                    meta_optimizer.reset_lstm(keep_states=keep_states)
-                    # kind of fake reset, the actual value of the function parameters are NOT changed, only
-                    # the pytorch Variable, in order to prevent the .backward() function to go beyond the truncated
-                    # BPTT steps
-                    reg_funcs.reset_params()
-                    loss_sum = 0
-                else:
-                    forward_steps += 1
+                    # no action needed for other models
+                    pass
 
                 if args.problem == "quadratic":
                     loss = reg_funcs.compute_loss(average=False)
@@ -359,13 +369,13 @@ def main():
             else:
                 opt_steps = config.max_val_opt_steps
 
-            # validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=meta_logger,
-            #                   verbose=VALID_VERBOSE,
-            #                   plot_func=PLOT_VALIDATION_FUNCS,
-            #                   max_steps=opt_steps,
-            #                   num_of_plots=config.num_val_plots,
-            #                   save_qt_prob_funcs=True if epoch + 1 == args.max_epoch else False
-                # save_model=True)
+            validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=meta_logger,
+                               verbose=VALID_VERBOSE,
+                               plot_func=PLOT_VALIDATION_FUNCS,
+                               max_steps=opt_steps,
+                               num_of_plots=config.num_val_plots,
+                               save_qt_prob_funcs=True if epoch + 1 == args.max_epoch else False,
+                               save_model=True)
         # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
         if args.learner == 'act':
 
