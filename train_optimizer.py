@@ -19,7 +19,6 @@ from val_optimizer import validate_optimizer
     this had to do with validation of model but tested without validation and result stays the same.
 """
 
-RUNS_ON_SERVER = False
 MAX_VAL_FUNCS = 20000
 # for standard optimizer which we compare to
 STD_OPT_LR = 4e-1
@@ -84,6 +83,8 @@ parser.add_argument('--comments', type=str, default="", help="add comments to de
 parser.add_argument('--problem', type=str, default="quadratic", help="kind of optimization problem (default quadratic")
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
+parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
+
 
 parser.add_argument("--output_bias")
 args = parser.parse_args()
@@ -362,7 +363,7 @@ def main():
             exper.epoch_stats["act_loss"].append(final_act_loss[0])
         # if applicable, VALIDATE model performance
         if exper.epoch % args.eval_freq == 0 or epoch + 1 == args.max_epoch:
-            # pass
+
             if args.learner == 'manual':
                 # the manual (e.g. SGD, Adam will be validated using full number of optimization steps
                 opt_steps = args.optimizer_steps
@@ -384,7 +385,7 @@ def main():
 
             meta_optimizer.init_qt_statistics(exper.config)
 
-    end_run(exper, meta_optimizer, validation=False, on_server=RUNS_ON_SERVER)
+    end_run(exper, meta_optimizer, validation=False, on_server=args.on_server)
 
 if __name__ == "__main__":
     main()

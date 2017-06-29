@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 
 import torch
@@ -13,6 +14,7 @@ from utils.probs import ConditionalTimeStepDist
 
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
                        num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False):
+    start_validate = time.time()
     global STD_OPT_LR
     # we will probably call this procedure later in another context (to evaluate meta-learners)
     # so make sure the globals exist.
@@ -215,20 +217,25 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     exper.val_stats["step_losses"][exper.epoch] = np.around(exper.val_stats["step_losses"][exper.epoch],
                                                                   decimals=3)
     exper.val_stats["loss"].append(total_loss)
+
+    end_validate = time.time()
+    exper.val_stats["param_error"].append(total_param_loss)
+    meta_logger.info("INFO - Epoch {}, elapsed time {:.2f} seconds: ".format(exper.epoch,
+                                                                             (end_validate - start_validate)))
+    meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
+                     "param-loss: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, final_step_loss ,total_param_loss))
     if exper.args.learner == "act":
         exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
         exper.val_stats["kl_div"][exper.epoch] = meta_learner.kl_div
         exper.val_stats["kl_entropy"][exper.epoch] = meta_learner.kl_entropy
         exper.val_stats["act_loss"].append(total_act_loss)
         exper.val_avg_num_opt_steps = int(np.mean(opt_steps))
-        meta_logger.info("INFO - Average stopping-step: {}".format(exper.val_avg_num_opt_steps))
-        meta_logger.debug("{} Epoch/Validation: CDF q(t) {}".format(exper.epoch, np.array_str(np.cumsum(np.mean(q_probs, 0)),
-                                                                            precision=4)))
         meta_logger.info("INFO - Epoch {}: Final validation average ACT-loss: {:.4}".format(exper.epoch,
                                                                                             total_act_loss))
-    exper.val_stats["param_error"].append(total_param_loss)
-    meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
-                     "param-loss: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, final_step_loss ,total_param_loss))
+        meta_logger.info("INFO - Epoch {}: Average stopping-step: {}".format(exper.epoch, exper.val_avg_num_opt_steps))
+        meta_logger.debug(
+            "{} Epoch/Validation: CDF q(t) {}".format(exper.epoch, np.array_str(np.cumsum(np.mean(q_probs, 0)),
+                                                                                precision=4)))
     meta_logger.info("INFO - Epoch {}: Final step param-losses: {}".format(exper.epoch,
                      np.array_str(exper.val_stats["step_param_losses"][exper.epoch], precision=4)))
     meta_logger.info("INFO - Epoch {}: Final step losses: {}".format(exper.epoch,
