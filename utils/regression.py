@@ -216,12 +216,14 @@ class L2LQuadratic(object):
 
 class RegressionFunction(object):
 
-    def __init__(self, n_funcs=128, n_samples=10, param_sigma=4., stddev=0.01, x_dim=2, use_cuda=False):
+    def __init__(self, n_funcs=128, n_samples=10, stddev=0.01, x_dim=2,
+                 calc_true_params=False, use_cuda=False):
         self.use_cuda = use_cuda
         self.stddev = stddev
         self.num_of_funcs = n_funcs
         self.n_samples = n_samples
         self.xdim = x_dim
+
         true_params = torch.FloatTensor(n_funcs, x_dim)
         self.true_params = Variable(init.uniform(true_params), requires_grad=False)
 
@@ -245,12 +247,18 @@ class RegressionFunction(object):
             self.y_no_noise = self.y_no_noise.unsqueeze(0)
         noise = torch.FloatTensor(self.num_of_funcs, self.n_samples)
         self.noise = Variable(init.normal(noise, std=stddev), requires_grad=False)
+        true_minimum_nll = np.array([0.5 * self.n_samples * (np.log(stddev) + np.log(2 * np.pi))])
+        self.true_minimum_nll = Variable(torch.from_numpy(true_minimum_nll).float())
         if self.use_cuda:
             self.noise = self.noise.cuda()
+            self.true_minimum_nll = self.true_minimum_nll.cuda()
 
         self.y = self.y_no_noise + self.noise.expand_as(self.y_no_noise)
         if self.use_cuda:
             self.y = self.y.cuda()
+
+        if calc_true_params:
+            self.true_params = self.get_true_params()
 
         self.param_hist = {}
         self._add_param_values(self.initial_params)
@@ -322,7 +330,10 @@ class RegressionFunction(object):
             N = float(self.num_of_funcs)
         else:
             N = 1
-        param_error = 1/N * torch.sum((self.true_params - self.params) ** 2)
+        param_error = 0.5 * torch.mean((self.true_params - self.params) ** 2, 1)
+        if average:
+            param_error = torch.mean(param_error)
+
         return param_error.squeeze()
 
     def y_t(self, params=None):
@@ -343,6 +354,19 @@ class RegressionFunction(object):
 
     def get_y_values(self, params):
         return torch.bmm(self.W, params)
+
+    def get_true_params(self):
+        X = np.zeros((self.num_of_funcs, self.xdim))
+
+        for i in np.arange(self.num_of_funcs):
+            A_plus = np.linalg.pinv(self.W.data.cpu().numpy()[i])
+            b = self.y.data.cpu().numpy()[i]
+            X[i, :] = np.squeeze(np.dot(A_plus, b))
+
+        X = Variable(torch.from_numpy(X).float())
+        if self.use_cuda:
+            X = X.cuda()
+        return X
 
     def plot_contour(self, f_idx=0, delta=2):
         np_init_params = self.initial_params[f_idx, :].data.numpy()

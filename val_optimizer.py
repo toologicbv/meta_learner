@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
-from utils.regression import RegressionFunction, L2LQuadratic
+from utils.regression import RegressionFunction, L2LQuadratic, neg_log_likelihood_loss
 
 from utils.config import config
 from utils.utils import softmax, stop_computing
@@ -41,9 +41,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
     meta_logger.info("INFO - Epoch {}: Validating model {} with {} functions".format(exper.epoch, exper.args.model,
                                                                                      val_set.num_of_funcs))
-    total_loss = 0
-    final_step_loss = 0
-    total_param_loss = 0
     total_act_loss = 0
     val_set.reset()
     if verbose:
@@ -157,12 +154,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
     if save_qt_prob_funcs:
         exper.val_stats["loss_funcs"][:, i+1] = loss.data.cpu().squeeze().numpy()
-    loss = torch.sum(torch.mean(loss, 0)).data.cpu().squeeze().numpy()[0].astype(float)
-    param_loss = val_set.param_error(average=True).data.cpu().numpy()[0].astype(float)
-    # add to total loss
-    total_param_loss += param_loss
-    final_step_loss += loss
 
+    diff_min = torch.mean(loss - val_set.true_minimum_nll.expand_as(loss)).data.cpu().squeeze().numpy()[0].astype(float)
+    loss = torch.sum(torch.mean(loss, 0)).data.cpu().squeeze().numpy()[0].astype(float)
+    param_loss = val_set.param_error(average=True).data.cpu().numpy().astype(float)
+    # add to total loss
     col_losses.append(loss)
     col_param_losses.append(param_loss)
 
@@ -220,11 +216,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     exper.val_stats["loss"].append(total_loss)
 
     end_validate = time.time()
-    exper.val_stats["param_error"].append(total_param_loss)
+    exper.val_stats["param_error"].append(param_loss)
     meta_logger.info("INFO - Epoch {}, elapsed time {:.2f} seconds: ".format(exper.epoch,
                                                                              (end_validate - start_validate)))
     meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
-                     "param-loss: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, final_step_loss ,total_param_loss))
+                     "final-true_min: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, loss, diff_min))
     if exper.args.learner == "act":
         exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
         exper.val_stats["kl_div"][exper.epoch] = meta_learner.kl_div
@@ -237,8 +233,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_logger.debug(
             "{} Epoch/Validation: CDF q(t) {}".format(exper.epoch, np.array_str(np.cumsum(np.mean(q_probs, 0)),
                                                                                 precision=4)))
-    meta_logger.info("INFO - Epoch {}: Final step param-losses: {}".format(exper.epoch,
-                     np.array_str(exper.val_stats["step_param_losses"][exper.epoch], precision=4)))
+    # meta_logger.info("INFO - Epoch {}: Final step param-losses: {}".format(exper.epoch,
+    #                 np.array_str(exper.val_stats["step_param_losses"][exper.epoch], precision=4)))
     meta_logger.info("INFO - Epoch {}: Final step losses: {}".format(exper.epoch,
                                                                            np.array_str(
                                                                                exper.val_stats["step_losses"][

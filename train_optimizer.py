@@ -159,6 +159,7 @@ def main():
         final_act_loss = 0.
         param_loss = 0.
         total_loss_steps = 0.
+        diff_min = 0.
 
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
@@ -312,6 +313,7 @@ def main():
 
             # compute the final loss error for this function between last loss calculated and function min-value
             error = loss_step.data
+            diff_min += (loss_step - reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(float)
             total_loss_steps += loss_step.data.cpu().squeeze().numpy()[0]
             # back-propagate ACT loss that was accumulated during optimization steps
             if args.learner == 'act' and not ACT_TRUNC_BPTT:
@@ -346,8 +348,8 @@ def main():
         end_epoch = time.time()
 
         meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: average total loss (over time-steps) {:.4f} /"
-                         " final loss {:.4f} / param-loss {:.4f}".format(epoch+1,
-                                (end_epoch - start_epoch), total_loss_steps, final_loss[0], param_loss[0]))
+                         " final loss {:.4f} / final-true_min {:.4f}".format(epoch+1,
+                                (end_epoch - start_epoch), total_loss_steps, final_loss[0], diff_min))
         if args.learner == 'act':
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))

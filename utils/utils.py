@@ -66,7 +66,6 @@ def stop_computing(q_probs, threshold=0.8):
     :param q_probs: contains the qt probabilities up to horizon T: [batch_size, opt_steps]
     :return: vector of booleans [batch_size]
     """
-    cumsum = np.cumsum(q_probs, 1)
     stops = np.cumsum(q_probs, 1)[:, -2] > threshold
     return stops
 

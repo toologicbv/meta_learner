@@ -191,7 +191,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
 
 
 def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False, plot_idx=[],
-                  plot_prior=False, epoch=None):
+                  plot_prior=False, epoch=None, add_info=False):
     if epoch is None:
         epoch = exper.epoch
 
@@ -200,14 +200,14 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         T = len(exper.epoch_stats["qt_hist"][epoch])
         opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
         qt_hist = exper.epoch_stats["qt_hist"][epoch]
-        plot_title = "Training " + exper.args.problem + "- q(t|T) distribution (E[T]={})".format(
+        plot_title = "Training " + exper.args.problem + r"- q(t|T) $\nu={:.2f}$ (E[T]={})".format(exper.config.continue_prob,
             int(exper.avg_num_opt_steps))
     else:
         T = len(exper.val_stats["qt_hist"][epoch])
         opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
         qt_hist = exper.val_stats["qt_hist"][epoch]
-        plot_title = exper.args.problem + " / q(t|{}) distribution".format(
-            config.max_val_opt_steps, int(exper.avg_num_opt_steps))
+        plot_title = exper.args.problem + r" / $q(t|{}) \;\; \nu={:.2}$".format(
+            config.max_val_opt_steps, exper.config.continue_prob)
 
     res_qts = OrderedDict()
     for i in range(1, T + 1):
@@ -253,14 +253,15 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         else:
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
 
-        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center', label="q(t|{})".format(T))
+        plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center',
+                label=r"$q(t|{}) \;\; \nu={:.2}$".format(T, exper.config.continue_prob))
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
             # print(exper.config.max_val_opt_steps, exper.config.continue_prob)
             priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
             # print(priors[0:10])
             plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center',
-                    label="prior p(t|{})".format(T))
+                    label=r"prior $p(t|{}) \;\; \nu={:.2}$".format(T, exper.config.continue_prob))
         if data_set == "train":
             if len(index) > 15:
                 index = np.arange(1, len(index), 5)
@@ -273,6 +274,26 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             pass
         else:
             plt.ylabel("Probs")
+        plt.xlim([0, exper.config.max_val_opt_steps])
+
+    if add_info:
+        idx_mode_probs = np.argmax(exper.val_stats["qt_funcs"][plot_idx[-1]], 1)
+        N = exper.val_stats["qt_funcs"][plot_idx[-1]].shape[0]
+        mean_mode = np.mean(idx_mode_probs)
+        median = np.median(idx_mode_probs)
+        stddev_mode = np.std(idx_mode_probs)
+        min_mode = np.min(idx_mode_probs)
+        max_mode = np.max(idx_mode_probs)
+        stats = r"Max mode stats(N={}): Range({}, {}) / mean={:.1f} / median={} / stddev={:.1f}".format(N, min_mode,
+                                                                                                        max_mode,
+                                                                                                        mean_mode,
+                                                                                                        median,
+                                                                                                        stddev_mode)
+        plt.annotate(stats,
+                     xy=(0.5, 0), xytext=(0, 0),
+                     xycoords=('axes fraction', 'figure fraction'),
+                     textcoords='offset points',
+                     size=12, ha='center', va='bottom')
 
     if fig_name is None:
         fig_name = "_" + data_set + "_" + create_exper_label(exper)
@@ -286,7 +307,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
 
 def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
-                    loss_type='param_error', max_step=None, sort_exper=None, log_scale=True):
+                    loss_type='param_error', max_step=None, sort_exper=None, log_scale=True, with_stddev=True):
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -316,6 +337,8 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
         keys = res_dict.keys()
         # res = res_dict[keys[len(keys) - i]]
         model = expers[e].args.model
+        if expers[e].args.learner == "act":
+            model += "({:.2f})".format(expers[e].config.continue_prob)
         min_param_value = 999.
 
         if plot_best:
@@ -351,8 +374,6 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
         mean_plus_std = mean_losses + std_losses
         mean_min_std = mean_losses - std_losses
         icolor = iter_colors.next()
-        print(mean_losses[max_step-5:])
-        print(std_losses[max_step - 5:])
         y_min_value = np.min(mean_min_std)
         y_max_value = np.max(mean_plus_std)
         y_min_value -= y_min_value * 0.1
@@ -363,13 +384,15 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
 
             plt.semilogy(index, mean_losses, color=icolor, dashes=iter_styles.next(),
                          linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
-            plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.1')
-            plt.yscale("log")
+            if with_stddev:
+                plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.1')
+                plt.yscale("log")
         else:
             plt.plot(index, mean_losses, color=icolor,
                          dashes=iter_styles.next(),
                          linewidth=2., label="{}({})(stop={})".format(model, best_val_runs[e], stop_step))
-            plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
+            if with_stddev:
+                plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
         if len(index) > 15:
             plt.xlim([0, len(index)+1])
             index = np.arange(1, len(index)+1, 10)
@@ -618,5 +641,41 @@ def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12,
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
     if show:
+        plt.show()
+    plt.close()
+
+
+def plot_qt_mode_hist(exper, do_save=False, do_show=False, width=10, height=7, fig_name=None, add_info=True):
+
+    key = exper.val_stats["qt_funcs"].keys()[-1]
+    print("key ", key)
+    # need to add "1" to all indices which in fact reflect the optimization step when q-prob has highest value (mode)
+    max_idx_probs = np.argmax(exper.val_stats["qt_funcs"][key], 1) + 1
+    N = exper.val_stats["qt_funcs"][key].shape[0]
+    stats = r"Max mode stats(N={}): Range({}, {}) / mean={:.1f} / median={:.1f} / " \
+            r"stddev={:.1f}".format(N, np.min(max_idx_probs), np.max(max_idx_probs), np.mean(max_idx_probs),
+                                    np.median(max_idx_probs), np.std(max_idx_probs))
+
+    plt.figure(figsize=(width, height))
+    plt.title(r"Distribution of mode-step of $q(t|{})$ with $\nu={:.2f}$".format(exper.config.max_val_opt_steps,
+                                                                          exper.config.continue_prob))
+    _ = plt.hist(max_idx_probs, bins=key+1, normed=True)
+    plt.xlim([0, key+1])
+
+    if add_info:
+        plt.annotate(stats,
+                     xy=(0.5, 0), xytext=(0, 0),
+                     xycoords=('axes fraction', 'figure fraction'),
+                     textcoords='offset points',
+                     size=12, ha='center', va='bottom')
+
+    if fig_name is None and do_save:
+        fig_name = "_" + create_exper_label(exper)
+        fig_name = os.path.join(exper.output_dir, "qt_mode_stats" + fig_name + ".png")
+
+    if do_save:
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+    if do_show:
         plt.show()
     plt.close()

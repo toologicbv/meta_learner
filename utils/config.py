@@ -55,7 +55,7 @@ class MetaConfig(object):
         # self.continue_prob = 0.93
         # self.continue_prob = 0.94
         # self.continue_prob = 0.955
-        self.continue_prob = 0.95
+        self.continue_prob = 0.98
         # horizon for maximum number of timesteps
         # self.T = 10 # avg = 5 with 0.82
         # self.T = 20 # avg = 7 with 0.86 or 5ops with 0.8
