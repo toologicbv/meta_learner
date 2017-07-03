@@ -66,6 +66,8 @@ def stop_computing(q_probs, threshold=0.8):
     :param q_probs: contains the qt probabilities up to horizon T: [batch_size, opt_steps]
     :return: vector of booleans [batch_size]
     """
+    # remember, we call this function while we collected time-steps qt values up to T=t (current optimization step)
+    # and we want to test whether
     stops = np.cumsum(q_probs, 1)[:, -2] > threshold
     return stops
 
@@ -80,14 +82,18 @@ def preprocess_gradients(x):
     return torch.cat((x1, x2), 1)
 
 
-def get_experiment(file_to_exp):
+def get_experiment(path_to_exp, full_path=False):
 
-    file_to_exp = os.path.join(config.log_root_path, os.path.join(file_to_exp, config.exp_file_name))
+    if not full_path:
+        path_to_exp = os.path.join(config.log_root_path, os.path.join(path_to_exp, config.exp_file_name))
+    else:
+        path_to_exp = os.path.join(config.log_root_path, path_to_exp)
+
     try:
-        with open(file_to_exp, 'rb') as f:
+        with open(path_to_exp, 'rb') as f:
             experiment = dill.load(f)
     except:
-        raise IOError("Can't open file {}".format(file_to_exp))
+        raise IOError("Can't open file {}".format(path_to_exp))
     return experiment
 
 
@@ -221,8 +227,10 @@ class Experiment(object):
                           "qt_funcs": OrderedDict(), "loss_funcs": []}
 
 
-def save_exper(exper):
-    file_name = "exp_statistics" + ".dll"
+def save_exper(exper, file_name=None):
+    if file_name is None:
+        file_name = "exp_statistics" + ".dll"
+
     outfile = os.path.join(exper.output_dir, file_name)
 
     with open(outfile, 'wb') as f:

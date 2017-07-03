@@ -71,6 +71,10 @@ parser.add_argument('--model', type=str, default="default",
                          'in model directory')
 parser.add_argument('--log_dir', type=str, default="default",
                     help='log directory under logs')
+parser.add_argument('--checkpoint_dir', type=str, default=None,
+                    help='checkpoint directory under default process directory')
+parser.add_argument('--checkpoint_eval', type=int, default=20, metavar='N',
+                    help='interval between model checkpoint savings (default: 20)')
 parser.add_argument('--retrain', action='store_true', default=False,
                     help='retrain an existing model (note should exist in <models> or specific log_dir (.pkl)')
 parser.add_argument('--learner', type=str, default="act",

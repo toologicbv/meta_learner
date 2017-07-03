@@ -8,12 +8,13 @@ from torch.autograd import Variable
 from utils.regression import RegressionFunction, L2LQuadratic, neg_log_likelihood_loss
 
 from utils.config import config
-from utils.utils import softmax, stop_computing
+from utils.utils import softmax, stop_computing, save_exper
 from utils.probs import ConditionalTimeStepDist
 
 
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
-                       num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False):
+                       num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False,
+                       save_run=None):
     start_validate = time.time()
     global STD_OPT_LR
     # we will probably call this procedure later in another context (to evaluate meta-learners)
@@ -29,7 +30,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
         meta_logger.info("INFO - No validation set provided, generating new functions")
-        if exper.problem == 'regression':
+        if exper.args.problem == 'regression':
             val_set = RegressionFunction(n_funcs=10000, n_samples=100, stddev=1., x_dim=10)
         else:
             val_set = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
@@ -123,7 +124,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                 if len(qt_weights) >= 2:
                     q_logits = np.concatenate(qt_weights, 1)
                     q_probs = softmax(np.array(q_logits))
-                    do_stop = stop_computing(q_probs, threshold=config.qt_threshold)
+                    do_stop = stop_computing(q_probs, threshold=exper.config.qt_threshold)
                     # register q(t|T) statistics
                     meta_learner.qt_hist_val[i+1] += np.mean(q_probs, 0)
                     meta_learner.opt_step_hist_val[i+1 - 1] += 1
@@ -140,6 +141,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
         val_set.params.grad.data.zero_()
         # increase the opt steps variable per function in case do_stop entry is False
+        # NOTE: otherwise opt_steps will NOT BE INCREASED which means the value registered for this particular
+        # function is equal to the stopping step (current t - 1) which should be correct because we tested
+        # np.cumsum(qt_probs)[:, -2] > threshold, so is the qt-value t-1 bigger than our preset threshold
         opt_steps += np.logical_not(do_stop)
         """
             ************ END OF A VALIDATION OPTIMIZATION  ******************
@@ -175,7 +179,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     if exper.args.learner == "act":
         # get prior probs for this number of optimizer steps
         # TODO currently we set T=max_steps because we are not stopping at the optimal step!!!
-        kl_prior_dist = ConditionalTimeStepDist(T=max_steps, q_prob=config.continue_prob)
+        kl_prior_dist = ConditionalTimeStepDist(T=max_steps, q_prob=exper.config.continue_prob)
         # TODO again max_steps need to be adjusted later here when we really stop!!!
         priors = Variable(torch.from_numpy(kl_prior_dist.pmfunc(np.arange(1, max_steps + 1), normalize=True)).float())
         priors = priors.expand(val_set.num_of_funcs, max_steps)
@@ -242,7 +246,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
     meta_logger.info("--------------------------- End of validation --------------------------------------------")
     if exper.args.learner != "manual" and save_model:
-        model_path = os.path.join(exper.output_dir, meta_learner.name + "_vrun" + str(exper.epoch) + config.save_ext)
+        model_path = os.path.join(exper.output_dir, meta_learner.name + "_vrun" + str(exper.epoch) +
+                                  exper.config.save_ext)
         torch.save(meta_learner.state_dict(), model_path)
         meta_logger.info("INFO - Successfully saved model parameters to {}".format(model_path))
     if exper.args.learner == 'act':
@@ -253,4 +258,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_learner.reset_final_loss()
     elif exper.args.learner == 'meta':
         meta_learner.reset_losses()
+
+    if save_run is not None:
+        save_exper(exper, file_name="exp_statistics_" + save_run + ".dll")
 
