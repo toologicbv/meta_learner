@@ -55,7 +55,7 @@ class MetaConfig(object):
         # self.continue_prob = 0.93
         # self.continue_prob = 0.94
         # self.continue_prob = 0.955
-        self.continue_prob = 0.90
+        self.continue_prob = 0.965
         # horizon for maximum number of timesteps
         # self.T = 10 # avg = 5 with 0.82
         # self.T = 20 # avg = 7 with 0.86 or 5ops with 0.8
@@ -66,7 +66,7 @@ class MetaConfig(object):
         # self.T = 45 # avg = 20 with 0.95
         # self.T = 60 # avg = 27 with 0.96
         # self.T = 75  # avg = 27 with 0.98 or avg = 10 with 0.86
-        self.T = 100 # avg = 80 with 0.98
+        self.T = 1000 # avg = 80 with 0.98
         self.max_val_opt_steps = 100
 
         # some fonts defaults for headers of plots

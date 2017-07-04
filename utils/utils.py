@@ -51,7 +51,7 @@ def print_flags(exper, logger):
     for key, value in vars(exper.args).items():
         logger.info(key + ' : ' + str(value))
 
-    logger.info("INFO - shape parameter prior p(t|T): nu={:.3}".format(exper.config.continue_prob))
+    logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.continue_prob))
 
 
 def softmax(x, dim=1):

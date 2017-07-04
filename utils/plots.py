@@ -154,9 +154,11 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     if data_set == "train":
         epoch_keys = exper.epoch_stats["opt_step_hist"].keys()
         stats_dict = exper.epoch_stats["opt_step_hist"]
+        T = exper.config.T
     else:
         epoch_keys = exper.val_stats["opt_step_hist"].keys()
         stats_dict = exper.val_stats["opt_step_hist"]
+        T = exper.config.max_val_opt_steps
 
     for e, epoch_key in enumerate(epoch_keys):
 
@@ -178,7 +180,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("Number of optimization steps")
     plt.ylabel("Proportion")
-    plt.title("Distribution of optimization steps (E[T|{}]={})".format(exper.config.T, o_mean), **title_font)
+    plt.title("Distribution of optimization steps (E[T|{}]={})".format(T, o_mean), **title_font)
     plt.legend(loc="best")
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, exper.config.T_dist_fig_name + "_" + data_set +

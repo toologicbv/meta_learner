@@ -26,16 +26,19 @@ class TimeStepsDist(object):
 
     a call to this distribution object returns indices into density array
     """
-    def __init__(self, q_prob=0.9, transform=lambda x: x):
+    def __init__(self, T=None, q_prob=0.9, transform=lambda x: x):
 
         # theoretically inifinte support for this PMF, but we set a horizon in order to be able to construct
         # the measure
         self.H = 100000
-        self.T = self.H
+        if T is None:
+            self.T = None
+        else:
+            self.T = T
         self.q_prob = q_prob
         # construct the range of possible discrete values. T denotes the absolute horizon aka support for this
         # distribution
-        pdf = self.pmfunc(normalize=False, T=self.H)
+        pdf = self.pmfunc(normalize=False, T=self.T)
         self.shape = pdf.shape
         self.pdf = pdf.ravel()
         self.transform = transform
@@ -87,12 +90,15 @@ class TimeStepsDist(object):
         """Markov integral of expected value of distribution"""
         return round(np.median(self.rvs(n=100000)))
 
-    def rvs(self, n=1, probs=False):
+    def rvs(self, n=1, probs=False, max_horizon=None):
         """random variates """
         # pick numbers which are uniformly random over the cumulative distribution function
         choice = np.random.uniform(high=self.sum, size=n)
         # find the indices corresponding to this point on the CDF
-        index = np.searchsorted(self.cdf, choice)
+        if max_horizon is None:
+            index = np.searchsorted(self.cdf, choice)
+        else:
+            index = np.searchsorted(self.cdf[0:max_horizon], choice)
         self.probs = self.pdf[index]
         # because index numbering starts at 0 and we are returning the values for the random variable
         # "trial number of the first success (Bernoulli experiment)" we increment all indices by 1

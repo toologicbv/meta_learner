@@ -113,7 +113,7 @@ def main():
     if args.learner == "act":
         if args.version[0:2] not in ['V1', 'V2']:
             raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(args.version))
-        pt_dist = TimeStepsDist(q_prob=exper.config.continue_prob)
+        pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.continue_prob)
         if args.fixed_horizon:
             exper.avg_num_opt_steps = args.optimizer_steps
         else:
@@ -121,7 +121,8 @@ def main():
     else:
         exper.avg_num_opt_steps = args.optimizer_steps
         if args.learner == 'meta' and args.version[0:2] == 'V2':
-            pt_dist = TimeStepsDist(q_prob=exper.config.continue_prob)
+            # Note, we choose here an absolute limit of the horizon, set in the config-file
+            pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.continue_prob)
             exper.avg_num_opt_steps = pt_dist.mean
     # prepare the experiment
     exper.output_dir = prepare(prcs_args=args, exper=exper)

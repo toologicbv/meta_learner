@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from utils.regression import RegressionFunction, L2LQuadratic, neg_log_likelihood_loss
 
 from utils.config import config
-from utils.utils import softmax, stop_computing, save_exper
+from utils.utils import softmax, stop_computing, save_exper, construct_prior_p_t_T
 from utils.probs import ConditionalTimeStepDist
 
 
@@ -179,12 +179,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     if exper.args.learner == "act":
         # get prior probs for this number of optimizer steps
         # TODO currently we set T=max_steps because we are not stopping at the optimal step!!!
-        kl_prior_dist = ConditionalTimeStepDist(T=max_steps, q_prob=exper.config.continue_prob)
         # TODO again max_steps need to be adjusted later here when we really stop!!!
-        priors = Variable(torch.from_numpy(kl_prior_dist.pmfunc(np.arange(1, max_steps + 1), normalize=True)).float())
-        priors = priors.expand(val_set.num_of_funcs, max_steps)
-        if exper.args.cuda:
-            priors = priors.cuda()
+        priors = construct_prior_p_t_T(max_steps, exper.config.continue_prob, val_set.num_of_funcs, exper.args.cuda)
         total_act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data.squeeze()[0]
         str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
 
