@@ -9,7 +9,7 @@ from utils.regression import RegressionFunction, L2LQuadratic
 from utils.config import config
 from utils.utils import load_val_data, Experiment, prepare, end_run, get_model, print_flags
 from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T
-from utils.probs import TimeStepsDist, ConditionalTimeStepDist
+from utils.probs import TimeStepsDist
 from val_optimizer import validate_optimizer
 
 """
@@ -113,7 +113,7 @@ def main():
     if args.learner == "act":
         if args.version[0:2] not in ['V1', 'V2']:
             raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(args.version))
-        pt_dist = TimeStepsDist(config.T, config.continue_prob)
+        pt_dist = TimeStepsDist(q_prob=exper.config.continue_prob)
         if args.fixed_horizon:
             exper.avg_num_opt_steps = args.optimizer_steps
         else:
@@ -121,20 +121,19 @@ def main():
     else:
         exper.avg_num_opt_steps = args.optimizer_steps
         if args.learner == 'meta' and args.version[0:2] == 'V2':
-            pt_dist = TimeStepsDist(config.T, config.continue_prob)
+            pt_dist = TimeStepsDist(q_prob=exper.config.continue_prob)
             exper.avg_num_opt_steps = pt_dist.mean
     # prepare the experiment
     exper.output_dir = prepare(prcs_args=args, exper=exper)
     # get our logger (one to std-out and one to file)
     meta_logger = create_logger(exper, file_handler=True)
     # print the argument flags
-    print_flags(args, meta_logger)
+    print_flags(exper, meta_logger)
     # load the validation functions
     if args.problem == "quadratic":
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
                                   logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
     else:
-        val_funcs = None
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
                                   logger=meta_logger)
     # exper.val_funcs = val_funcs

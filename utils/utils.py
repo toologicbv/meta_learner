@@ -44,12 +44,14 @@ def create_logger(exper, file_handler=False):
     return logger
 
 
-def print_flags(exper_args, logger):
+def print_flags(exper, logger):
     """
     Prints all entries in argument parser.
     """
-    for key, value in vars(exper_args).items():
+    for key, value in vars(exper.args).items():
         logger.info(key + ' : ' + str(value))
+
+    logger.info("INFO - shape parameter prior p(t|T): nu={:.3}".format(exper.config.continue_prob))
 
 
 def softmax(x, dim=1):

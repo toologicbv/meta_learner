@@ -1,4 +1,7 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import os
+from utils import config
 
 
 def find_nearest(array, value):
@@ -23,13 +26,16 @@ class TimeStepsDist(object):
 
     a call to this distribution object returns indices into density array
     """
-    def __init__(self, T=100, q_prob=0.9, transform=lambda x: x):
+    def __init__(self, q_prob=0.9, transform=lambda x: x):
+
+        # theoretically inifinte support for this PMF, but we set a horizon in order to be able to construct
+        # the measure
+        self.H = 100000
+        self.T = self.H
+        self.q_prob = q_prob
         # construct the range of possible discrete values. T denotes the absolute horizon aka support for this
         # distribution
-        t_range = np.arange(1, T+1)
-        self.T = T
-        self.q_prob = q_prob
-        pdf = self.pmfunc(t_range, normalize=True)
+        pdf = self.pmfunc(normalize=False, T=self.H)
         self.shape = pdf.shape
         self.pdf = pdf.ravel()
         self.transform = transform
@@ -41,7 +47,7 @@ class TimeStepsDist(object):
         self.cdf = np.cumsum(self.pdf)
         self.probs = None
 
-    def pmfunc(self, t, normalize=False):
+    def pmfunc(self, normalize=False, T=None):
         """
             Probability mass function for random variable T (discrete time), finite number of time steps
              for  a mixture of finite-time MDPs (Markov-Decision processes)
@@ -49,12 +55,17 @@ class TimeStepsDist(object):
             :param prob: the probability to continue in the next time-step with the computation
             :return:
             """
-        if normalize:
-            assert self.T == len(t)
+        if T is not None:
+            t = np.arange(1, T + 1)
+        else:
+            # take the "infinite" support range
+            t = np.arange(1, self.H + 1)
+            T = self.H
 
         pmf = self.q_prob ** (t-1) * (1. - self.q_prob ** t) * (1. - self.q_prob ** 2)
-        if np.sum(pmf) < 1. and normalize and self.T > 1:
-            pmf = 1./np.sum(pmf) * pmf
+        # construct the truncated distribution (with horizon T)
+        if np.sum(pmf) < 1. and normalize and T > 1:
+            pmf = 1./np.sum(pmf[0:T]) * pmf[0: T]
         return pmf
 
     @property
@@ -70,6 +81,11 @@ class TimeStepsDist(object):
     def mean(self):
         """Markov integral of expected value of distribution"""
         return round(np.mean(self.rvs(n=100000)))
+
+    @property
+    def median(self):
+        """Markov integral of expected value of distribution"""
+        return round(np.median(self.rvs(n=100000)))
 
     def rvs(self, n=1, probs=False):
         """random variates """
@@ -87,6 +103,31 @@ class TimeStepsDist(object):
         else:
             return self.transform(index)
 
+    def plot_pmf(self, T=None, do_save=False, do_show=False, fig_name=None, width=10, height=6):
+
+        if T is None:
+            T = self.H
+
+        plt.figure(figsize=(width, height))
+        t = np.arange(1, T+1)
+        plt.plot(t, self.pdf[0:T], 'bo', markersize=3, label=r'p(T) $\nu={:.3f}$'.format(self.q_prob))
+        plt.xlabel("Time steps")
+        plt.ylabel("Probability")
+        plt.legend(loc="best")
+        plt.title(r"p(T) distribution with shape parameter $\nu={:.3f}$ E[T]={}".format(self.q_prob,
+                                                                                        self.mean))
+        if fig_name is None and do_save:
+            fig_name = os.path.join(config.figure_path, "pT_dist_{:.3f}".format(self.q_prob) + ".png")
+
+        if do_save:
+            plt.savefig(fig_name, bbox_inches='tight')
+            print("INFO - Successfully saved fig %s" % fig_name)
+
+        if do_show:
+            plt.show()
+
+        plt.close()
+
 
 class ConditionalTimeStepDist(object):
     """
@@ -99,10 +140,9 @@ class ConditionalTimeStepDist(object):
         # construct the range of possible discrete values. T denotes the absolute horizon aka support for this
         # distribution
 
-        t_range = np.arange(1, T+1)
         self.T = T
         self.q_prob = q_prob
-        pdf = self.pmfunc(t_range, normalize=True)
+        pdf = self.pmfunc(self.T, normalize=True)
         self.shape = pdf.shape
         self.pdf = pdf.ravel()
         self.interpolation = interpolation
@@ -114,18 +154,20 @@ class ConditionalTimeStepDist(object):
         self.cdf = np.cumsum(self.pdf)
         self.probs = None
 
-    def pmfunc(self, t, normalize=False):
+    def pmfunc(self, T=None, normalize=False):
         """
         :param t:
         :param T:
         :param prob: the probability to continue in the next time-step with the computation
         :return:
         """
-        if normalize:
-            assert self.T == len(t)
+        if T is None:
+            T = self.T
+        t = np.arange(1, T+1)
+
         p = 1 - self.q_prob
-        pmf = (p * self.q_prob**(t-1)) / (1 - self.q_prob**(self.T))
-        if np.sum(pmf) < 1. and normalize and self.T > 1:
+        pmf = (p * self.q_prob**(t-1)) / (1 - self.q_prob**T)
+        if np.sum(pmf) < 1. and normalize and T > 1:
             pmf = 1./np.sum(pmf) * pmf
         return pmf
 
@@ -155,3 +197,27 @@ class ConditionalTimeStepDist(object):
             return self.probs, self.transform(index)
         else:
             return self.transform(index)
+
+    def plot_pmf(self, do_save=False, do_show=False, fig_name=None, width=10, height=6):
+
+        plt.figure(figsize=(width, height))
+        t = np.arange(1, self.T+1)
+        plt.plot(t, self.pdf, 'bo', markersize=2, label=r'p(t|{}) $\nu={:.3f}$'.format(self.T, self.q_prob))
+        plt.xlabel("Time steps")
+        plt.ylabel("Probability")
+        plt.legend(loc="best")
+        plt.title(r"p(t|{}) distribution with shape parameter $\nu={:.3f}$ E[t|{}]={}".format(self.T,
+                                                                                              self.q_prob,
+                                                                                              self.T,
+                                                                                              self.mean))
+        if fig_name is None and do_save:
+            fig_name = os.path.join(config.figure_path, "p_t_T_dist_{:.3f}".format(self.q_prob) + ".png")
+
+        if do_save:
+            plt.savefig(fig_name, bbox_inches='tight')
+            print("INFO - Successfully saved fig %s" % fig_name)
+
+        if do_show:
+            plt.show()
+
+        plt.close()
