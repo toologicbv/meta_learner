@@ -52,7 +52,7 @@ def print_flags(exper, logger):
         logger.info(key + ' : ' + str(value))
 
     logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.continue_prob))
-
+    logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
 
 def softmax(x, dim=1):
     """Compute softmax values for each sets of scores in x. Expecting numpy arrays"""
