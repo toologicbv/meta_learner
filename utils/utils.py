@@ -303,8 +303,7 @@ def construct_prior_p_t_T(optimizer_steps, continue_prob, batch_size, cuda=False
     prior_dist = ConditionalTimeStepDist(T=optimizer_steps, q_prob=continue_prob)
     # The range that we pass to pmfunc (to compute the priors of p(t|T)) ranges from 1...T
     # because we define t as the "trial number of the first success"!
-    prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(np.arange(1, optimizer_steps + 1),
-                                                              normalize=True)).float())
+    prior_probs = Variable(torch.from_numpy(prior_dist.pmfunc(T=optimizer_steps, normalize=True)).float())
     if cuda:
         prior_probs = prior_probs.cuda()
     # we need to expand the prior probs to the size of the batch
