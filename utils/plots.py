@@ -314,8 +314,9 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
     plt.close()
 
 
-def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
-                    loss_type='param_error', max_step=None, sort_exper=None, log_scale=True, with_stddev=True):
+def plot_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
+                loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
+                with_stddev=True):
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -329,6 +330,11 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
              [4, 4, 2, 8, 2, 2]]
     iter_colors = cycle(p_colors)
     iter_styles = cycle(style)
+
+    if min_step is None:
+        min_step = 0
+    if max_step is not None:
+        max_step += 1
 
     for e in np.arange(num_of_expers):
         if loss_type == "param_error":
@@ -378,15 +384,18 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
             stop_step = config.max_val_opt_steps
         if max_step is None:
             max_step = len(res_dict[best_val_runs[e]])
-        losses = expers[e].val_stats["loss_funcs"][:, 0:max_step]
+
+        # print(min_step, max_step)
+        losses = expers[e].val_stats["loss_funcs"][:, min_step:max_step]
         mean_losses = np.mean(losses, 0)
-        index = np.arange(0, len(mean_losses))[0:max_step]
+        index = np.arange(min_step, max_step)
         std_losses = np.std(losses, 0)
         mean_plus_std = mean_losses + std_losses
         mean_min_std = mean_losses - std_losses
         icolor = iter_colors.next()
         y_min_value = np.min(mean_min_std)
         y_max_value = np.max(mean_plus_std)
+        # print("stddev[0] {:.4}".format(std_losses[0]))
         y_min_value -= y_min_value * 0.1
         y_max_value += y_max_value * 0.1
         if plot_best:
@@ -395,7 +404,8 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
             l_label = "{}(stop={})".format(model, stop_step)
 
         if log_scale:
-            # res_dict[best_val_runs[e]][0:max_step]
+            # res_dict[best_val_runs[e]][min_step:max_step]
+            # print(index.shape, mean_losses.shape)
             plt.semilogy(index, mean_losses, color=icolor, dashes=iter_styles.next(),
                          linewidth=2., label=l_label)
             if with_stddev:
@@ -407,11 +417,11 @@ def plot_val_result(expers, height=8, width=12, do_show=True, do_save=False, fig
                          linewidth=2., label=l_label)
             if with_stddev:
                 plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
-        if len(index) > 15:
+        if len(index) > 41:
             plt.xlim([0, len(index)+1])
             index = np.arange(1, len(index)+1, 10)
         plt.ylim([y_min_value, y_max_value])
-        plt.xticks(index, index - 1)
+        plt.xticks(index)
         plt.xlabel("Number of optimization steps")
         plt.ylabel(y_label)
         plt.legend(loc="best")
@@ -746,7 +756,8 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     ax1.set_ylabel("Distance NLL(start)-NLL(min)")
 
     ax2 = plt.subplot(4, 2, 2)
-    ax2.set_title("Distribution max-mode steps (N={})".format(nll_distance.shape[0]),
+    mean_mode = np.mean(max_idx_probs)
+    ax2.set_title("Distribution max-mode steps (N={}) mean={:.1f}".format(nll_distance.shape[0], mean_mode),
                   **config.title_font)
 
     _ = ax2.hist(max_idx_probs, bins=bins, normed=True)
@@ -777,7 +788,8 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     ax3.legend(loc="best")
 
     ax4 = plt.subplot(4, 2, 4)
-    ax4.set_title("Distribution stopping steps (N={})".format(nll_distance.shape[0]),
+    mean_step = np.mean(stops_steps)
+    ax4.set_title("Distribution stopping steps (N={}) mean={:.1f}".format(nll_distance.shape[0], mean_step),
                   **config.title_font)
     bins = np.unique(max_idx_probs).shape[0]
     _ = ax4.hist(stops_steps, bins=bins, normed=True, label=r'threshold ${:.2f}$'.format(threshold))

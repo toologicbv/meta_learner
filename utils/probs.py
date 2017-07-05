@@ -204,11 +204,11 @@ class ConditionalTimeStepDist(object):
         else:
             return self.transform(index)
 
-    def plot_pmf(self, do_save=False, do_show=False, fig_name=None, width=10, height=6):
+    def plot_pmf(self, do_save=False, do_show=False, fig_name=None, width=10, height=6, marker_size=2):
 
         plt.figure(figsize=(width, height))
         t = np.arange(1, self.T+1)
-        plt.plot(t, self.pdf, 'bo', markersize=2, label=r'p(t|{}) $\nu={:.3f}$'.format(self.T, self.q_prob))
+        plt.plot(t, self.pdf, 'bo', markersize=marker_size, label=r'p(t|{}) $\nu={:.3f}$'.format(self.T, self.q_prob))
         plt.xlabel("Time steps")
         plt.ylabel("Probability")
         plt.legend(loc="best")
@@ -216,6 +216,9 @@ class ConditionalTimeStepDist(object):
                                                                                               self.q_prob,
                                                                                               self.T,
                                                                                               self.mean))
+        y_max = np.max(self.pdf)
+        y_max += y_max * 0.1
+        plt.ylim([0, y_max])
         if fig_name is None and do_save:
             fig_name = os.path.join(config.figure_path, "p_t_T_dist_{:.3f}".format(self.q_prob) + ".png")
 
