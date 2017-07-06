@@ -48,8 +48,8 @@ parser.add_argument('--lr', type=float, default=1e-5, metavar='N',
                     help='default learning rate for optimizer (default: 1e-5)')
 parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                     help='number of functions per batch (default: 20)')
-parser.add_argument('--optimizer_steps', type=int, default=10, metavar='N',
-                    help='number of meta optimizer steps (default: 10)')
+parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
+                    help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
 parser.add_argument('--functions_per_epoch', type=int, default=10000, metavar='N',
@@ -135,13 +135,20 @@ def main():
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
                                   logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
     else:
+        # val_funcs = None
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger)
+                                 logger=meta_logger)
     # exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
         meta_optimizer = get_model(exper, args.x_dim, retrain=args.retrain, logger=meta_logger)
+        if exper.args.learner == 'meta' and exper.args.version == "V3":
+            # Version 3 of MetaLearner uses a fixed geometric distribution as loss weights
+            prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.continue_prob,
+                                                batch_size=1,
+                                                cuda=exper.args.cuda)
+            truncatedGeometric = prior_probs.squeeze()
         optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
@@ -264,7 +271,10 @@ def main():
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
 
                     reg_funcs.set_parameters(par_new)
-                    loss_sum = loss_sum + loss_step
+                    if exper.args.version == "V3":
+                        loss_sum = loss_sum + torch.mul(truncatedGeometric[k], loss_step)
+                    else:
+                        loss_sum = loss_sum + loss_step
                 # ACT model processing
                 elif args.learner == 'act':
                     delta_param, delta_qt = meta_optimizer.meta_update(reg_funcs)

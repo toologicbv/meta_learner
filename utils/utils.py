@@ -14,7 +14,6 @@ from collections import OrderedDict
 
 from torch.autograd import Variable
 import models.rnn_optimizer
-from models.rnn_optimizer import MetaLearner
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 from probs import ConditionalTimeStepDist
 
@@ -121,7 +120,9 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
         exper.args.model = exper.args.learner + exper.args.version + "_" + exper.args.problem + "_" + \
             str(int(exper.avg_num_opt_steps)) + "ops"
 
-    if exper.args.version == 'V1' or exper.args.version == 'V2' or exper.args.version == '':
+    if exper.args.version == 'V1' or exper.args.version == 'V2' \
+        or (exper.args.version == 'V3' and exper.args.learner == 'meta') \
+            or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
                 output_bias = True
@@ -145,11 +146,14 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
                                    use_cuda=exper.args.cuda,
                                    output_bias=output_bias)
     else:
-        meta_optimizer = MetaLearner(num_params_optimizee,
+        act_class = getattr(models.rnn_optimizer, "MetaLearner")
+
+        meta_optimizer = act_class(num_params_optimizee,
                                      num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
                                      use_cuda=exper.args.cuda,
                                      output_bias=output_bias)
+
     if retrain:
         loaded = False
         if exper.model_path is not None:

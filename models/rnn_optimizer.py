@@ -188,6 +188,31 @@ class MetaLearner(nn.Module):
         self.losses = []
 
 
+class MetaLearnerWithFixedWeights(MetaLearner):
+    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2,
+                 use_cuda=False, output_bias=True):
+        super(MetaLearnerWithFixedWeights, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers, use_cuda,
+                                                    output_bias=output_bias, fg_bias=1.)
+
+        self.truncatedGeometric = None
+
+    def step_loss(self, optimizee_obj, new_parameters, average_batch=True, step=None):
+
+        if average_batch:
+            avg = 1/float(optimizee_obj.num_of_funcs)
+        else:
+            avg = 1.
+        loss = avg * neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
+                                             stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
+                                             sum_batch=True, size_average=False)
+        # multiply step loss with a fixed weight (we use a geometric with shape parameter config.continue_prob
+        if step is not None and self.truncatedGeometric is not None:
+            loss = torch.mul(self.truncatedGeometric[step], loss)
+        # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
+        self.losses.append(Variable(loss.data))
+        return loss
+
+
 class AdaptiveMetaLearnerV1(MetaLearner):
     def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2,
                  use_cuda=False, output_bias=True):
