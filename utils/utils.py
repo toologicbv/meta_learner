@@ -3,7 +3,7 @@ import torch
 import os
 import dill
 import shutil
-from config import config
+from config import config, MetaConfig
 from datetime import datetime
 from pytz import timezone
 
@@ -50,7 +50,8 @@ def print_flags(exper, logger):
     for key, value in vars(exper.args).items():
         logger.info(key + ' : ' + str(value))
 
-    logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.continue_prob))
+    logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
+    logger.info("shape parameter of prior p(T) nu={:.3}".format(exper.config.pT_shape_param))
     logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
 
 def softmax(x, dim=1):
@@ -95,6 +96,16 @@ def get_experiment(path_to_exp, full_path=False):
             experiment = dill.load(f)
     except:
         raise IOError("Can't open file {}".format(path_to_exp))
+
+    if not hasattr(experiment.config, 'pT_shape_param'):
+        new_config = MetaConfig()
+        new_config.__dict__ = experiment.config.__dict__.copy()
+        new_config.pT_shape_param = new_config.continue_prob
+        new_config.ptT_shape_param = new_config.continue_prob
+        experiment.config = new_config
+    # if not hasattr(experiment.args.config, 'ptT_shape_param'):
+
+
     return experiment
 
 

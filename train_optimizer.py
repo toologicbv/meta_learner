@@ -113,7 +113,7 @@ def main():
     if args.learner == "act":
         if args.version[0:2] not in ['V1', 'V2']:
             raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(args.version))
-        pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.continue_prob)
+        pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.pT_shape_param)
         if args.fixed_horizon:
             exper.avg_num_opt_steps = args.optimizer_steps
         else:
@@ -122,7 +122,7 @@ def main():
         exper.avg_num_opt_steps = args.optimizer_steps
         if args.learner == 'meta' and args.version[0:2] == 'V2':
             # Note, we choose here an absolute limit of the horizon, set in the config-file
-            pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.continue_prob)
+            pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.pT_shape_param)
             exper.avg_num_opt_steps = pt_dist.mean
     # prepare the experiment
     exper.output_dir = prepare(prcs_args=args, exper=exper)
@@ -145,7 +145,7 @@ def main():
         meta_optimizer = get_model(exper, args.x_dim, retrain=args.retrain, logger=meta_logger)
         if exper.args.learner == 'meta' and exper.args.version == "V3":
             # Version 3 of MetaLearner uses a fixed geometric distribution as loss weights
-            prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.continue_prob,
+            prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
                                                 batch_size=1,
                                                 cuda=exper.args.cuda)
             truncatedGeometric = prior_probs.squeeze()
@@ -160,7 +160,7 @@ def main():
         backward_ones = backward_ones.cuda()
     num_of_batches = args.functions_per_epoch // args.batch_size
     if args.fixed_horizon and args.learner == "act":
-        prior_probs = construct_prior_p_t_T(args.optimizer_steps, config.continue_prob, args.batch_size,
+        prior_probs = construct_prior_p_t_T(args.optimizer_steps, config.ptT_shape_param, args.batch_size,
                                             args.cuda)
 
     for epoch in range(args.max_epoch):
@@ -211,7 +211,7 @@ def main():
                 # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
                 # add one to choice because we actually want values between [1, config.T]
                 optimizer_steps = pt_dist.rvs(n=1)[0]
-                prior_probs = construct_prior_p_t_T(optimizer_steps, config.continue_prob, args.batch_size,
+                prior_probs = construct_prior_p_t_T(optimizer_steps, config.ptT_shape_param, args.batch_size,
                                                         args.cuda)
                 avg_opt_steps.append(optimizer_steps)
 
@@ -308,7 +308,7 @@ def main():
                     # is only used if ACT_TRUNC_BPTT set to TRUE
                     elif args.learner == 'act' and args.version[0:2] == "V2" and ACT_TRUNC_BPTT:
                         T = k+1
-                        prior_probs = construct_prior_p_t_T(T, config.continue_prob, args.batch_size,
+                        prior_probs = construct_prior_p_t_T(T, config.ptT_shape_param, args.batch_size,
                                                             args.cuda)
                         if args.cuda:
                             prior_probs = prior_probs.cuda()

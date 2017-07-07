@@ -44,18 +44,19 @@ class MetaConfig(object):
         """
             Important parameter for prior distribution P(T)
         """
+        # please note that self.continue_prob is only there for backward compatibility (old runs)
+        self.continue_prob = 0.
         # probability of continue computation
-        # self.continue_prob = 0.8  # T=10 => 5ops
-        # self.continue_prob = 0.915
-        # self.continue_prob = 0.53  # T=10 => 2ops
-        # self.continue_prob = 0.66
-        # self.continue_prob = 0.73
-        # self.continue_prob = 0.86
-        # self.continue_prob = 0.88  # T=25 => 10ops
-        # self.continue_prob = 0.93
-        # self.continue_prob = 0.94
-        # self.continue_prob = 0.955
-        self.continue_prob = 0.98
+        # self.pT_shape_param = 0.8  # T=10 => 5ops
+        # self.pT_shape_param = 0.915
+        # self.pT_shape_param = 0.53  # T=10 => 2ops
+        # self.pT_shape_param = 0.66
+        # self.pT_shape_param = 0.73
+        # self.pT_shape_param = 0.86
+        # self.pT_shape_param = 0.88  # T=25 => 10ops
+        # self.pT_shape_param = 0.93
+        # self.pT_shape_param = 0.94
+        # self.pT_shape_param = 0.955
         # horizon for maximum number of timesteps
         # self.T = 10 # avg = 5 with 0.82
         # self.T = 20 # avg = 7 with 0.86 or 5ops with 0.8
@@ -66,6 +67,8 @@ class MetaConfig(object):
         # self.T = 45 # avg = 20 with 0.95
         # self.T = 60 # avg = 27 with 0.96
         # self.T = 75  # avg = 27 with 0.98 or avg = 10 with 0.86
+        self.pT_shape_param = 0.93
+        self.ptT_shape_param = 0.1
         self.T = 150 # avg = 80 with 0.98
         self.max_val_opt_steps = 100
 

@@ -180,7 +180,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         # get prior probs for this number of optimizer steps
         # TODO currently we set T=max_steps because we are not stopping at the optimal step!!!
         # TODO again max_steps need to be adjusted later here when we really stop!!!
-        priors = construct_prior_p_t_T(max_steps, exper.config.continue_prob, val_set.num_of_funcs, exper.args.cuda)
+        priors = construct_prior_p_t_T(max_steps, exper.config.ptT_shape_param, val_set.num_of_funcs, exper.args.cuda)
         total_act_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data.squeeze()[0]
         str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
 
