@@ -86,8 +86,8 @@ class MetaLearner(nn.Module):
 
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.losses = []
+        self.epochs_trained = 0
         if self.use_cuda:
-            print("Using cuda for MetaLearner")
             self.cuda()
 
     def cuda(self):

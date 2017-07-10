@@ -137,7 +137,7 @@ def main():
     else:
         # val_funcs = None
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                 logger=meta_logger)
+                                logger=meta_logger)
     # exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
@@ -145,6 +145,8 @@ def main():
         meta_optimizer = get_model(exper, args.x_dim, retrain=args.retrain, logger=meta_logger)
         if exper.args.learner == 'meta' and exper.args.version == "V3":
             # Version 3 of MetaLearner uses a fixed geometric distribution as loss weights
+            meta_logger.info("Training model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
+                exper.args.optimizer_steps , exper.config.ptT_shape_param))
             prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
                                                 batch_size=1,
                                                 cuda=exper.args.cuda)
@@ -257,6 +259,9 @@ def main():
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(backward_ones)
                 total_loss_steps += torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+                # new_version ("observed improvement")
+                # if exper.args.learner == 'meta' and k == 0:
+                #    meta_optimizer.losses.append(Variable(torch.mean(loss, 0).data.squeeze()))
 
                 # print("Sum gradients ", torch.sum(reg_funcs.params.grad.data))
                 # feed the RNN with the gradient of the error surface function
@@ -273,7 +278,12 @@ def main():
                     reg_funcs.set_parameters(par_new)
                     if exper.args.version == "V3":
                         loss_sum = loss_sum + torch.mul(truncatedGeometric[k], loss_step)
+
                     else:
+                        # new_version (observed improvement)
+                        # min_f = torch.min(torch.cat(meta_optimizer.losses[0:k+1], 0))
+                        # observed_imp = (-1.) * (min_f - loss_step)
+                        # loss_sum += observed_imp
                         loss_sum = loss_sum + loss_step
                 # ACT model processing
                 elif args.learner == 'act':
@@ -372,7 +382,7 @@ def main():
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
             meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(epoch + 1, avg_opt_steps))
 
-        exper.epoch_stats["loss"].append(final_loss[0])
+        exper.epoch_stats["loss"].append(total_loss_steps)
         exper.epoch_stats["param_error"].append(param_loss[0])
         if args.learner == 'act':
             exper.epoch_stats["act_loss"].append(final_act_loss[0])
@@ -399,6 +409,8 @@ def main():
             exper.epoch_stats['opt_step_hist'][exper.epoch] = meta_optimizer.opt_step_hist
 
             meta_optimizer.init_qt_statistics(exper.config)
+        if hasattr(meta_optimizer, "epochs_trained"):
+            meta_optimizer.epochs_trained += 1
 
     end_run(exper, meta_optimizer, validation=False, on_server=args.on_server)
 

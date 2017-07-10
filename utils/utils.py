@@ -192,6 +192,7 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     meta_optimizer.name = exper.args.model
 
     if exper.args.cuda:
+        logger.info("Note: MetaLearner is running on GPU")
         meta_optimizer.cuda()
     print(meta_optimizer.state_dict().keys())
 

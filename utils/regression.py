@@ -254,6 +254,9 @@ class RegressionFunction(object):
             self.true_minimum_nll = self.true_minimum_nll.cuda()
 
         self.y = self.y_no_noise + self.noise.expand_as(self.y_no_noise)
+        # new_version
+        # y = torch.FloatTensor(self.num_of_funcs, self.n_samples)
+        # self.y = Variable(init.uniform(y), requires_grad=False)
         if self.use_cuda:
             self.y = self.y.cuda()
 
