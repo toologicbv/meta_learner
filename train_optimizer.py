@@ -133,11 +133,12 @@ def main():
     # load the validation functions
     if args.problem == "quadratic":
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
+                                  logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll",
+                                  exper=exper)
     else:
         # val_funcs = None
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger)
+                                  logger=meta_logger, exper=exper)
     # exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
