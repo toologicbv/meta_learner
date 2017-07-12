@@ -50,9 +50,12 @@ def print_flags(exper, logger):
     for key, value in vars(exper.args).items():
         logger.info(key + ' : ' + str(value))
 
-    logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
-    logger.info("shape parameter of prior p(T) nu={:.3}".format(exper.config.pT_shape_param))
-    logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
+    if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V3'):
+        logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
+    if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
+        logger.info("shape parameter of prior p(T) nu={:.3}".format(exper.config.pT_shape_param))
+        logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
+
 
 def softmax(x, dim=1):
     """Compute softmax values for each sets of scores in x. Expecting numpy arrays"""

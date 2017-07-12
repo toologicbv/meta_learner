@@ -106,7 +106,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                 # in this case forward returns a tuple (parm_delta, qt)
                 par_new = val_set.params - delta_p[0]
                 qt_param = qt_param + delta_p[1]
-
                 qt_weights.append(qt_param.data.cpu().numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to
                 # compute the final ACT loss

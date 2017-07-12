@@ -47,28 +47,9 @@ class MetaConfig(object):
         # please note that self.continue_prob is only there for backward compatibility (old runs)
         self.continue_prob = 0.
         # probability of continue computation
-        # self.pT_shape_param = 0.8  # T=10 => 5ops
-        # self.pT_shape_param = 0.915
-        # self.pT_shape_param = 0.53  # T=10 => 2ops
-        # self.pT_shape_param = 0.66
-        # self.pT_shape_param = 0.73
-        # self.pT_shape_param = 0.86
-        # self.pT_shape_param = 0.88  # T=25 => 10ops
-        # self.pT_shape_param = 0.93
-        # self.pT_shape_param = 0.94
-        # self.pT_shape_param = 0.955
-        # horizon for maximum number of timesteps
-        # self.T = 10 # avg = 5 with 0.82
-        # self.T = 20 # avg = 7 with 0.86 or 5ops with 0.8
-        # self.T = 20 # avg = 9 with 0.9
-        # self.T = 25 # avg = 10 with 0.88
-        # self.T = 30 # avg = 15 with 0.94
-        # self.T = 40 # avg = 20 with 0.96 or 15 with 0.925
-        # self.T = 45 # avg = 20 with 0.95
-        # self.T = 60 # avg = 27 with 0.96
-        # self.T = 75  # avg = 27 with 0.98 or avg = 10 with 0.86
+
         self.pT_shape_param = 0.93
-        self.ptT_shape_param = 0.1
+        self.ptT_shape_param = 0.98
         self.T = 150 # avg = 80 with 0.98
         self.max_val_opt_steps = 100
 

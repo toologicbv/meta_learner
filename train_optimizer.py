@@ -46,8 +46,8 @@ parser.add_argument('--x_dim', type=int, default=10, metavar='N',
                     help='dimensionality of the regression variable x (default: 10)')
 parser.add_argument('--lr', type=float, default=1e-5, metavar='N',
                     help='default learning rate for optimizer (default: 1e-5)')
-parser.add_argument('--batch_size', type=int, default=20, metavar='N',
-                    help='number of functions per batch (default: 20)')
+parser.add_argument('--batch_size', type=int, default=125, metavar='N',
+                    help='number of functions per batch (default: 125)')
 parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
@@ -137,7 +137,7 @@ def main():
     else:
         # val_funcs = None
         val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                logger=meta_logger)
+                                  logger=meta_logger)
     # exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
@@ -223,6 +223,7 @@ def main():
                 qt_param = qt_param.cuda()
 
             # outer loop with the optimization steps
+            # meta_logger.info("Total steps {}".format(optimizer_steps))
             for k in range(optimizer_steps):
 
                 if args.learner == 'meta' or (args.learner == "act" and ACT_TRUNC_BPTT):
