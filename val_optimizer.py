@@ -91,9 +91,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         col_param_losses.append(param_loss)
 
         if not exper.args.learner == 'manual':
-            delta_p = meta_learner.forward(val_set.params.grad)
+            param_size = val_set.params.grad.size()
+            delta_p = meta_learner.forward(val_set.params.grad.view(-1))
             if exper.args.learner == 'meta':
                 # gradient descent
+                delta_p = delta_p.view(param_size)
                 par_new = val_set.params - delta_p
                 if exper.args.problem == "quadratic":
                     loss_step = val_set.compute_loss(average=True, params=par_new)
@@ -104,7 +106,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
-                par_new = val_set.params - delta_p[0]
+                delta_param = delta_p[0].view(param_size)
+                par_new = val_set.params - delta_param
                 qt_param = qt_param + delta_p[1]
                 qt_weights.append(qt_param.data.cpu().numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to

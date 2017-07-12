@@ -99,47 +99,39 @@ class MetaLearner(nn.Module):
     def reset_lstm(self, keep_states=False):
 
         if keep_states:
-            for theta in np.arange(self.num_params):
-                for i in range(len(self.lstms)):
-                    self.hx[theta][i] = Variable(self.hx[theta][i].data)
-                    self.cx[theta][i] = Variable(self.cx[theta][i].data)
+            for i in range(len(self.lstms)):
+                self.hx[i] = Variable(self.hx[i].data)
+                self.cx[i] = Variable(self.cx[i].data)
         else:
-            self.hx = {}
-            self.cx = {}
+            self.hx = []
+            self.cx = []
             # first loop over the number of parameters we have, because we're updating coordinate wise
-            for theta in np.arange(self.num_params):
-                self.hx[theta] = [Variable(torch.zeros(1, self.hidden_size)) for i in range(len(self.lstms))]
-                self.cx[theta] = [Variable(torch.zeros(1, self.hidden_size)) for i in range(len(self.lstms))]
+            for i in range(len(self.lstms)):
+                self.hx.append(Variable(torch.zeros(1, self.hidden_size)))
+                self.cx.append(Variable(torch.zeros(1, self.hidden_size)))
+                if self.cuda:
+                    self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
 
-                if self.use_cuda:
-                    for i in range(len(self.lstms)):
-                        self.hx[theta][i], self.cx[theta][i] = self.hx[theta][i].cuda(), self.cx[theta][i].cuda()
-
-    def forward(self, x):
+    def forward(self, x_t):
         """
             x: contains the gradients of the loss function w.r.t. the regression function parameters
                Tensor shape: dim0=number of functions X dim1=number of parameters
             Coordinate wise processing:
         """
-        if self.use_cuda and not x.is_cuda:
-            x = x.cuda()
+        x_t = x_t.unsqueeze(1)
+        if self.use_cuda and not x_t.is_cuda:
+            x_t = x_t.cuda()
 
-        theta_out = []
-        for t in np.arange(self.num_params):
-            x_t = x[:, t].unsqueeze(1)
-            x_t = self.linear1(x_t)
-            for i in range(len(self.lstms)):
-                if x_t.size(0) != self.hx[t][i].size(0):
-                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
-                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
+        x_t = self.linear1(x_t)
+        for i in range(len(self.lstms)):
+            if x_t.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
 
-                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
-                x_t = self.hx[t][i]
-            theta_t = self.linear_out(x_t)
-            theta_out.append(theta_t)
-
-        res = torch.cat(theta_out, 1)
-        return res
+            self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
+            x_t = self.hx[i]
+        x_t = self.linear_out(x_t)
+        return x_t.squeeze()
 
     def meta_update(self, optimizee_with_grads):
 
@@ -148,11 +140,13 @@ class MetaLearner(nn.Module):
         :rtype: object
         """
         grads = Variable(optimizee_with_grads.params.grad.data)
+        flat_grads = grads.view(-1)
         if self.use_cuda:
-             grads = grads.cuda()
+            flat_grads = flat_grads.cuda()
 
-        delta_params = self(grads)
-
+        delta_params = self(flat_grads)
+        # reshape parameters
+        delta_params = delta_params.view(grads.size())
         return delta_params
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
@@ -171,7 +165,6 @@ class MetaLearner(nn.Module):
     @property
     def sum_grads(self):
         sum_grads = 0
-        print("In sum grads")
         for i, cells in enumerate(self.lstms):
             for j, module in enumerate(cells.children()):
                 for param_name, params in module._parameters.iteritems():
@@ -221,33 +214,25 @@ class AdaptiveMetaLearnerV2(MetaLearner):
     def reset_lstm(self, keep_states=False):
         super(AdaptiveMetaLearnerV2, self).reset_lstm(keep_states)
 
-    def forward(self, x):
-        if self.use_cuda and not x.is_cuda:
-            x = x.cuda()
+    def forward(self, x_t):
 
-        # x = self.input_batch_norm(x)
-        theta_out = []
-        qt_out = []
-        for t in np.arange(self.num_params):
-            x_t = x[:, t].unsqueeze(1)
-            x_t = self.linear1(x_t)
-            for i in range(len(self.lstms)):
-                if x_t.size(0) != self.hx[t][i].size(0):
-                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
-                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
+        if self.use_cuda and not x_t.is_cuda:
+            x_t = x_t.cuda()
 
-                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
-                x_t = self.hx[t][i]
+        x_t = x_t.unsqueeze(1)
+        x_t = self.linear1(x_t)
+        for i in range(len(self.lstms)):
+            if x_t.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
 
-            q_t = self.act_linear_out(x_t)
-            qt_out.append(q_t)
-            theta_t = self.linear_out(x_t)
-            theta_out.append(theta_t)
+            self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
+            x_t = self.hx[i]
 
-        theta_out = torch.cat(theta_out, 1)
-        qt_out = torch.mean(torch.cat(qt_out, 1), 1)
+        qt_out = self.act_linear_out(x_t)
+        theta_out = self.linear_out(x_t)
 
-        return tuple((theta_out, qt_out))
+        return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
     def meta_update(self, optimizee_with_grads):
         """
@@ -255,11 +240,16 @@ class AdaptiveMetaLearnerV2(MetaLearner):
             :param optimizee_with_grads:
             :return: delta theta, delta qt
         """
-        grads = Variable(optimizee_with_grads.params.grad.data)
-        if self.use_cuda:
-             grads = grads.cuda()
-        delta_theta, delta_qt = self(grads)
 
+        grads = Variable(optimizee_with_grads.params.grad.data)
+        flat_grads = grads.view(-1)
+        if self.use_cuda:
+            flat_grads = flat_grads.cuda()
+        delta_theta, delta_qt = self(flat_grads)
+        # reshape parameters
+        delta_theta = delta_theta.view(grads.size())
+        # reshape qt-values and calculate mean
+        delta_qt = torch.mean(delta_qt.view(grads.size()), 1)
         return delta_theta, delta_qt
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
