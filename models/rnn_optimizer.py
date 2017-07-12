@@ -139,14 +139,15 @@ class MetaLearner(nn.Module):
 
         :rtype: object
         """
-        grads = Variable(optimizee_with_grads.params.grad.data)
-        flat_grads = grads.view(-1)
+        param_size = optimizee_with_grads.params.grad.data.size()
+        flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+
         if self.use_cuda:
             flat_grads = flat_grads.cuda()
 
         delta_params = self(flat_grads)
         # reshape parameters
-        delta_params = delta_params.view(grads.size())
+        delta_params = delta_params.view(param_size)
         return delta_params
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):

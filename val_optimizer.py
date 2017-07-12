@@ -15,6 +15,7 @@ from utils.probs import ConditionalTimeStepDist
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
                        num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False,
                        save_run=None):
+    val_set = val_set
     start_validate = time.time()
     global STD_OPT_LR
     # we will probably call this procedure later in another context (to evaluate meta-learners)
@@ -91,11 +92,11 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         col_param_losses.append(param_loss)
 
         if not exper.args.learner == 'manual':
-            param_size = val_set.params.grad.size()
+
             delta_p = meta_learner.forward(val_set.params.grad.view(-1))
+            # delta_p = meta_learner.meta_update(val_set)
             if exper.args.learner == 'meta':
                 # gradient descent
-                delta_p = delta_p.view(param_size)
                 par_new = val_set.params - delta_p
                 if exper.args.problem == "quadratic":
                     loss_step = val_set.compute_loss(average=True, params=par_new)
@@ -106,9 +107,10 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
-                delta_param = delta_p[0].view(param_size)
-                par_new = val_set.params - delta_param
-                qt_param = qt_param + delta_p[1]
+                param_size = val_set.params.size()
+                par_new = val_set.params - delta_p[0].view(param_size)
+                qt_delta = torch.mean(delta_p[1].view(param_size), 1)
+                qt_param = qt_param + qt_delta
                 qt_weights.append(qt_param.data.cpu().numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to
                 # compute the final ACT loss
