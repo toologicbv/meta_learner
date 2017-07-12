@@ -147,10 +147,16 @@ def main():
             # Version 3 of MetaLearner uses a fixed geometric distribution as loss weights
             meta_logger.info("Training model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
                 exper.args.optimizer_steps , exper.config.ptT_shape_param))
-            prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
-                                                batch_size=1,
-                                                cuda=exper.args.cuda)
-            truncatedGeometric = prior_probs.squeeze()
+            # prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
+            #                                   batch_size=1,
+            #                                    cuda=exper.args.cuda)
+            # fixed_weights = prior_probs.squeeze()
+            fixed_weights = Variable(torch.FloatTensor(exper.args.optimizer_steps), requires_grad=False)
+            fixed_weights[:] = 1./float(exper.args.optimizer_steps)
+            if exper.args.cuda:
+                print("Sum weights ", torch.sum(fixed_weights).data.cpu().numpy()[0])
+                fixed_weights = fixed_weights.cuda()
+
         optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
@@ -278,7 +284,7 @@ def main():
 
                     reg_funcs.set_parameters(par_new)
                     if exper.args.version == "V3":
-                        loss_sum = loss_sum + torch.mul(truncatedGeometric[k], loss_step)
+                        loss_sum = loss_sum + torch.mul(fixed_weights[k], loss_step)
 
                     else:
                         # new_version (observed improvement)
