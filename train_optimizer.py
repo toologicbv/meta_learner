@@ -27,7 +27,6 @@ TRAIN_VERBOSE = False
 PLOT_VALIDATION_FUNCS = False
 NOISE_SIGMA = 1.
 ANNEAL_LR = False
-ACT_TRUNC_BPTT = False
 
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adadelta': torch.optim.Adadelta, # Adadelta
@@ -178,6 +177,7 @@ def main():
         final_act_loss = 0.
         param_loss = 0.
         total_loss_steps = 0.
+        loss_optimizer = 0.
         diff_min = 0.
 
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
@@ -232,7 +232,7 @@ def main():
             # meta_logger.info("Total steps {}".format(optimizer_steps))
             for k in range(optimizer_steps):
 
-                if args.learner == 'meta' or (args.learner == "act" and ACT_TRUNC_BPTT):
+                if args.learner == 'meta':
                     # meta model uses truncated BPTT
                     # Keep states for truncated BPTT
                     if k > args.truncated_bptt_step - 1:
@@ -250,8 +250,8 @@ def main():
                         loss_sum = 0
                     else:
                         forward_steps += 1
-                elif args.learner == 'act' and not ACT_TRUNC_BPTT and k == 0:
-                    # ACT model (if not using truncated BPTT) the LSTM hidden states will be only initialized
+                elif args.learner == 'act' and k == 0:
+                    # ACT model: the LSTM hidden states will be only initialized
                     # for the first optimization step
                     forward_steps = 1
                     # initialize LSTM
@@ -322,25 +322,7 @@ def main():
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
-                    # this is the part where we tried to implement truncated BPTT for the ACTV2 model
-                    # is only used if ACT_TRUNC_BPTT set to TRUE
-                    elif args.learner == 'act' and args.version[0:2] == "V2" and ACT_TRUNC_BPTT:
-                        T = k+1
-                        prior_probs = construct_prior_p_t_T(T, config.ptT_shape_param, args.batch_size,
-                                                            args.cuda)
-                        if args.cuda:
-                            prior_probs = prior_probs.cuda()
-                        # we need to expand the prior probs to the size of the batch
-                        prior_probs = prior_probs.expand(args.batch_size, prior_probs.size(0))
-                        act_loss = meta_optimizer.final_loss(prior_probs, run_type='train')
-                        if k == optimizer_steps - 1:
-                            act_loss.backward()
-                            final_act_loss += act_loss.data
-                        else:
-                            # intermediate back-propagation
-                            act_loss.backward(retain_variables=True)
-                        optimizer.step()
-                        meta_optimizer.zero_grad()
+                        loss_optimizer += loss_sum.data
             # END of iterative function optimization. Compute final losses and probabilities
 
             # compute the final loss error for this function between last loss calculated and function min-value
@@ -348,7 +330,7 @@ def main():
             diff_min += (loss_step - reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(float)
             total_loss_steps += loss_step.data.cpu().squeeze().numpy()[0]
             # back-propagate ACT loss that was accumulated during optimization steps
-            if args.learner == 'act' and not ACT_TRUNC_BPTT:
+            if args.learner == 'act':
                 # processing ACT loss
                 act_loss = meta_optimizer.final_loss(prior_probs, run_type='train')
                 act_loss.backward()
@@ -356,7 +338,7 @@ def main():
                 final_act_loss += act_loss.data
                 # set grads of meta_optimizer to zero after update parameters
                 meta_optimizer.zero_grad()
-
+                loss_optimizer += act_loss.data
             # Does it work? if necessary set TRAIN_VERBOSE to True
             if i % 20 == 0 and i != 0 and TRAIN_VERBOSE:
                 detailed_train_info(meta_logger, reg_funcs, 0, args, meta_optimizer, i, optimizer_steps, error[0])
@@ -377,11 +359,13 @@ def main():
         param_loss *= 1./float(num_of_batches)
         final_act_loss *= 1./float(num_of_batches)
         total_loss_steps *= 1./float(num_of_batches)
+        loss_optimizer *= 1./float(num_of_batches)
         end_epoch = time.time()
 
-        meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: average total loss (over time-steps) {:.4f} /"
-                         " final loss {:.4f} / final-true_min {:.4f}".format(epoch+1,
-                                (end_epoch - start_epoch), total_loss_steps, final_loss[0], diff_min))
+        meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
+                         "average total loss (over time-steps) {:.4f} /"
+                         " final step loss {:.4f} / final-true_min {:.4f}".format(epoch+1, (end_epoch - start_epoch),
+                         loss_optimizer[0], total_loss_steps, final_loss[0], diff_min))
         if args.learner == 'act':
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
@@ -420,7 +404,7 @@ def main():
         if hasattr(meta_optimizer, "epochs_trained"):
             meta_optimizer.epochs_trained += 1
 
-    end_run(exper, meta_optimizer, validation=False, on_server=args.on_server)
+    end_run(exper, meta_optimizer, validation=True, on_server=args.on_server)
 
 if __name__ == "__main__":
     main()

@@ -93,7 +93,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
 
     x_vals = create_x_val_array(exper, val_loss)
 
-    if x_vals[0] <= 5:
+    if len(x_vals) > 2:
         offset = 1
     else:
         offset = 0
