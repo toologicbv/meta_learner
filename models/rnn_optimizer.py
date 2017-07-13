@@ -109,7 +109,7 @@ class MetaLearner(nn.Module):
             for i in range(len(self.lstms)):
                 self.hx.append(Variable(torch.zeros(1, self.hidden_size)))
                 self.cx.append(Variable(torch.zeros(1, self.hidden_size)))
-                if self.cuda:
+                if self.use_cuda:
                     self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
 
     def forward(self, x_t):
@@ -152,16 +152,15 @@ class MetaLearner(nn.Module):
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
 
-        if average_batch:
-            avg = 1/float(optimizee_obj.num_of_funcs)
-        else:
-            avg = 1.
-        loss = avg * neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
+        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
                                              stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
-                                             sum_batch=True, size_average=False)
+                                             avg_batch=False, size_average=False)
         # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
         self.losses.append(Variable(loss.data))
-        return loss
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss
 
     @property
     def sum_grads(self):
@@ -180,6 +179,10 @@ class MetaLearner(nn.Module):
 
     def reset_losses(self):
         self.losses = []
+
+    def final_loss(self, loss_weights, run_type='train'):
+        losses = torch.mean(torch.cat(self.losses, 1), 0).squeeze()
+        return torch.sum(losses * loss_weights)
 
 
 class AdaptiveMetaLearnerV2(MetaLearner):
@@ -255,11 +258,6 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
         N = float(optimizee_obj.n_samples)
-        # average over number of functions?
-        if average_batch:
-            avg = 1/float(optimizee_obj.num_of_funcs)
-        else:
-            avg = 1.
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
@@ -269,7 +267,10 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
         self.losses.append(loss)
-        return avg * torch.sum(loss)
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss
 
     def final_loss(self, prior_probs, run_type='train'):
         """
@@ -402,11 +403,6 @@ class AdaptiveMetaLearnerV1(AdaptiveMetaLearnerV2):
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
         N = float(optimizee_obj.n_samples)
-        # average over number of functions?
-        if average_batch:
-            avg = 1/float(optimizee_obj.num_of_funcs)
-        else:
-            avg = 1.
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
@@ -416,4 +412,7 @@ class AdaptiveMetaLearnerV1(AdaptiveMetaLearnerV2):
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
         self.losses.append(Variable(loss.data))
-        return avg * torch.sum(loss)
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss

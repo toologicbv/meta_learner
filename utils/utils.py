@@ -100,7 +100,7 @@ def get_experiment(path_to_exp, full_path=False):
             experiment = dill.load(f)
     except:
         raise IOError("Can't open file {}".format(path_to_exp))
-
+    # needed to add this for backward compatibility, because added these parameter later
     if not hasattr(experiment.config, 'pT_shape_param'):
         new_config = MetaConfig()
         new_config.__dict__ = experiment.config.__dict__.copy()
@@ -136,7 +136,7 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
             str(int(exper.avg_num_opt_steps)) + "ops"
 
     if exper.args.version == 'V1' or exper.args.version == 'V2' \
-        or (exper.args.version == 'V3' and exper.args.learner == 'meta') \
+        or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
             or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
@@ -245,9 +245,10 @@ class Experiment(object):
 
     def __init__(self, run_args, config=None):
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {}}
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
+                            "opt_loss": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                          "step_losses": OrderedDict(),
+                          "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": []}
@@ -314,8 +315,8 @@ def end_run(experiment, model, validation=True, on_server=False):
     save_exper(experiment)
     if not on_server:
         loss_plot(experiment, loss_type="loss", save=True, validation=validation)
+        loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation)
         if experiment.args.learner == "act":
-            loss_plot(experiment, loss_type="act_loss", save=True, validation=validation)
             # plot histogram of T distribution (number of optimization steps during training)
             # plot_dist_optimization_steps(experiment, data_set="train", save=True)
             # plot_dist_optimization_steps(experiment, data_set="val", save=True)
@@ -346,3 +347,18 @@ def construct_prior_p_t_T(optimizer_steps, continue_prob, batch_size, cuda=False
         prior_probs = prior_probs.cuda()
     # we need to expand the prior probs to the size of the batch
     return prior_probs.expand(batch_size, prior_probs.size(0))
+
+
+def generate_fixed_weights(exper, steps=None, ptT_shape=None):
+    if steps is None:
+        steps = exper.args.optimizer_steps
+
+    if ptT_shape is not None:
+        prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
+                                            batch_size=1, cuda=exper.args.cuda)
+        fixed_weights = prior_probs.squeeze()
+    else:
+        fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
+        fixed_weights[:] = 1. / float(exper.args.optimizer_steps)
+
+    return fixed_weights

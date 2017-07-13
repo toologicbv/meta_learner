@@ -8,7 +8,7 @@ from utils.regression import RegressionFunction, L2LQuadratic
 
 from utils.config import config
 from utils.utils import load_val_data, Experiment, prepare, end_run, get_model, print_flags
-from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T
+from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T, generate_fixed_weights
 from utils.probs import TimeStepsDist
 from val_optimizer import validate_optimizer
 
@@ -19,6 +19,7 @@ from val_optimizer import validate_optimizer
     this had to do with validation of model but tested without validation and result stays the same.
 """
 
+VALIDATE = True
 MAX_VAL_FUNCS = 20000
 # for standard optimizer which we compare to
 STD_OPT_LR = 4e-1
@@ -130,31 +131,39 @@ def main():
     # print the argument flags
     print_flags(exper, meta_logger)
     # load the validation functions
-    if args.problem == "quadratic":
-        val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll",
-                                  exper=exper)
+    if VALIDATE:
+        if args.problem == "quadratic":
+            val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA,
+                                      dim=args.x_dim,
+                                      logger=meta_logger, file_name="10d_quadratic_val_funcs_20000.dll",
+                                      exper=exper)
+        else:
+            # val_funcs = None
+            val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA,
+                                      dim=args.x_dim,
+                                      logger=meta_logger, exper=exper)
     else:
-        # val_funcs = None
-        val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger, exper=exper)
+        val_funcs = None
     # exper.val_funcs = val_funcs
     lr = args.lr
     if not args.learner == 'manual':
         # Important switch, use meta optimizer (LSTM) which will be trained
         meta_optimizer = get_model(exper, args.x_dim, retrain=args.retrain, logger=meta_logger)
-        if exper.args.learner == 'meta' and exper.args.version == "V3":
+        if exper.args.learner == 'meta' and exper.args.version[0:2] == "V3":
             # Version 3 of MetaLearner uses a fixed geometric distribution as loss weights
-            meta_logger.info("Training model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
-                exper.args.optimizer_steps , exper.config.ptT_shape_param))
-            # prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
-            #                                   batch_size=1,
-            #                                    cuda=exper.args.cuda)
-            # fixed_weights = prior_probs.squeeze()
-            fixed_weights = Variable(torch.FloatTensor(exper.args.optimizer_steps), requires_grad=False)
-            fixed_weights[:] = 1./float(exper.args.optimizer_steps)
-            if exper.args.cuda:
-                fixed_weights = fixed_weights.cuda()
+            if exper.args.version == "V3.1":
+                meta_logger.info("Training model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
+                    exper.args.optimizer_steps , exper.config.ptT_shape_param))
+                fixed_weights = generate_fixed_weights(exper, ptT_shape=exper.config.ptT_shape_param)
+
+            else:
+                fixed_weights = generate_fixed_weights(exper)
+                meta_logger.info("Training model with fixed uniform weights that sum to {:.1f}".format(
+                    torch.sum(fixed_weights).data.cpu().squeeze()[0]))
+        else:
+            fixed_weights = Variable(torch.ones(exper.args.optimizer_steps))
+        if exper.args.cuda:
+            fixed_weights = fixed_weights.cuda()
 
         optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
     else:
@@ -179,7 +188,6 @@ def main():
         total_loss_steps = 0.
         loss_optimizer = 0.
         diff_min = 0.
-
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
         # ALSO NOTE:
@@ -283,9 +291,8 @@ def main():
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
 
                     reg_funcs.set_parameters(par_new)
-                    if exper.args.version == "V3":
+                    if exper.args.version[0:2] == "V3":
                         loss_sum = loss_sum + torch.mul(fixed_weights[k], loss_step)
-
                     else:
                         # new_version (observed improvement)
                         # min_f = torch.min(torch.cat(meta_optimizer.losses[0:k+1], 0))
@@ -323,6 +330,7 @@ def main():
                         optimizer.step()
                         meta_optimizer.zero_grad()
                         loss_optimizer += loss_sum.data
+
             # END of iterative function optimization. Compute final losses and probabilities
 
             # compute the final loss error for this function between last loss calculated and function min-value
@@ -360,11 +368,13 @@ def main():
         final_act_loss *= 1./float(num_of_batches)
         total_loss_steps *= 1./float(num_of_batches)
         loss_optimizer *= 1./float(num_of_batches)
+
         end_epoch = time.time()
 
         meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
-                         "average total loss (over time-steps) {:.4f} /"
-                         " final step loss {:.4f} / final-true_min {:.4f}".format(epoch+1, (end_epoch - start_epoch),
+                         "avg total loss (over time-steps) {:.4f} /"
+                         " avg final step loss {:.4f} / final-true_min {:.4f}".format(epoch+1,
+                                                                                      (end_epoch - start_epoch),
                          loss_optimizer[0], total_loss_steps, final_loss[0], diff_min))
         if args.learner == 'act':
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
@@ -377,7 +387,9 @@ def main():
         exper.epoch_stats["loss"].append(total_loss_steps)
         exper.epoch_stats["param_error"].append(param_loss[0])
         if args.learner == 'act':
-            exper.epoch_stats["act_loss"].append(final_act_loss[0])
+            exper.epoch_stats["opt_loss"].append(final_act_loss[0])
+        elif args.learner == 'meta':
+            exper.epoch_stats["opt_loss"].append(loss_optimizer[0])
         # if applicable, VALIDATE model performance
         if exper.epoch % args.eval_freq == 0 or epoch + 1 == args.max_epoch:
 

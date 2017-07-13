@@ -35,7 +35,7 @@ class MetaConfig(object):
         # filename of figure for parameter error (MSE)
         self.param_error_fig_name = "param_error"
         # filename of figure for ACT loss
-        self.act_loss_fig_name = "loss_act"
+        self.opt_loss_fig_name = "loss_optimizer"
         # bar-plot of the distribution of optimization steps T
         self.T_dist_fig_name = "T_dist"
         # bar-plot of q(t|T) distributions

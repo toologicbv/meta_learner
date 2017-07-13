@@ -51,16 +51,16 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
 
         train_loss = exper.epoch_stats['loss']
         val_loss = exper.val_stats['loss']
-        plt.ylabel("loss")
+        plt.ylabel("loss (optimizee)")
         if fig_name is None:
             fig_name = os.path.join(exper.output_dir, config.loss_fig_name + exper_label + dt + config.dflt_plot_ext)
-    elif loss_type == "act_loss":
+    elif loss_type == "opt_loss":
         num_opt_steps = exper.avg_num_opt_steps
-        train_loss = exper.epoch_stats['act_loss']
-        val_loss = exper.val_stats['act_loss']
-        plt.ylabel("act-loss")
+        train_loss = exper.epoch_stats['opt_loss']
+        val_loss = exper.val_stats['opt_loss']
+        plt.ylabel("optimizer-loss")
         if fig_name is None:
-            fig_name = os.path.join(exper.output_dir, config.act_loss_fig_name + exper_label + dt +
+            fig_name = os.path.join(exper.output_dir, config.opt_loss_fig_name + exper_label + dt +
                                     config.dflt_plot_ext)
     elif loss_type == "param_error":
         num_opt_steps = exper.avg_num_opt_steps
@@ -468,8 +468,8 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
 
         if loss_type == "loss":
             loss = "loss"
-        elif loss_type == 'act_loss':
-            loss = 'act_loss'
+        elif loss_type == 'opt_loss':
+            loss = 'opt_loss'
         elif loss_type == 'param_error':
             loss = "param_error"
         else:
