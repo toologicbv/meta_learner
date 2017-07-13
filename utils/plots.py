@@ -83,6 +83,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     plt.xlabel("epochs")
     x_vals = range(1, exper.epoch+1, 1)
+
     if log_scale:
         plt.semilogy(x_vals[2:], train_loss[2:], 'r', label="train-loss")
     else:

@@ -226,8 +226,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     exper.val_stats["step_losses"][exper.epoch] = np.around(exper.val_stats["step_losses"][exper.epoch],
                                                                   decimals=3)
     exper.val_stats["loss"].append(total_loss)
-    # TODO: need to compute actual opimizer loss, this is optimizee loss
-    exper.val_stats["opt_loss"].append(total_loss)
     end_validate = time.time()
     exper.val_stats["param_error"].append(param_loss)
     exper.val_stats["opt_loss"].append(total_opt_loss)
