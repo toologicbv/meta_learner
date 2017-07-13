@@ -155,7 +155,6 @@ def main():
             fixed_weights = Variable(torch.FloatTensor(exper.args.optimizer_steps), requires_grad=False)
             fixed_weights[:] = 1./float(exper.args.optimizer_steps)
             if exper.args.cuda:
-                print("Sum weights ", torch.sum(fixed_weights).data.cpu().numpy()[0])
                 fixed_weights = fixed_weights.cuda()
 
         optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
@@ -319,6 +318,7 @@ def main():
                 if forward_steps == args.truncated_bptt_step or k == optimizer_steps - 1:
                     # meta_logger.info("BPTT at {}".format(k + 1))
                     if args.learner == 'meta' or (args.learner == 'act' and args.version[0:2] == "V1"):
+                        # meta_logger.info("{} Sum error {:.3f}".format(k, loss_sum.data.cpu().squeeze().numpy()[0]))
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
