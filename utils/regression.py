@@ -14,7 +14,7 @@ from itertools import cycle
 from cycler import cycler
 
 
-def neg_log_likelihood_loss(true_y, est_y, stddev, N, sum_batch=False, size_average=False):
+def neg_log_likelihood_loss(true_y, est_y, stddev, N, avg_batch=False, size_average=False):
     """
     Negative log-likelihood calculation
     if sum_batch=False the function returns a tensor [batch_size, 1]
@@ -33,7 +33,7 @@ def neg_log_likelihood_loss(true_y, est_y, stddev, N, sum_batch=False, size_aver
     ll = avg * 0.5 * 1 / stddev**2 * \
          torch.sum((true_y - est_y) ** 2, 1) + \
            N / 2 * (np.log(stddev**2) + np.log(2 * np.pi))
-    if sum_batch:
+    if avg_batch:
         # we also sum over the mini-batch, dimension 0
         ll = torch.sum(ll)
 
@@ -152,6 +152,10 @@ class L2LQuadratic(object):
 
         self.param_hist = {}
         self._add_param_values(self.initial_params)
+        true_minimum_nll = np.array([0.5 * self.n_samples * (np.log(stddev) + np.log(2 * np.pi))])
+        self.true_minimum_nll = Variable(torch.from_numpy(true_minimum_nll).float())
+        if self.use_cuda:
+            self.true_minimum_nll = self.true_minimum_nll.cuda()
 
     def _add_param_values(self, parameters):
         self.param_hist[len(self.param_hist)] = parameters
@@ -254,6 +258,9 @@ class RegressionFunction(object):
             self.true_minimum_nll = self.true_minimum_nll.cuda()
 
         self.y = self.y_no_noise + self.noise.expand_as(self.y_no_noise)
+        # new_version
+        # y = torch.FloatTensor(self.num_of_funcs, self.n_samples)
+        # self.y = Variable(init.uniform(y), requires_grad=False)
         if self.use_cuda:
             self.y = self.y.cuda()
 
@@ -314,7 +321,7 @@ class RegressionFunction(object):
         return loss
 
     def compute_neg_ll(self, average_over_funcs=False, size_average=False):
-        ll = neg_log_likelihood_loss(self.y, self.y_t(), self.stddev, N=self.n_samples, sum_batch=False,
+        ll = neg_log_likelihood_loss(self.y, self.y_t(), self.stddev, N=self.n_samples, avg_batch=False,
                                      size_average=size_average)
         if average_over_funcs:
             ll = torch.mean(ll, 0).squeeze()

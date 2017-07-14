@@ -86,8 +86,8 @@ class MetaLearner(nn.Module):
 
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.losses = []
+        self.epochs_trained = 0
         if self.use_cuda:
-            print("Using cuda for MetaLearner")
             self.cuda()
 
     def cuda(self):
@@ -99,47 +99,39 @@ class MetaLearner(nn.Module):
     def reset_lstm(self, keep_states=False):
 
         if keep_states:
-            for theta in np.arange(self.num_params):
-                for i in range(len(self.lstms)):
-                    self.hx[theta][i] = Variable(self.hx[theta][i].data)
-                    self.cx[theta][i] = Variable(self.cx[theta][i].data)
+            for i in range(len(self.lstms)):
+                self.hx[i] = Variable(self.hx[i].data)
+                self.cx[i] = Variable(self.cx[i].data)
         else:
-            self.hx = {}
-            self.cx = {}
+            self.hx = []
+            self.cx = []
             # first loop over the number of parameters we have, because we're updating coordinate wise
-            for theta in np.arange(self.num_params):
-                self.hx[theta] = [Variable(torch.zeros(1, self.hidden_size)) for i in range(len(self.lstms))]
-                self.cx[theta] = [Variable(torch.zeros(1, self.hidden_size)) for i in range(len(self.lstms))]
-
+            for i in range(len(self.lstms)):
+                self.hx.append(Variable(torch.zeros(1, self.hidden_size)))
+                self.cx.append(Variable(torch.zeros(1, self.hidden_size)))
                 if self.use_cuda:
-                    for i in range(len(self.lstms)):
-                        self.hx[theta][i], self.cx[theta][i] = self.hx[theta][i].cuda(), self.cx[theta][i].cuda()
+                    self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
 
-    def forward(self, x):
+    def forward(self, x_t):
         """
             x: contains the gradients of the loss function w.r.t. the regression function parameters
                Tensor shape: dim0=number of functions X dim1=number of parameters
             Coordinate wise processing:
         """
-        if self.use_cuda and not x.is_cuda:
-            x = x.cuda()
+        x_t = x_t.unsqueeze(1)
+        if self.use_cuda and not x_t.is_cuda:
+            x_t = x_t.cuda()
 
-        theta_out = []
-        for t in np.arange(self.num_params):
-            x_t = x[:, t].unsqueeze(1)
-            x_t = self.linear1(x_t)
-            for i in range(len(self.lstms)):
-                if x_t.size(0) != self.hx[t][i].size(0):
-                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
-                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
+        x_t = self.linear1(x_t)
+        for i in range(len(self.lstms)):
+            if x_t.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
 
-                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
-                x_t = self.hx[t][i]
-            theta_t = self.linear_out(x_t)
-            theta_out.append(theta_t)
-
-        res = torch.cat(theta_out, 1)
-        return res
+            self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
+            x_t = self.hx[i]
+        x_t = self.linear_out(x_t)
+        return x_t.squeeze()
 
     def meta_update(self, optimizee_with_grads):
 
@@ -147,31 +139,32 @@ class MetaLearner(nn.Module):
 
         :rtype: object
         """
-        grads = Variable(optimizee_with_grads.params.grad.data)
+        param_size = optimizee_with_grads.params.grad.data.size()
+        flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+
         if self.use_cuda:
-             grads = grads.cuda()
+            flat_grads = flat_grads.cuda()
 
-        delta_params = self(grads)
-
+        delta_params = self(flat_grads)
+        # reshape parameters
+        delta_params = delta_params.view(param_size)
         return delta_params
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
 
-        if average_batch:
-            avg = 1/float(optimizee_obj.num_of_funcs)
-        else:
-            avg = 1.
-        loss = avg * neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
+        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
                                              stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
-                                             sum_batch=True, size_average=False)
+                                             avg_batch=False, size_average=False)
         # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
         self.losses.append(Variable(loss.data))
-        return loss
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss
 
     @property
     def sum_grads(self):
         sum_grads = 0
-        print("In sum grads")
         for i, cells in enumerate(self.lstms):
             for j, module in enumerate(cells.children()):
                 for param_name, params in module._parameters.iteritems():
@@ -187,172 +180,9 @@ class MetaLearner(nn.Module):
     def reset_losses(self):
         self.losses = []
 
-
-class AdaptiveMetaLearnerV1(MetaLearner):
-    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2,
-                 use_cuda=False, output_bias=True):
-        super(AdaptiveMetaLearnerV1, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers, use_cuda,
-                                                    output_bias=output_bias, fg_bias=1.)
-
-        self.num_hidden_act = num_hidden
-        # holds losses from each optimizer step
-        self.losses = []
-        self.q_t = []
-        # number of parameters of the function to optimize (the optimizee)
-        self.num_params = num_params_optimizee
-        # currently we're only feeding the second LSTM with one parameter, the sum of the incoming gradients
-        # of the optimizee
-        self.act_num_params = self.num_params
-        self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
-            self.kl_entropy = init_stat_vars()
-        self.eps = 1e-90
-        # temporary terms --- end
-        self.q_soft = None
-        # this is the LSTM for the ACT distribution
-        self.act_linear1 = nn.Linear(num_inputs, self.num_hidden_act)
-        # self.act_ln1 = LayerNorm1D(self.num_hidden_act)
-        self.act_lstms = nn.ModuleList()
-        for i in range(num_layers):
-            self.act_lstms.append(LayerLSTMCell(self.num_hidden_act, self.num_hidden_act, forget_gate_bias=1.))
-
-        self.lambda_q = nn.Parameter(torch.zeros(1, 1))
-        torch.nn.init.uniform(self.lambda_q, -0.1, 0.1)
-        self.act_linear_out = nn.Linear(self.num_hidden_act, 1, bias=output_bias)
-
-    def zero_grad(self):
-        super(AdaptiveMetaLearnerV1, self).zero_grad()
-
-    def reset_lstm(self, keep_states=False):
-        super(AdaptiveMetaLearnerV1, self).reset_lstm(keep_states)
-
-        if keep_states:
-            for theta in np.arange(self.act_num_params):
-                for i in range(len(self.act_lstms)):
-                    self.act_hx[theta][i] = Variable(self.act_hx[theta][i].data)
-                    self.act_cx[theta][i] = Variable(self.act_cx[theta][i].data)
-        else:
-            self.act_hx = {}
-            self.act_cx = {}
-            # first loop over the number of parameters we have, because we're updating coordinate wise
-            for theta in np.arange(self.act_num_params):
-                self.act_hx[theta] = [Variable(torch.zeros(1, self.num_hidden_act)) for i in range(len(self.act_lstms))]
-                self.act_cx[theta] = [Variable(torch.zeros(1, self.num_hidden_act)) for i in range(len(self.act_lstms))]
-
-                if self.use_cuda:
-                    for i in range(len(self.act_lstms)):
-                        self.act_hx[theta][i], self.act_cx[theta][i] = self.act_hx[theta][i].cuda(), \
-                                                                       self.act_cx[theta][i].cuda()
-
-    def forward(self, x):
-        if self.use_cuda:
-            x = x.cuda()
-
-        x_out = []
-        qt_out = []
-        for t in np.arange(self.num_params):
-            x_t = x[:, t].unsqueeze(1)
-            q_t = x[:, t].unsqueeze(1)
-            x_t = self.linear1(x_t)
-            # act input
-            q_t = self.act_linear1(q_t)
-            # assuming that both LSTM (for L2L and ACT) have same number of layers.
-            for i in range(len(self.lstms)):
-                if x_t.size(0) != self.hx[t][i].size(0):
-                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
-                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
-                # act lstm part
-                if q_t.size(0) != self.act_hx[t][i].size(0):
-                    self.act_hx[t][i] = self.act_hx[t][i].expand(q_t.size(0), self.act_hx[t][i].size(1))
-                    self.act_cx[t][i] = self.act_cx[t][i].expand(q_t.size(0), self.act_cx[t][i].size(1))
-
-                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
-                # act lstm part
-                self.act_hx[t][i], self.act_cx[t][i] = self.act_lstms[i](q_t, (self.act_hx[t][i], self.act_cx[t][i]))
-
-                x_t = self.hx[t][i]
-                q_t = self.act_hx[t][i]
-
-            x_t = self.linear_out(x_t)
-            # q_t = F.tanh(self.act_linear_out(q_t))
-            # q_t = self.lambda_q.expand_as(q_t) * q_t
-            q_t = self.act_linear_out(q_t)
-            x_out.append(x_t)
-            qt_out.append(q_t)
-
-        x_out = torch.cat(x_out, 1)
-        qt_out = torch.mean(torch.cat(qt_out, 1), 1)
-
-        return tuple((x_out, qt_out))
-
-    def meta_update(self, optimizee_with_grads):
-
-        grads = Variable(optimizee_with_grads.params.grad.data)
-        delta_theta, delta_qt = self(grads)
-
-        return delta_theta, delta_qt
-
-    def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
-        N = float(optimizee_obj.n_samples)
-        # average over number of functions?
-        if average_batch:
-            avg = 1/float(optimizee_obj.num_of_funcs)
-        else:
-            avg = 1.
-        # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
-        # we also summed over dim0 - the number of functions. But for ACT we need the losses per function in the
-        # final_loss calculation (multiplied with the qt values, which we collect also for each function
-        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.get_y_values(new_parameters),
-                                       variance=optimizee_obj.noise_sigma, N=optimizee_obj.n_samples,
-                                       size_average=False)
-        # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
-        self.losses.append(Variable(loss.data))
-
-        return avg * torch.sum(loss)
-
-    def final_loss(self, prior_probs, run_type='train'):
-        """
-            Calculates the loss of the ACT model.
-            converts lists self.losses & self.q_t which contain the q(t|T) and loss_t values for each function
-                over the T time-steps.
-            The final dimensions of losses & q_t is [batch_size, opt_steps]
-            KL-divergence is computed for each batch function. For the final loss value the D_KLs are averaged
-
-        :param prior_probs: the prior probabilities of the stopping-distribution p(t|T).
-                            has dimensions: [batch_size, opt_steps]
-        :param run_type: train/valid, indicates in which dictionary we need to save the result for later analysis
-        :return: scalar loss
-        """
-        assert len(self.losses) == len(self.q_t), "Length of two objects is not the same!"
-        self.q_soft = None
-        # number of steps is in dimension 1 of prior probabilities
-        num_of_steps = prior_probs.size(1)
-        # concatenate everything along dimension 1, the number of time-steps
-        losses = torch.cat(self.losses, 1)
-        self.q_t = torch.cat(self.q_t, 1)
-        self.q_soft = F.softmax(self.q_t.double())
-        kl_loss = kl_divergence(q_probs=self.q_soft, prior_probs=prior_probs.double())
-        # sum over horizon T (time-steps) and average over functions (dim0)
-        # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1), 0) + torch.mean(kl_loss, 0)).squeeze()
-        loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
-        qts = torch.mean(self.q_soft, 0).data.squeeze().numpy()
-        if run_type == 'train':
-            self.qt_hist[num_of_steps] += qts
-            self.opt_step_hist[num_of_steps - 1] += 1
-        elif run_type == 'val':
-            self.ll_loss += torch.mean(losses.double(), 0).data.squeeze().numpy()
-            self.kl_div += torch.mean(torch.log(prior_probs.double() + self.eps), 0).data.squeeze().numpy()
-            self.kl_entropy += torch.mean(torch.log(self.q_soft + self.eps), 0).data.squeeze().numpy()
-
-        return loss
-
-    def reset_final_loss(self):
-        self.losses = []
-        self.q_t = []
-        self.q_soft = None
-
-    def init_qt_statistics(self, conf=None):
-        self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
-            self.kl_entropy = init_stat_vars()
+    def final_loss(self, loss_weights, run_type='train'):
+        losses = torch.mean(torch.cat(self.losses, 1), 0).squeeze()
+        return torch.sum(losses * loss_weights)
 
 
 class AdaptiveMetaLearnerV2(MetaLearner):
@@ -388,33 +218,25 @@ class AdaptiveMetaLearnerV2(MetaLearner):
     def reset_lstm(self, keep_states=False):
         super(AdaptiveMetaLearnerV2, self).reset_lstm(keep_states)
 
-    def forward(self, x):
-        if self.use_cuda and not x.is_cuda:
-            x = x.cuda()
+    def forward(self, x_t):
 
-        # x = self.input_batch_norm(x)
-        theta_out = []
-        qt_out = []
-        for t in np.arange(self.num_params):
-            x_t = x[:, t].unsqueeze(1)
-            x_t = self.linear1(x_t)
-            for i in range(len(self.lstms)):
-                if x_t.size(0) != self.hx[t][i].size(0):
-                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
-                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
+        if self.use_cuda and not x_t.is_cuda:
+            x_t = x_t.cuda()
 
-                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
-                x_t = self.hx[t][i]
+        x_t = x_t.unsqueeze(1)
+        x_t = self.linear1(x_t)
+        for i in range(len(self.lstms)):
+            if x_t.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
 
-            q_t = self.act_linear_out(x_t)
-            qt_out.append(q_t)
-            theta_t = self.linear_out(x_t)
-            theta_out.append(theta_t)
+            self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
+            x_t = self.hx[i]
 
-        theta_out = torch.cat(theta_out, 1)
-        qt_out = torch.mean(torch.cat(qt_out, 1), 1)
+        qt_out = self.act_linear_out(x_t)
+        theta_out = self.linear_out(x_t)
 
-        return tuple((theta_out, qt_out))
+        return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
     def meta_update(self, optimizee_with_grads):
         """
@@ -422,20 +244,20 @@ class AdaptiveMetaLearnerV2(MetaLearner):
             :param optimizee_with_grads:
             :return: delta theta, delta qt
         """
-        grads = Variable(optimizee_with_grads.params.grad.data)
-        if self.use_cuda:
-             grads = grads.cuda()
-        delta_theta, delta_qt = self(grads)
 
+        grads = Variable(optimizee_with_grads.params.grad.data)
+        flat_grads = grads.view(-1)
+        if self.use_cuda:
+            flat_grads = flat_grads.cuda()
+        delta_theta, delta_qt = self(flat_grads)
+        # reshape parameters
+        delta_theta = delta_theta.view(grads.size())
+        # reshape qt-values and calculate mean
+        delta_qt = torch.mean(delta_qt.view(grads.size()), 1)
         return delta_theta, delta_qt
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
         N = float(optimizee_obj.n_samples)
-        # average over number of functions?
-        if average_batch:
-            avg = 1/float(optimizee_obj.num_of_funcs)
-        else:
-            avg = 1.
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
@@ -445,7 +267,10 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
         self.losses.append(loss)
-        return avg * torch.sum(loss)
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss
 
     def final_loss(self, prior_probs, run_type='train'):
         """
@@ -496,4 +321,98 @@ class AdaptiveMetaLearnerV2(MetaLearner):
             self.kl_entropy = init_stat_vars(conf)
 
 
+class AdaptiveMetaLearnerV1(AdaptiveMetaLearnerV2):
+    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2,
+                 use_cuda=False, output_bias=True):
+        super(AdaptiveMetaLearnerV1, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers, use_cuda,
+                                                    output_bias=output_bias)
 
+        self.num_hidden_act = num_hidden
+        # holds losses from each optimizer step
+        self.act_num_params = self.num_params
+        # this is the LSTM for the ACT distribution
+        self.act_linear1 = nn.Linear(num_inputs, self.num_hidden_act)
+        # self.act_ln1 = LayerNorm1D(self.num_hidden_act)
+        self.act_lstms = nn.ModuleList()
+        for i in range(num_layers):
+            self.act_lstms.append(LayerLSTMCell(self.num_hidden_act, self.num_hidden_act, forget_gate_bias=1.))
+
+        self.act_linear_out = nn.Linear(self.num_hidden_act, 1, bias=output_bias)
+
+    def reset_lstm(self, keep_states=False):
+        super(AdaptiveMetaLearnerV1, self).reset_lstm(keep_states)
+
+        if keep_states:
+            for theta in np.arange(self.act_num_params):
+                for i in range(len(self.act_lstms)):
+                    self.act_hx[theta][i] = Variable(self.act_hx[theta][i].data)
+                    self.act_cx[theta][i] = Variable(self.act_cx[theta][i].data)
+        else:
+            self.act_hx = {}
+            self.act_cx = {}
+            # first loop over the number of parameters we have, because we're updating coordinate wise
+            for theta in np.arange(self.act_num_params):
+                self.act_hx[theta] = [Variable(torch.zeros(1, self.num_hidden_act)) for i in range(len(self.act_lstms))]
+                self.act_cx[theta] = [Variable(torch.zeros(1, self.num_hidden_act)) for i in range(len(self.act_lstms))]
+
+                if self.use_cuda:
+                    for i in range(len(self.act_lstms)):
+                        self.act_hx[theta][i], self.act_cx[theta][i] = self.act_hx[theta][i].cuda(), \
+                                                                       self.act_cx[theta][i].cuda()
+
+    def forward(self, x):
+        if self.use_cuda and not x.is_cuda:
+            x = x.cuda()
+
+        x_out = []
+        qt_out = []
+        for t in np.arange(self.num_params):
+            x_t = x[:, t].unsqueeze(1)
+            q_t = x[:, t].unsqueeze(1)
+            x_t = self.linear1(x_t)
+            # act input
+            q_t = self.act_linear1(q_t)
+            # assuming that both LSTM (for L2L and ACT) have same number of layers.
+            for i in range(len(self.lstms)):
+                if x_t.size(0) != self.hx[t][i].size(0):
+                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
+                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
+                # act lstm part
+                if q_t.size(0) != self.act_hx[t][i].size(0):
+                    self.act_hx[t][i] = self.act_hx[t][i].expand(q_t.size(0), self.act_hx[t][i].size(1))
+                    self.act_cx[t][i] = self.act_cx[t][i].expand(q_t.size(0), self.act_cx[t][i].size(1))
+
+                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
+                # act lstm part
+                self.act_hx[t][i], self.act_cx[t][i] = self.act_lstms[i](q_t, (self.act_hx[t][i], self.act_cx[t][i]))
+
+                x_t = self.hx[t][i]
+                q_t = self.act_hx[t][i]
+
+            x_t = self.linear_out(x_t)
+            # q_t = F.tanh(self.act_linear_out(q_t))
+            # q_t = self.lambda_q.expand_as(q_t) * q_t
+            q_t = self.act_linear_out(q_t)
+            x_out.append(x_t)
+            qt_out.append(q_t)
+
+        x_out = torch.cat(x_out, 1)
+        qt_out = torch.mean(torch.cat(qt_out, 1), 1)
+
+        return tuple((x_out, qt_out))
+
+    def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
+        N = float(optimizee_obj.n_samples)
+        # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
+        # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
+        # final_loss calculation (multiplied with the qt values, which we collect also for each function
+        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(params=new_parameters),
+                                       stddev=optimizee_obj.stddev, N=N, size_average=False)
+
+        # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
+        # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
+        self.losses.append(Variable(loss.data))
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss

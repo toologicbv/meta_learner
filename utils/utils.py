@@ -3,7 +3,7 @@ import torch
 import os
 import dill
 import shutil
-from config import config
+from config import config, MetaConfig
 from datetime import datetime
 from pytz import timezone
 
@@ -14,9 +14,9 @@ from collections import OrderedDict
 
 from torch.autograd import Variable
 import models.rnn_optimizer
-from models.rnn_optimizer import MetaLearner
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 from probs import ConditionalTimeStepDist
+from regression import RegressionFunction, L2LQuadratic
 
 
 def create_logger(exper, file_handler=False):
@@ -51,8 +51,12 @@ def print_flags(exper, logger):
     for key, value in vars(exper.args).items():
         logger.info(key + ' : ' + str(value))
 
-    logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.continue_prob))
-    logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
+    if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V3'):
+        logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
+    if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
+        logger.info("shape parameter of prior p(T) nu={:.3}".format(exper.config.pT_shape_param))
+        logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
+
 
 def softmax(x, dim=1):
     """Compute softmax values for each sets of scores in x. Expecting numpy arrays"""
@@ -84,6 +88,24 @@ def preprocess_gradients(x):
     return torch.cat((x1, x2), 1)
 
 
+def prepare_retrain(exper_path, new_args):
+
+    exper = get_experiment(exper_path)
+    exper.past_epochs = exper.args.max_epoch
+    exper.args.max_epoch += new_args.max_epoch
+    exper.args.lr = new_args.lr
+    exper.args.eval_freq = new_args.eval_freq
+    exper.args.retrain = new_args.retrain
+    exper.args.log_dir = new_args.log_dir
+    exper.avg_num_opt_steps = new_args.avg_num_opt_steps
+
+    exper = prepare(exper=exper)
+    # get our logger (one to std-out and one to file)
+    meta_logger = create_logger(exper, file_handler=True)
+
+    return exper, meta_logger
+
+
 def get_experiment(path_to_exp, full_path=False):
 
     if not full_path:
@@ -96,6 +118,16 @@ def get_experiment(path_to_exp, full_path=False):
             experiment = dill.load(f)
     except:
         raise IOError("Can't open file {}".format(path_to_exp))
+    # needed to add this for backward compatibility, because added these parameter later
+    if not hasattr(experiment.config, 'pT_shape_param'):
+        new_config = MetaConfig()
+        new_config.__dict__ = experiment.config.__dict__.copy()
+        new_config.pT_shape_param = new_config.continue_prob
+        new_config.ptT_shape_param = new_config.continue_prob
+        experiment.config = new_config
+    # if not hasattr(experiment.args.config, 'ptT_shape_param'):
+
+
     return experiment
 
 
@@ -121,7 +153,9 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
         exper.args.model = exper.args.learner + exper.args.version + "_" + exper.args.problem + "_" + \
             str(int(exper.avg_num_opt_steps)) + "ops"
 
-    if exper.args.version == 'V1' or exper.args.version == 'V2' or exper.args.version == '':
+    if exper.args.version == 'V1' or exper.args.version == 'V2' \
+        or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
+            or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
                 output_bias = True
@@ -145,11 +179,14 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
                                    use_cuda=exper.args.cuda,
                                    output_bias=output_bias)
     else:
-        meta_optimizer = MetaLearner(num_params_optimizee,
+        act_class = getattr(models.rnn_optimizer, "MetaLearner")
+
+        meta_optimizer = act_class(num_params_optimizee,
                                      num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
                                      use_cuda=exper.args.cuda,
                                      output_bias=output_bias)
+
     if retrain:
         loaded = False
         if exper.model_path is not None:
@@ -177,13 +214,15 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     meta_optimizer.name = exper.args.model
 
     if exper.args.cuda:
+        logger.info("Note: MetaLearner is running on GPU")
         meta_optimizer.cuda()
     print(meta_optimizer.state_dict().keys())
 
     return meta_optimizer
 
 
-def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None, file_name=None):
+def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None, file_name=None,
+                  exper=None):
 
     if file_name is None:
         file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
@@ -194,9 +233,26 @@ def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., di
     else:
         load_file = os.path.join(config.data_path, file_name)
     try:
-        with open(load_file, 'rb') as f:
-            val_funcs = dill.load(f)
-        logger.info("INFO - validation set loaded from {}".format(load_file))
+        if os.path.exists(load_file):
+
+            with open(load_file, 'rb') as f:
+                val_funcs = dill.load(f)
+            logger.info("INFO - validation set loaded from {}".format(load_file))
+        else:
+            if exper.args.problem == "regression":
+                val_funcs = RegressionFunction(n_funcs=size, n_samples=exper.args.x_samples, stddev=1.,
+                                               x_dim=exper.args.x_dim, use_cuda=exper.args.cuda,
+                                               calc_true_params=False)
+            elif exper.args.problem == "quadratic":
+                val_funcs = L2LQuadratic(batch_size=size, num_dims=exper.args.x_dim,
+                                                     stddev=0.01, use_cuda=exper.args.cuda)
+            else:
+                raise ValueError("Problem type {} is not supported".format(exper.args.problem))
+            logger.info("Creating validation set of size {} for problem {}".format(size, exper.args.problem))
+            with open(load_file, 'wb') as f:
+                dill.dump(val_funcs, f)
+            logger.info("Successfully saved validation file {}".format(load_file))
+
     except:
         raise IOError("Can't open file {}".format(load_file))
 
@@ -207,9 +263,10 @@ class Experiment(object):
 
     def __init__(self, run_args, config=None):
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {}}
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
+                            "opt_loss": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                          "step_losses": OrderedDict(),
+                          "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": []}
@@ -221,12 +278,13 @@ class Experiment(object):
         self.val_avg_num_opt_steps = 0
         self.config = config
         self.val_funcs = None
+        self.past_epochs = 0
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(),
                           "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
-                          "qt_funcs": OrderedDict(), "loss_funcs": []}
+                          "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
 
 
 def save_exper(exper, file_name=None):
@@ -240,30 +298,32 @@ def save_exper(exper, file_name=None):
     print("INFO - Successfully saved experimental details to {}".format(outfile))
 
 
-def prepare(prcs_args, exper):
+def prepare(exper):
 
-    if prcs_args.log_dir == 'default':
-        prcs_args.log_dir = config.exper_prefix + \
+    if exper.args.log_dir == 'default':
+        exper.args.log_dir = exper.config.exper_prefix + \
                             str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
                                 '%Y-%m-%d %H:%M:%S.%f')[:-7],
                                 ' ', '_') + "_" + create_exper_label(exper) + \
                             "_lr" + "{:.0e}".format(exper.args.lr) + "_" + exper.args.optimizer
-        prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
+        exper.args.log_dir = str.replace(str.replace(exper.args.log_dir, ':', '_'), '-', '')
 
     else:
         # custom log dir
-        prcs_args.log_dir = str.replace(prcs_args.log_dir, ' ', '_')
-        prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
-    log_dir = os.path.join(config.log_root_path, prcs_args.log_dir)
+        exper.args.log_dir = str.replace(exper.args.log_dir, ' ', '_')
+        exper.args.log_dir = str.replace(str.replace(exper.args.log_dir, ':', '_'), '-', '')
+    log_dir = os.path.join(exper.config.log_root_path, exper.args.log_dir)
     if not os.path.isdir(log_dir):
         os.makedirs(log_dir)
-        fig_path = os.path.join(log_dir, config.figure_path)
+        fig_path = os.path.join(log_dir, exper.config.figure_path)
         os.makedirs(fig_path)
     else:
         # make a back-up copy of the contents
         dst = os.path.join(log_dir, "backup")
         shutil.copytree(log_dir, dst)
-    return log_dir
+
+    exper.output_dir = log_dir
+    return exper
 
 
 def end_run(experiment, model, validation=True, on_server=False):
@@ -276,8 +336,8 @@ def end_run(experiment, model, validation=True, on_server=False):
     save_exper(experiment)
     if not on_server:
         loss_plot(experiment, loss_type="loss", save=True, validation=validation)
+        loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation)
         if experiment.args.learner == "act":
-            loss_plot(experiment, loss_type="act_loss", save=True, validation=validation)
             # plot histogram of T distribution (number of optimization steps during training)
             # plot_dist_optimization_steps(experiment, data_set="train", save=True)
             # plot_dist_optimization_steps(experiment, data_set="val", save=True)
@@ -308,3 +368,31 @@ def construct_prior_p_t_T(optimizer_steps, continue_prob, batch_size, cuda=False
         prior_probs = prior_probs.cuda()
     # we need to expand the prior probs to the size of the batch
     return prior_probs.expand(batch_size, prior_probs.size(0))
+
+
+def generate_fixed_weights(exper, logger, steps=None):
+
+    if steps is None:
+        steps = exper.args.optimizer_steps
+
+    if exper.args.learner == 'meta' and exper.args.version[0:2] == "V3":
+        # Version 3.1 of MetaLearner uses a fixed geometric distribution as loss weights
+        if exper.args.version == "V3.1":
+            logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
+                exper.args.optimizer_steps, exper.config.ptT_shape_param))
+            prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
+                                                batch_size=1, cuda=exper.args.cuda)
+            fixed_weights = prior_probs.squeeze()
+
+        elif exper.args.version == "V3.2":
+            fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
+            fixed_weights[:] = 1. / float(steps)
+            logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
+                torch.sum(fixed_weights).data.cpu().squeeze()[0]))
+    else:
+        fixed_weights = Variable(torch.ones(exper.args.optimizer_steps))
+
+    if exper.args.cuda and not fixed_weights.is_cuda:
+        fixed_weights = fixed_weights.cuda()
+
+    return fixed_weights

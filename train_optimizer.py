@@ -8,7 +8,7 @@ from utils.regression import RegressionFunction, L2LQuadratic
 
 from utils.config import config
 from utils.utils import load_val_data, Experiment, prepare, end_run, get_model, print_flags
-from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T
+from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T, generate_fixed_weights
 from utils.probs import TimeStepsDist
 from val_optimizer import validate_optimizer
 
@@ -19,6 +19,7 @@ from val_optimizer import validate_optimizer
     this had to do with validation of model but tested without validation and result stays the same.
 """
 
+VALIDATE = True
 MAX_VAL_FUNCS = 20000
 # for standard optimizer which we compare to
 STD_OPT_LR = 4e-1
@@ -27,7 +28,6 @@ TRAIN_VERBOSE = False
 PLOT_VALIDATION_FUNCS = False
 NOISE_SIGMA = 1.
 ANNEAL_LR = False
-ACT_TRUNC_BPTT = False
 
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adadelta': torch.optim.Adadelta, # Adadelta
@@ -46,10 +46,10 @@ parser.add_argument('--x_dim', type=int, default=10, metavar='N',
                     help='dimensionality of the regression variable x (default: 10)')
 parser.add_argument('--lr', type=float, default=1e-5, metavar='N',
                     help='default learning rate for optimizer (default: 1e-5)')
-parser.add_argument('--batch_size', type=int, default=20, metavar='N',
-                    help='number of functions per batch (default: 20)')
-parser.add_argument('--optimizer_steps', type=int, default=10, metavar='N',
-                    help='number of meta optimizer steps (default: 10)')
+parser.add_argument('--batch_size', type=int, default=125, metavar='N',
+                    help='number of functions per batch (default: 125)')
+parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
+                    help='number of meta optimizer steps (default: 100)')
 parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
                     help='step at which it truncates bptt (default: 20)')
 parser.add_argument('--functions_per_epoch', type=int, default=10000, metavar='N',
@@ -111,9 +111,9 @@ def main():
     exper = Experiment(args, config)
     # get distribution P(T) over possible number of total timesteps
     if args.learner == "act":
-        if args.version[0:2] not in ['V1', 'V2']:
+        if exper.args.version[0:2] not in ['V1', 'V2']:
             raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(args.version))
-        pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.continue_prob)
+        pt_dist = TimeStepsDist(T=config.T, q_prob=config.pT_shape_param)
         if args.fixed_horizon:
             exper.avg_num_opt_steps = args.optimizer_steps
         else:
@@ -122,49 +122,58 @@ def main():
         exper.avg_num_opt_steps = args.optimizer_steps
         if args.learner == 'meta' and args.version[0:2] == 'V2':
             # Note, we choose here an absolute limit of the horizon, set in the config-file
-            pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.continue_prob)
+            pt_dist = TimeStepsDist(T=config.T, q_prob=config.pT_shape_param)
             exper.avg_num_opt_steps = pt_dist.mean
+
     # prepare the experiment
-    exper.output_dir = prepare(prcs_args=args, exper=exper)
+    exper = prepare(exper=exper)
     # get our logger (one to std-out and one to file)
     meta_logger = create_logger(exper, file_handler=True)
     # print the argument flags
     print_flags(exper, meta_logger)
+
     # load the validation functions
-    if args.problem == "quadratic":
-        val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger, file_name="10d_quadratic_val_funcs_15000.dll")
+    if VALIDATE:
+        if exper.args.problem == "quadratic":
+            val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= exper.args.x_samples, noise_sigma=NOISE_SIGMA,
+                                      dim=exper.args.x_dim,
+                                      logger=meta_logger, file_name="10d_quadratic_val_funcs_20000.dll",
+                                      exper=exper)
+        else:
+            val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=exper.args.x_samples, noise_sigma=NOISE_SIGMA,
+                                      dim=exper.args.x_dim,
+                                      logger=meta_logger, exper=exper)
     else:
-        val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=args.x_samples, noise_sigma=NOISE_SIGMA, dim=args.x_dim,
-                                  logger=meta_logger)
-    # exper.val_funcs = val_funcs
-    lr = args.lr
-    if not args.learner == 'manual':
-        # Important switch, use meta optimizer (LSTM) which will be trained
-        meta_optimizer = get_model(exper, args.x_dim, retrain=args.retrain, logger=meta_logger)
-        optimizer = OPTIMIZER_DICT[args.optimizer](meta_optimizer.parameters(), lr=lr)
+        val_funcs = None
+
+    lr = exper.args.lr
+    if not exper.args.learner == 'manual':
+        meta_optimizer = get_model(exper, exper.args.x_dim, retrain=exper.args.retrain, logger=meta_logger)
+        optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=lr)
+        fixed_weights = generate_fixed_weights(exper, meta_logger)
     else:
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
         optimizer = None
+        fixed_weights = None
     # prepare epoch variables
-    backward_ones = torch.ones(args.batch_size)
-    if args.cuda:
+    backward_ones = torch.ones(exper.args.batch_size)
+    if exper.args.cuda:
         backward_ones = backward_ones.cuda()
-    num_of_batches = args.functions_per_epoch // args.batch_size
-    if args.fixed_horizon and args.learner == "act":
-        prior_probs = construct_prior_p_t_T(args.optimizer_steps, config.continue_prob, args.batch_size,
-                                            args.cuda)
+    num_of_batches = exper.args.functions_per_epoch // exper.args.batch_size
+    if exper.args.fixed_horizon and exper.args.learner == "act":
+        prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, config.ptT_shape_param, exper.args.batch_size,
+                                            exper.args.cuda)
 
-    for epoch in range(args.max_epoch):
+    for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
         start_epoch = time.time()
         final_loss = 0.0
         final_act_loss = 0.
         param_loss = 0.
         total_loss_steps = 0.
+        loss_optimizer = 0.
         diff_min = 0.
-
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
         # ALSO NOTE:
@@ -172,58 +181,59 @@ def main():
         #       THEREFORE we should make sure that we have lots of batches per epoch e.g. 5000 functions and
         #       batch size of 50
 
-        if (args.learner == "meta" and args.version == "V2") or \
-                (args.learner == "act" and not args.fixed_horizon):
+        if (exper.args.learner == "meta" and exper.args.version == "V2") or \
+                (exper.args.learner == "act" and not exper.args.fixed_horizon):
             avg_opt_steps = []
         else:
-            # in all other cases we're working with a fixed optimization horizon H=args.optimizer_steps
-            avg_opt_steps = [args.optimizer_steps]
-            optimizer_steps = args.optimizer_steps
+            # in all other cases we're working with a fixed optimization horizon H=exper.args.optimizer_steps
+            avg_opt_steps = [exper.args.optimizer_steps]
+            optimizer_steps = exper.args.optimizer_steps
 
         for i in range(num_of_batches):
 
-            if args.problem == "quadratic":
-                reg_funcs = L2LQuadratic(batch_size=args.batch_size, num_dims=args.x_dim, stddev=0.01,
-                                         use_cuda=args.cuda)
+            if exper.args.problem == "quadratic":
+                reg_funcs = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
+                                         use_cuda=exper.args.cuda)
 
-            elif args.problem == "regression":
-                reg_funcs = RegressionFunction(n_funcs=args.batch_size, n_samples=args.x_samples,
-                                               stddev=NOISE_SIGMA, x_dim=args.x_dim,
-                                               use_cuda=args.cuda)
+            elif exper.args.problem == "regression":
+                reg_funcs = RegressionFunction(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
+                                               stddev=NOISE_SIGMA, x_dim=exper.args.x_dim,
+                                               use_cuda=exper.args.cuda)
             # if we're using a standard optimizer
-            if args.learner == 'manual':
-                meta_optimizer = OPTIMIZER_DICT[args.optimizer]([reg_funcs.params], lr=STD_OPT_LR)
+            if exper.args.learner == 'manual':
+                meta_optimizer = OPTIMIZER_DICT[exper.args.optimizer]([reg_funcs.params], lr=STD_OPT_LR)
 
             # counter that we keep in order to enable BPTT
             forward_steps = 0
             # determine the number of optimization steps for this batch
-            if args.learner == 'meta' and args.version[0:2] == 'V2':
+            if exper.args.learner == 'meta' and exper.args.version[0:2] == 'V2':
                 optimizer_steps = pt_dist.rvs(n=1)[0]
                 avg_opt_steps.append(optimizer_steps)
-            elif args.learner == 'act' and not args.fixed_horizon:
+            elif exper.args.learner == 'act' and not exper.args.fixed_horizon:
                 # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
                 # add one to choice because we actually want values between [1, config.T]
                 optimizer_steps = pt_dist.rvs(n=1)[0]
-                prior_probs = construct_prior_p_t_T(optimizer_steps, config.continue_prob, args.batch_size,
-                                                        args.cuda)
+                prior_probs = construct_prior_p_t_T(optimizer_steps, config.ptT_shape_param, exper.args.batch_size,
+                                                        exper.args.cuda)
                 avg_opt_steps.append(optimizer_steps)
 
             # the q-parameter for the ACT model, initialize
-            qt_param = Variable(torch.zeros(args.batch_size, 1))
-            if args.cuda:
+            qt_param = Variable(torch.zeros(exper.args.batch_size, 1))
+            if exper.args.cuda:
                 qt_param = qt_param.cuda()
 
             # outer loop with the optimization steps
+            # meta_logger.info("Total steps {}".format(optimizer_steps))
             for k in range(optimizer_steps):
 
-                if args.learner == 'meta' or (args.learner == "act" and ACT_TRUNC_BPTT):
+                if exper.args.learner == 'meta':
                     # meta model uses truncated BPTT
                     # Keep states for truncated BPTT
-                    if k > args.truncated_bptt_step - 1:
+                    if k > exper.args.truncated_bptt_step - 1:
                         keep_states = True
                     else:
                         keep_states = False
-                    if k % args.truncated_bptt_step == 0 and not args.learner == 'manual':
+                    if k % exper.args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
                         # meta_logger.debug("DEBUG@step %d - Resetting LSTM" % k)
                         forward_steps = 1
                         meta_optimizer.reset_lstm(keep_states=keep_states)
@@ -234,8 +244,8 @@ def main():
                         loss_sum = 0
                     else:
                         forward_steps += 1
-                elif args.learner == 'act' and not ACT_TRUNC_BPTT and k == 0:
-                    # ACT model (if not using truncated BPTT) the LSTM hidden states will be only initialized
+                elif exper.args.learner == 'act' and k == 0:
+                    # ACT model: the LSTM hidden states will be only initialized
                     # for the first optimization step
                     forward_steps = 1
                     # initialize LSTM
@@ -243,20 +253,23 @@ def main():
                     reg_funcs.reset_params()
                     loss_sum = 0
 
-                if args.problem == "quadratic":
+                if exper.args.problem == "quadratic":
                     loss = reg_funcs.compute_loss(average=False)
                 else:
                     loss = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(backward_ones)
                 total_loss_steps += torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+                # new_version ("observed improvement")
+                # if exper.args.learner == 'meta' and k == 0:
+                #    meta_optimizer.losses.append(Variable(torch.mean(loss, 0).data.squeeze()))
 
                 # print("Sum gradients ", torch.sum(reg_funcs.params.grad.data))
                 # feed the RNN with the gradient of the error surface function
-                if args.learner == 'meta':
+                if exper.args.learner == 'meta':
                     delta_param = meta_optimizer.meta_update(reg_funcs)
                     par_new = reg_funcs.params - delta_param
-                    if args.problem == "quadratic":
+                    if exper.args.problem == "quadratic":
                         loss_step = reg_funcs.compute_loss(average=True, params=par_new)
                         meta_optimizer.losses.append(Variable(loss_step.data))
                     else:
@@ -264,13 +277,20 @@ def main():
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
 
                     reg_funcs.set_parameters(par_new)
-                    loss_sum = loss_sum + loss_step
+                    if exper.args.version[0:2] == "V3":
+                        loss_sum = loss_sum + torch.mul(fixed_weights[k], loss_step)
+                    else:
+                        # new_version (observed improvement)
+                        # min_f = torch.min(torch.cat(meta_optimizer.losses[0:k+1], 0))
+                        # observed_imp = (-1.) * (min_f - loss_step)
+                        # loss_sum += observed_imp
+                        loss_sum = loss_sum + loss_step
                 # ACT model processing
-                elif args.learner == 'act':
+                elif exper.args.learner == 'act':
                     delta_param, delta_qt = meta_optimizer.meta_update(reg_funcs)
                     par_new = reg_funcs.params - delta_param
                     qt_param = qt_param + delta_qt
-                    if args.problem == "quadratic":
+                    if exper.args.problem == "quadratic":
                         loss_step = reg_funcs.compute_loss(average=False, params=par_new)
                         meta_optimizer.losses.append(loss_step)
                         loss_step = 1/float(reg_funcs.num_of_funcs) * torch.sum(loss_step)
@@ -288,31 +308,15 @@ def main():
 
                 reg_funcs.params.grad.data.zero_()
 
-                if forward_steps == args.truncated_bptt_step or k == optimizer_steps - 1:
+                if forward_steps == exper.args.truncated_bptt_step or k == optimizer_steps - 1:
                     # meta_logger.info("BPTT at {}".format(k + 1))
-                    if args.learner == 'meta' or (args.learner == 'act' and args.version[0:2] == "V1"):
+                    if exper.args.learner == 'meta' or (exper.args.learner == 'act' and exper.args.version[0:2] == "V1"):
+                        # meta_logger.info("{} Sum error {:.3f}".format(k, loss_sum.data.cpu().squeeze().numpy()[0]))
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
-                    # this is the part where we tried to implement truncated BPTT for the ACTV2 model
-                    # is only used if ACT_TRUNC_BPTT set to TRUE
-                    elif args.learner == 'act' and args.version[0:2] == "V2" and ACT_TRUNC_BPTT:
-                        T = k+1
-                        prior_probs = construct_prior_p_t_T(T, config.continue_prob, args.batch_size,
-                                                            args.cuda)
-                        if args.cuda:
-                            prior_probs = prior_probs.cuda()
-                        # we need to expand the prior probs to the size of the batch
-                        prior_probs = prior_probs.expand(args.batch_size, prior_probs.size(0))
-                        act_loss = meta_optimizer.final_loss(prior_probs, run_type='train')
-                        if k == optimizer_steps - 1:
-                            act_loss.backward()
-                            final_act_loss += act_loss.data
-                        else:
-                            # intermediate back-propagation
-                            act_loss.backward(retain_variables=True)
-                        optimizer.step()
-                        meta_optimizer.zero_grad()
+                        loss_optimizer += loss_sum.data
+
             # END of iterative function optimization. Compute final losses and probabilities
 
             # compute the final loss error for this function between last loss calculated and function min-value
@@ -320,7 +324,7 @@ def main():
             diff_min += (loss_step - reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(float)
             total_loss_steps += loss_step.data.cpu().squeeze().numpy()[0]
             # back-propagate ACT loss that was accumulated during optimization steps
-            if args.learner == 'act' and not ACT_TRUNC_BPTT:
+            if exper.args.learner == 'act':
                 # processing ACT loss
                 act_loss = meta_optimizer.final_loss(prior_probs, run_type='train')
                 act_loss.backward()
@@ -328,12 +332,12 @@ def main():
                 final_act_loss += act_loss.data
                 # set grads of meta_optimizer to zero after update parameters
                 meta_optimizer.zero_grad()
-
+                loss_optimizer += act_loss.data
             # Does it work? if necessary set TRAIN_VERBOSE to True
             if i % 20 == 0 and i != 0 and TRAIN_VERBOSE:
                 detailed_train_info(meta_logger, reg_funcs, 0, args, meta_optimizer, i, optimizer_steps, error[0])
 
-            if args.learner == "act":
+            if exper.args.learner == "act":
                 meta_optimizer.reset_final_loss()
             elif exper.args.learner == 'meta':
                 meta_optimizer.reset_losses()
@@ -349,29 +353,35 @@ def main():
         param_loss *= 1./float(num_of_batches)
         final_act_loss *= 1./float(num_of_batches)
         total_loss_steps *= 1./float(num_of_batches)
+        loss_optimizer *= 1./float(num_of_batches)
+
         end_epoch = time.time()
 
-        meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: average total loss (over time-steps) {:.4f} /"
-                         " final loss {:.4f} / final-true_min {:.4f}".format(epoch+1,
-                                (end_epoch - start_epoch), total_loss_steps, final_loss[0], diff_min))
-        if args.learner == 'act':
+        meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
+                         "avg total loss (over time-steps) {:.4f} /"
+                         " avg final step loss {:.4f} / final-true_min {:.4f}".format(epoch+1,
+                                                                                      (end_epoch - start_epoch),
+                         loss_optimizer[0], total_loss_steps, final_loss[0], diff_min))
+        if exper.args.learner == 'act':
             meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(epoch+1, final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
             meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(epoch+1, avg_opt_steps))
-        if args.learner == 'meta' and args.version[0:2] == "V2":
+        if exper.args.learner == 'meta' and exper.args.version[0:2] == "V2":
             avg_opt_steps = int(np.mean(np.array(avg_opt_steps)))
             meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(epoch + 1, avg_opt_steps))
 
-        exper.epoch_stats["loss"].append(final_loss[0])
+        exper.epoch_stats["loss"].append(total_loss_steps)
         exper.epoch_stats["param_error"].append(param_loss[0])
-        if args.learner == 'act':
-            exper.epoch_stats["act_loss"].append(final_act_loss[0])
+        if exper.args.learner == 'act':
+            exper.epoch_stats["opt_loss"].append(final_act_loss[0])
+        elif exper.args.learner == 'meta':
+            exper.epoch_stats["opt_loss"].append(loss_optimizer[0])
         # if applicable, VALIDATE model performance
-        if exper.epoch % args.eval_freq == 0 or epoch + 1 == args.max_epoch:
+        if exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch:
 
-            if args.learner == 'manual':
+            if exper.args.learner == 'manual':
                 # the manual (e.g. SGD, Adam will be validated using full number of optimization steps
-                opt_steps = args.optimizer_steps
+                opt_steps = exper.args.optimizer_steps
             else:
                 opt_steps = config.max_val_opt_steps
 
@@ -380,17 +390,19 @@ def main():
                                plot_func=PLOT_VALIDATION_FUNCS,
                                max_steps=opt_steps,
                                num_of_plots=config.num_val_plots,
-                               save_qt_prob_funcs=True if epoch + 1 == args.max_epoch else False,
+                               save_qt_prob_funcs=True if epoch + 1 == exper.args.max_epoch else False,
                                save_model=True)
         # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
-        if args.learner == 'act':
+        if exper.args.learner == 'act':
 
             exper.epoch_stats['qt_hist'][exper.epoch] = meta_optimizer.qt_hist
             exper.epoch_stats['opt_step_hist'][exper.epoch] = meta_optimizer.opt_step_hist
 
             meta_optimizer.init_qt_statistics(exper.config)
+        if hasattr(meta_optimizer, "epochs_trained"):
+            meta_optimizer.epochs_trained += 1
 
-    end_run(exper, meta_optimizer, validation=False, on_server=args.on_server)
+    end_run(exper, meta_optimizer, validation=True, on_server=exper.args.on_server)
 
 if __name__ == "__main__":
     main()

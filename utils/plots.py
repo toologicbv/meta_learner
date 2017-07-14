@@ -51,16 +51,16 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
 
         train_loss = exper.epoch_stats['loss']
         val_loss = exper.val_stats['loss']
-        plt.ylabel("loss")
+        plt.ylabel("loss (optimizee)")
         if fig_name is None:
             fig_name = os.path.join(exper.output_dir, config.loss_fig_name + exper_label + dt + config.dflt_plot_ext)
-    elif loss_type == "act_loss":
+    elif loss_type == "opt_loss":
         num_opt_steps = exper.avg_num_opt_steps
-        train_loss = exper.epoch_stats['act_loss']
-        val_loss = exper.val_stats['act_loss']
-        plt.ylabel("act-loss")
+        train_loss = exper.epoch_stats['opt_loss']
+        val_loss = exper.val_stats['opt_loss']
+        plt.ylabel("optimizer-loss")
         if fig_name is None:
-            fig_name = os.path.join(exper.output_dir, config.act_loss_fig_name + exper_label + dt +
+            fig_name = os.path.join(exper.output_dir, config.opt_loss_fig_name + exper_label + dt +
                                     config.dflt_plot_ext)
     elif loss_type == "param_error":
         num_opt_steps = exper.avg_num_opt_steps
@@ -83,6 +83,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     plt.xlabel("epochs")
     x_vals = range(1, exper.epoch+1, 1)
+
     if log_scale:
         plt.semilogy(x_vals[2:], train_loss[2:], 'r', label="train-loss")
     else:
@@ -93,7 +94,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
 
     x_vals = create_x_val_array(exper, val_loss)
 
-    if x_vals[0] <= 5:
+    if len(x_vals) > 2:
         offset = 1
     else:
         offset = 0
@@ -175,7 +176,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     o_mean = int(round(np.sum(index * norms)))
     plt.figure(figsize=(height, width))
     plt.bar(index, norms, bar_width, color='b', align='center',
-            label="with q(continue)={:.3f}".format(config.continue_prob))
+            label="with p(T|nu)={:.3f})".format(config.pT_shape_param))
     # plot mean value again...in red
     plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("Number of optimization steps")
@@ -203,7 +204,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         T = len(exper.epoch_stats["qt_hist"][epoch])
         opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
         qt_hist = exper.epoch_stats["qt_hist"][epoch]
-        plot_title = "Training " + exper.args.problem + r"- q(t|T) $\nu={:.2f}$ (E[T]={})".format(exper.config.continue_prob,
+        plot_title = "Training " + exper.args.problem + r"- q(t|T) $\nu={:.2f}$ (E[T]={})".format(exper.config.ptT_shape_param,
             int(exper.avg_num_opt_steps))
         if not exper.args.fixed_horizon:
             plot_title += " (stochastic training)"
@@ -212,7 +213,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
         qt_hist = exper.val_stats["qt_hist"][epoch]
         plot_title = exper.args.problem + r" - $q(t|{}) \;\; \nu={:.2}$".format(
-            config.max_val_opt_steps, exper.config.continue_prob)
+            config.max_val_opt_steps, exper.config.ptT_shape_param)
         if not exper.args.fixed_horizon:
             plot_title += " (stochastic training E[T]={})".format(int(exper.avg_num_opt_steps))
     res_qts = OrderedDict()
@@ -260,14 +261,15 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
 
         plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center',
-                label=r"$q(t|{}) \;\; \nu={:.2}$".format(T, exper.config.continue_prob))
+                label=r"$q(t|{}) \;\; \nu={:.2}$".format(T, exper.config.ptT_shape_param))
         if plot_prior:
-            kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
-            # print(exper.config.max_val_opt_steps, exper.config.continue_prob)
+            kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps,
+                                                    q_prob=exper.config.ptT_shape_param)
+            # print(exper.config.max_val_opt_steps, exper.config.ptT_shape_param)
             priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
             # print(priors[0:10])
             plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center',
-                    label=r"prior $p(t|{}) \;\; \nu={:.2}$".format(T, exper.config.continue_prob))
+                    label=r"prior $p(t|{}) \;\; \nu={:.2}$".format(T, exper.config.ptT_shape_param))
         if data_set == "train":
             if len(index) > 15:
                 index = np.arange(1, len(index), 5)
@@ -314,9 +316,9 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
     plt.close()
 
 
-def plot_result(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
-                loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
-                with_stddev=True):
+def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
+                         loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
+                         with_stddev=True, runID=None):
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -354,8 +356,9 @@ def plot_result(expers, height=8, width=12, do_show=True, do_save=False, fig_nam
         if "act" in model:
             if expers[e].args.fixed_horizon:
                 model += "(fixed-H)"
-        if expers[e].args.learner == "act":
-            model += "(shape={:.2f})".format(expers[e].config.continue_prob)
+        if expers[e].args.learner == "act" or (expers[e].args.learner == "meta"
+                                               and expers[e].args.version == "V3.1"):
+            model += r"($\nu={:.2f}$)".format(expers[e].config.ptT_shape_param)
         min_param_value = 999.
 
         if plot_best:
@@ -370,7 +373,11 @@ def plot_result(expers, height=8, width=12, do_show=True, do_save=False, fig_nam
                                                                         lowest_value[e], idx_lowest_value[e]))
         else:
             # get the last validation runs, we're just plotting the last run...not the best
-            val_run = keys[-1]
+            if runID is None:
+                val_run = keys[-1]
+            else:
+                val_run = runID
+
             best_val_runs[e] = val_run
             lowest_value[e] = res_dict[val_run][-1]
 
@@ -401,7 +408,10 @@ def plot_result(expers, height=8, width=12, do_show=True, do_save=False, fig_nam
         if plot_best:
             l_label = "{}({})(stop={})".format(model, best_val_runs[e], stop_step)
         else:
-            l_label = "{}(stop={})".format(model, stop_step)
+            if expers[e].args.learner == "act":
+                l_label = "{}(stop={})".format(model, stop_step)
+            else:
+                l_label = "{}".format(model)
 
         if log_scale:
             # res_dict[best_val_runs[e]][min_step:max_step]
@@ -463,8 +473,8 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
 
         if loss_type == "loss":
             loss = "loss"
-        elif loss_type == 'act_loss':
-            loss = 'act_loss'
+        elif loss_type == 'opt_loss':
+            loss = 'opt_loss'
         elif loss_type == 'param_error':
             loss = "param_error"
         else:
@@ -647,7 +657,7 @@ def plot_kl_div_parts(exper, data_set="val", fig_name=None, height=16, width=12,
         ax2.set_title("Approximated q(t) distribution")
         ax2.bar(index, qt_probs, bar_width, color='b', align='center', label="q(t|{})".format(exper.config.max_val_opt_steps))
         if plot_prior:
-            kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.continue_prob)
+            kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps, q_prob=exper.config.ptT_shape_param)
             priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
             ax2.bar(np.array(index) + bar_width, priors, bar_width, color='orange', align='center',
                     label="prior p(t|{})".format(exper.config.max_val_opt_steps))
@@ -682,7 +692,7 @@ def plot_qt_mode_hist(exper, do_save=False, do_show=False, width=10, height=7, f
 
     plt.figure(figsize=(width, height))
     plt.title(r"Distribution of mode-step of $q(t|{})$ with $\nu={:.2f}$".format(exper.config.max_val_opt_steps,
-                                                                          exper.config.continue_prob))
+                                                                          exper.config.ptT_shape_param))
     _ = plt.hist(max_idx_probs, bins=key+1, normed=True)
     plt.xlim([0, key+1])
 
@@ -735,7 +745,7 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
 
     fig = plt.figure(figsize=(width, height))
     fig.subplots_adjust(hspace=.5)
-    p_title = exper.args.problem + r' ($\nu={:.2}$) - ${}$ functions'.format(exper.config.continue_prob, N)
+    p_title = exper.args.problem + r' ($\nu={:.2}$) - ${}$ functions'.format(exper.config.ptT_shape_param, N)
     if not exper.args.fixed_horizon:
         p_title += " (stochastic training E[T]={})".format(int(exper.avg_num_opt_steps))
     fig.suptitle(p_title , **config.title_font)
