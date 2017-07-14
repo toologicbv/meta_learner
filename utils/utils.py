@@ -88,6 +88,24 @@ def preprocess_gradients(x):
     return torch.cat((x1, x2), 1)
 
 
+def prepare_retrain(exper_path, new_args):
+
+    exper = get_experiment(exper_path)
+    exper.past_epochs = exper.args.max_epoch
+    exper.args.max_epoch += new_args.max_epoch
+    exper.args.lr = new_args.lr
+    exper.args.eval_freq = new_args.eval_freq
+    exper.args.retrain = new_args.retrain
+    exper.args.log_dir = new_args.log_dir
+    exper.avg_num_opt_steps = new_args.avg_num_opt_steps
+
+    exper = prepare(exper=exper)
+    # get our logger (one to std-out and one to file)
+    meta_logger = create_logger(exper, file_handler=True)
+
+    return exper, meta_logger
+
+
 def get_experiment(path_to_exp, full_path=False):
 
     if not full_path:
@@ -260,12 +278,13 @@ class Experiment(object):
         self.val_avg_num_opt_steps = 0
         self.config = config
         self.val_funcs = None
+        self.past_epochs = 0
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(),
                           "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
-                          "qt_funcs": OrderedDict(), "loss_funcs": []}
+                          "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
 
 
 def save_exper(exper, file_name=None):
@@ -279,30 +298,32 @@ def save_exper(exper, file_name=None):
     print("INFO - Successfully saved experimental details to {}".format(outfile))
 
 
-def prepare(prcs_args, exper):
+def prepare(exper):
 
-    if prcs_args.log_dir == 'default':
-        prcs_args.log_dir = config.exper_prefix + \
+    if exper.args.log_dir == 'default':
+        exper.args.log_dir = exper.config.exper_prefix + \
                             str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
                                 '%Y-%m-%d %H:%M:%S.%f')[:-7],
                                 ' ', '_') + "_" + create_exper_label(exper) + \
                             "_lr" + "{:.0e}".format(exper.args.lr) + "_" + exper.args.optimizer
-        prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
+        exper.args.log_dir = str.replace(str.replace(exper.args.log_dir, ':', '_'), '-', '')
 
     else:
         # custom log dir
-        prcs_args.log_dir = str.replace(prcs_args.log_dir, ' ', '_')
-        prcs_args.log_dir = str.replace(str.replace(prcs_args.log_dir, ':', '_'), '-', '')
-    log_dir = os.path.join(config.log_root_path, prcs_args.log_dir)
+        exper.args.log_dir = str.replace(exper.args.log_dir, ' ', '_')
+        exper.args.log_dir = str.replace(str.replace(exper.args.log_dir, ':', '_'), '-', '')
+    log_dir = os.path.join(exper.config.log_root_path, exper.args.log_dir)
     if not os.path.isdir(log_dir):
         os.makedirs(log_dir)
-        fig_path = os.path.join(log_dir, config.figure_path)
+        fig_path = os.path.join(log_dir, exper.config.figure_path)
         os.makedirs(fig_path)
     else:
         # make a back-up copy of the contents
         dst = os.path.join(log_dir, "backup")
         shutil.copytree(log_dir, dst)
-    return log_dir
+
+    exper.output_dir = log_dir
+    return exper
 
 
 def end_run(experiment, model, validation=True, on_server=False):
@@ -349,16 +370,29 @@ def construct_prior_p_t_T(optimizer_steps, continue_prob, batch_size, cuda=False
     return prior_probs.expand(batch_size, prior_probs.size(0))
 
 
-def generate_fixed_weights(exper, steps=None, ptT_shape=None):
+def generate_fixed_weights(exper, logger, steps=None):
+
     if steps is None:
         steps = exper.args.optimizer_steps
 
-    if ptT_shape is not None:
-        prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
-                                            batch_size=1, cuda=exper.args.cuda)
-        fixed_weights = prior_probs.squeeze()
+    if exper.args.learner == 'meta' and exper.args.version[0:2] == "V3":
+        # Version 3.1 of MetaLearner uses a fixed geometric distribution as loss weights
+        if exper.args.version == "V3.1":
+            logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
+                exper.args.optimizer_steps, exper.config.ptT_shape_param))
+            prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
+                                                batch_size=1, cuda=exper.args.cuda)
+            fixed_weights = prior_probs.squeeze()
+
+        elif exper.args.version == "V3.2":
+            fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
+            fixed_weights[:] = 1. / float(steps)
+            logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
+                torch.sum(fixed_weights).data.cpu().squeeze()[0]))
     else:
-        fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
-        fixed_weights[:] = 1. / float(exper.args.optimizer_steps)
+        fixed_weights = Variable(torch.ones(exper.args.optimizer_steps))
+
+    if exper.args.cuda and not fixed_weights.is_cuda:
+        fixed_weights = fixed_weights.cuda()
 
     return fixed_weights

@@ -53,14 +53,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_learner.reset_final_loss()
     elif exper.args.learner == "meta":
         meta_learner.reset_losses()
-        if exper.args.version == "V3.1":
-            fixed_weights = generate_fixed_weights(exper, ptT_shape=exper.config.ptT_shape_param)
-        elif exper.args.version == "V3.2":
-            fixed_weights = generate_fixed_weights(exper)
-        else:
-            fixed_weights = Variable(torch.ones(exper.args.optimizer_steps))
-        if exper.args.cuda:
-            fixed_weights = fixed_weights.cuda()
+        fixed_weights = generate_fixed_weights(exper, meta_logger)
 
     qt_weights = []
     do_stop = np.zeros(val_set.num_of_funcs, dtype=bool)  # initialize to False for all functions
@@ -228,7 +221,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     exper.val_stats["loss"].append(total_loss)
     end_validate = time.time()
     exper.val_stats["param_error"].append(param_loss)
-    exper.val_stats["opt_loss"].append(total_opt_loss)
+    if "opt_loss" in exper.val_stats.keys():
+        exper.val_stats["opt_loss"].append(total_opt_loss)
 
     meta_logger.info("INFO - Epoch {}, elapsed time {:.2f} seconds: ".format(exper.epoch,
                                                                              (end_validate - start_validate)))

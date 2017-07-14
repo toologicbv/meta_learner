@@ -356,7 +356,8 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if "act" in model:
             if expers[e].args.fixed_horizon:
                 model += "(fixed-H)"
-        if expers[e].args.learner == "act" or (expers[e].args.learner == "meta" and expers[e].args.version == "V3"):
+        if expers[e].args.learner == "act" or (expers[e].args.learner == "meta"
+                                               and expers[e].args.version == "V3.1"):
             model += r"($\nu={:.2f}$)".format(expers[e].config.ptT_shape_param)
         min_param_value = 999.
 
@@ -407,7 +408,10 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if plot_best:
             l_label = "{}({})(stop={})".format(model, best_val_runs[e], stop_step)
         else:
-            l_label = "{}(stop={})".format(model, stop_step)
+            if expers[e].args.learner == "act":
+                l_label = "{}(stop={})".format(model, stop_step)
+            else:
+                l_label = "{}".format(model)
 
         if log_scale:
             # res_dict[best_val_runs[e]][min_step:max_step]
