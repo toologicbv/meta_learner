@@ -133,19 +133,18 @@ class MetaLearner(nn.Module):
         x_t = self.linear_out(x_t)
         return x_t.squeeze()
 
-    def meta_update(self, optimizee_with_grads):
+    def meta_update(self, optimizee_with_grads, run_type="train"):
 
         """
 
         :rtype: object
         """
-        param_size = optimizee_with_grads.params.grad.data.size()
-        flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
-
-        if self.use_cuda:
-            flat_grads = flat_grads.cuda()
-
-        delta_params = self(flat_grads)
+        param_size = optimizee_with_grads.params.grad.size()
+        if run_type == "train":
+            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+            delta_params = self(flat_grads)
+        else:
+            delta_params = self(optimizee_with_grads.params.grad.view(-1))
         # reshape parameters
         delta_params = delta_params.view(param_size)
         return delta_params
@@ -165,17 +164,20 @@ class MetaLearner(nn.Module):
     @property
     def sum_grads(self):
         sum_grads = 0
-        for i, cells in enumerate(self.lstms):
-            for j, module in enumerate(cells.children()):
-                for param_name, params in module._parameters.iteritems():
-                    if params.grad is not None:
-                        sum_grads += torch.sum(params.grad.data)
-                    else:
-                        print("WARNING - No gradients!!!!")
-        # for param in self.parameters():
-        #    sum_grads += torch.sum(param.grad.data)
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                sum_grads += torch.sum(param.grad.data)
+            else:
+                print("WARNING - No gradients!!!!")
 
         return sum_grads
+
+    @property
+    def sum_weights(self):
+        weight_sum = 0
+        for name, param in self.named_parameters():
+            weight_sum += torch.sum(param.data)
+        return weight_sum
 
     def reset_losses(self):
         self.losses = []
@@ -208,7 +210,8 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # Parameters of the model
         # self.input_batch_norm = torch.nn.BatchNorm1d(self.num_params)
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
-        self.act_linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
+        self.act_linear_out = nn.Linear(num_hidden, 1, bias=True)
+        # self.act_qt_out = nn.Linear(self.num_params, 1, bias=output_bias)
         if self.use_cuda:
             self.cuda()
 
@@ -218,7 +221,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
     def reset_lstm(self, keep_states=False):
         super(AdaptiveMetaLearnerV2, self).reset_lstm(keep_states)
 
-    def forward(self, x_t):
+    def forward(self, x_t, param_shape=None):
 
         if self.use_cuda and not x_t.is_cuda:
             x_t = x_t.cuda()
@@ -233,27 +236,31 @@ class AdaptiveMetaLearnerV2(MetaLearner):
             self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
             x_t = self.hx[i]
 
-        qt_out = self.act_linear_out(x_t)
         theta_out = self.linear_out(x_t)
+        qt_out = self.act_linear_out(x_t)
+        # qt_out = self.act_qt_out (qt_out.view(param_shape))
 
         return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
-    def meta_update(self, optimizee_with_grads):
+    def meta_update(self, optimizee_with_grads, run_type="train"):
         """
 
             :param optimizee_with_grads:
             :return: delta theta, delta qt
         """
 
-        grads = Variable(optimizee_with_grads.params.grad.data)
-        flat_grads = grads.view(-1)
-        if self.use_cuda:
-            flat_grads = flat_grads.cuda()
-        delta_theta, delta_qt = self(flat_grads)
+        param_size = optimizee_with_grads.params.grad.size()
+
+        if run_type == "train":
+            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+            delta_theta, delta_qt = self(flat_grads, param_size)
+        else:
+            delta_theta, delta_qt = self(optimizee_with_grads.params.grad.view(-1), param_size)
+
         # reshape parameters
-        delta_theta = delta_theta.view(grads.size())
+        delta_theta = delta_theta.view(param_size)
         # reshape qt-values and calculate mean
-        delta_qt = torch.mean(delta_qt.view(grads.size()), 1)
+        delta_qt = torch.mean(delta_qt.view(param_size), 1)
         return delta_theta, delta_qt
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
@@ -343,63 +350,47 @@ class AdaptiveMetaLearnerV1(AdaptiveMetaLearnerV2):
         super(AdaptiveMetaLearnerV1, self).reset_lstm(keep_states)
 
         if keep_states:
-            for theta in np.arange(self.act_num_params):
-                for i in range(len(self.act_lstms)):
-                    self.act_hx[theta][i] = Variable(self.act_hx[theta][i].data)
-                    self.act_cx[theta][i] = Variable(self.act_cx[theta][i].data)
+            for i in range(len(self.act_lstms)):
+                self.act_hx[i] = Variable(self.act_hx[i].data)
+                self.act_cx[i] = Variable(self.act_cx[i].data)
         else:
-            self.act_hx = {}
-            self.act_cx = {}
+            self.act_hx = []
+            self.act_cx = []
             # first loop over the number of parameters we have, because we're updating coordinate wise
-            for theta in np.arange(self.act_num_params):
-                self.act_hx[theta] = [Variable(torch.zeros(1, self.num_hidden_act)) for i in range(len(self.act_lstms))]
-                self.act_cx[theta] = [Variable(torch.zeros(1, self.num_hidden_act)) for i in range(len(self.act_lstms))]
-
+            for i in range(len(self.act_lstms)):
+                self.act_hx.append(Variable(torch.zeros(1, self.hidden_size)))
+                self.act_cx.append(Variable(torch.zeros(1, self.hidden_size)))
                 if self.use_cuda:
-                    for i in range(len(self.act_lstms)):
-                        self.act_hx[theta][i], self.act_cx[theta][i] = self.act_hx[theta][i].cuda(), \
-                                                                       self.act_cx[theta][i].cuda()
+                    self.act_hx[i], self.act_cx[i] = self.act_hx[i].cuda(), self.act_cx[i].cuda()
 
     def forward(self, x):
         if self.use_cuda and not x.is_cuda:
             x = x.cuda()
 
-        x_out = []
-        qt_out = []
-        for t in np.arange(self.num_params):
-            x_t = x[:, t].unsqueeze(1)
-            q_t = x[:, t].unsqueeze(1)
-            x_t = self.linear1(x_t)
-            # act input
-            q_t = self.act_linear1(q_t)
-            # assuming that both LSTM (for L2L and ACT) have same number of layers.
-            for i in range(len(self.lstms)):
-                if x_t.size(0) != self.hx[t][i].size(0):
-                    self.hx[t][i] = self.hx[t][i].expand(x_t.size(0), self.hx[t][i].size(1))
-                    self.cx[t][i] = self.cx[t][i].expand(x_t.size(0), self.cx[t][i].size(1))
-                # act lstm part
-                if q_t.size(0) != self.act_hx[t][i].size(0):
-                    self.act_hx[t][i] = self.act_hx[t][i].expand(q_t.size(0), self.act_hx[t][i].size(1))
-                    self.act_cx[t][i] = self.act_cx[t][i].expand(q_t.size(0), self.act_cx[t][i].size(1))
+        x = x.unsqueeze(1)
+        x_t = self.linear1(x)
+        # act input
+        q_t = self.act_linear1(x)
+        # assuming that both LSTM (for L2L and ACT) have same number of layers.
+        for i in range(len(self.lstms)):
+            if x_t.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
+            # act lstm part
+            if q_t.size(0) != self.act_hx[i].size(0):
+                self.act_hx[i] = self.act_hx[i].expand(q_t.size(0), self.act_hx[i].size(1))
+                self.act_cx[i] = self.act_cx[i].expand(q_t.size(0), self.act_cx[i].size(1))
 
-                self.hx[t][i], self.cx[t][i] = self.lstms[i](x_t, (self.hx[t][i], self.cx[t][i]))
-                # act lstm part
-                self.act_hx[t][i], self.act_cx[t][i] = self.act_lstms[i](q_t, (self.act_hx[t][i], self.act_cx[t][i]))
+            self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
+            # act lstm part
+            self.act_hx[i], self.act_cx[i] = self.act_lstms[i](q_t, (self.act_hx[i], self.act_cx[i]))
+            x_t = self.hx[i]
+            q_t = self.act_hx[i]
 
-                x_t = self.hx[t][i]
-                q_t = self.act_hx[t][i]
+        theta_out = self.linear_out(x_t)
+        qt_out = self.act_linear_out(q_t)
 
-            x_t = self.linear_out(x_t)
-            # q_t = F.tanh(self.act_linear_out(q_t))
-            # q_t = self.lambda_q.expand_as(q_t) * q_t
-            q_t = self.act_linear_out(q_t)
-            x_out.append(x_t)
-            qt_out.append(q_t)
-
-        x_out = torch.cat(x_out, 1)
-        qt_out = torch.mean(torch.cat(qt_out, 1), 1)
-
-        return tuple((x_out, qt_out))
+        return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
         N = float(optimizee_obj.n_samples)

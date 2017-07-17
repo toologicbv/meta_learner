@@ -48,8 +48,8 @@ class MetaConfig(object):
         self.continue_prob = 0.
         # probability of continue computation
 
-        self.pT_shape_param = 0.93
-        self.ptT_shape_param = 0.5
+        self.pT_shape_param = 0.95
+        self.ptT_shape_param = 0.3
         self.T = 150 # avg = 80 with 0.98
         self.max_val_opt_steps = 100
 

@@ -264,7 +264,8 @@ def main():
                 # if exper.args.learner == 'meta' and k == 0:
                 #    meta_optimizer.losses.append(Variable(torch.mean(loss, 0).data.squeeze()))
 
-                # print("Sum gradients ", torch.sum(reg_funcs.params.grad.data))
+                # meta_logger.info("{}/{} Sum optimizee gradients {:.3f}".format(
+                #    i, k, torch.sum(reg_funcs.params.grad.data)))
                 # feed the RNN with the gradient of the error surface function
                 if exper.args.learner == 'meta':
                     delta_param = meta_optimizer.meta_update(reg_funcs)
@@ -311,11 +312,15 @@ def main():
                 if forward_steps == exper.args.truncated_bptt_step or k == optimizer_steps - 1:
                     # meta_logger.info("BPTT at {}".format(k + 1))
                     if exper.args.learner == 'meta' or (exper.args.learner == 'act' and exper.args.version[0:2] == "V1"):
-                        # meta_logger.info("{} Sum error {:.3f}".format(k, loss_sum.data.cpu().squeeze().numpy()[0]))
+                        # meta_logger.info("{}/{} Sum loss {:.3f}".format(i, k,
+                        # loss_sum.data.cpu().squeeze().numpy()[0]))
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
-                        loss_optimizer += loss_sum.data
+                        # Slightly sloppy. Actually for the ACTV1 model we only register the ACT loss as the
+                        # so called optimizer-loss. But actually ACTV1 is using both losses
+                        if exper.args.learner == 'meta':
+                            loss_optimizer += loss_sum.data
 
             # END of iterative function optimization. Compute final losses and probabilities
 

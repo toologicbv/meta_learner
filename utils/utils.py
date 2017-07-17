@@ -54,8 +54,8 @@ def print_flags(exper, logger):
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V3'):
         logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
-        logger.info("shape parameter of prior p(T) nu={:.3}".format(exper.config.pT_shape_param))
-        logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
+        if not exper.args.fixed_horizon:
+            logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
 
 
 def softmax(x, dim=1):
@@ -216,7 +216,12 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     if exper.args.cuda:
         logger.info("Note: MetaLearner is running on GPU")
         meta_optimizer.cuda()
-    print(meta_optimizer.state_dict().keys())
+    # print(meta_optimizer.state_dict().keys())
+    param_list = []
+    for name, param in meta_optimizer.named_parameters():
+        param_list.append(name)
+
+    logger.info(param_list)
 
     return meta_optimizer
 
@@ -379,7 +384,7 @@ def generate_fixed_weights(exper, logger, steps=None):
         # Version 3.1 of MetaLearner uses a fixed geometric distribution as loss weights
         if exper.args.version == "V3.1":
             logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
-                exper.args.optimizer_steps, exper.config.ptT_shape_param))
+                steps, exper.config.ptT_shape_param))
             prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
                                                 batch_size=1, cuda=exper.args.cuda)
             fixed_weights = prior_probs.squeeze()
@@ -390,7 +395,7 @@ def generate_fixed_weights(exper, logger, steps=None):
             logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
                 torch.sum(fixed_weights).data.cpu().squeeze()[0]))
     else:
-        fixed_weights = Variable(torch.ones(exper.args.optimizer_steps))
+        fixed_weights = Variable(torch.ones(steps))
 
     if exper.args.cuda and not fixed_weights.is_cuda:
         fixed_weights = fixed_weights.cuda()

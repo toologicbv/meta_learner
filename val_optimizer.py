@@ -53,7 +53,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_learner.reset_final_loss()
     elif exper.args.learner == "meta":
         meta_learner.reset_losses()
-        fixed_weights = generate_fixed_weights(exper, meta_logger)
+        fixed_weights = generate_fixed_weights(exper, meta_logger, steps=exper.config.max_val_opt_steps)
 
     qt_weights = []
     do_stop = np.zeros(val_set.num_of_funcs, dtype=bool)  # initialize to False for all functions
@@ -93,8 +93,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
         if not exper.args.learner == 'manual':
 
-            delta_p = meta_learner.forward(val_set.params.grad.view(-1))
-            # delta_p = meta_learner.meta_update(val_set)
+            delta_p = meta_learner.meta_update(val_set, run_type="validation")
             if exper.args.learner == 'meta':
                 # gradient descent
                 par_new = val_set.params - delta_p
@@ -107,10 +106,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
-                param_size = val_set.params.size()
-                par_new = val_set.params - delta_p[0].view(param_size)
-                qt_delta = torch.mean(delta_p[1].view(param_size), 1)
-                qt_param = qt_param + qt_delta
+                par_new = val_set.params - delta_p[0]
+                qt_param = qt_param + delta_p[1]
                 qt_weights.append(qt_param.data.cpu().numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to
                 # compute the final ACT loss
@@ -119,7 +116,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                     val_set.losses.append(loss_step)
                 else:
                     # Regression
-                    loss_step = meta_learner.step_loss(val_set, par_new, average_batch=False)
+                    _ = meta_learner.step_loss(val_set, par_new, average_batch=False)
 
                 meta_learner.q_t.append(qt_param)
                 # we're currently not breaking out of the loop when do_stop is true, therefore we
@@ -173,10 +170,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     np_param_losses = np.array(col_param_losses)
     total_loss = np.sum(np_losses)
     # concatenate losses into a string for plotting the gradient path
-    if "step_losses" in exper.val_stats.keys():
-        exper.val_stats["step_losses"][exper.epoch] += np_losses
-    if "step_param_losses" in exper.val_stats.keys():
-        exper.val_stats["step_param_losses"][exper.epoch] += np_param_losses
+    exper.val_stats["step_losses"][exper.epoch] += np_losses
+    exper.val_stats["step_param_losses"][exper.epoch] += np_param_losses
 
     str_losses = np.array_str(np_losses, precision=3, suppress_small=True)
     if exper.args.learner == "act":
@@ -229,9 +224,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
                      "final-true_min: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, loss, diff_min))
     if exper.args.learner == "act":
-        exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
-        exper.val_stats["kl_div"][exper.epoch] = meta_learner.kl_div
-        exper.val_stats["kl_entropy"][exper.epoch] = meta_learner.kl_entropy
+        # exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
+        # exper.val_stats["kl_div"][exper.epoch] = meta_learner.kl_div
+        # exper.val_stats["kl_entropy"][exper.epoch] = meta_learner.kl_entropy
         exper.val_avg_num_opt_steps = int(np.mean(opt_steps))
         meta_logger.info("INFO - Epoch {}: Final validation average ACT-loss: {:.4}".format(exper.epoch,
                                                                                             total_opt_loss))

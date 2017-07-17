@@ -14,8 +14,6 @@ class LayerLSTMCell(nn.Module):
 
     def forward(self, inputs, state):
         hx, cx = state
-        # i2h = self.fc_i2h(inputs)
-        # h2h = self.fc_h2h(hx)
         x = self.fc_i2h(inputs) + self.fc_h2h(hx)
         gates = x.split(self.num_hidden, 1)
 
