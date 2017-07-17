@@ -4,11 +4,12 @@ import numpy as np
 
 import torch
 from torch.autograd import Variable
-from utils.regression import RegressionFunction, L2LQuadratic
+import torch.nn as nn
 
 from utils.config import config
 from utils.utils import load_val_data, Experiment, prepare, end_run, get_model, print_flags
 from utils.utils import create_logger, detailed_train_info, construct_prior_p_t_T, generate_fixed_weights
+from utils.utils import get_batch_functions, get_func_loss
 from utils.probs import TimeStepsDist
 from val_optimizer import validate_optimizer
 
@@ -20,13 +21,11 @@ from val_optimizer import validate_optimizer
 """
 
 VALIDATE = True
-MAX_VAL_FUNCS = 20000
 # for standard optimizer which we compare to
 STD_OPT_LR = 4e-1
 VALID_VERBOSE = False
 TRAIN_VERBOSE = False
 PLOT_VALIDATION_FUNCS = False
-NOISE_SIGMA = 1.
 ANNEAL_LR = False
 
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
@@ -134,15 +133,9 @@ def main():
 
     # load the validation functions
     if VALIDATE:
-        if exper.args.problem == "quadratic":
-            val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples= exper.args.x_samples, noise_sigma=NOISE_SIGMA,
-                                      dim=exper.args.x_dim,
-                                      logger=meta_logger, file_name="10d_quadratic_val_funcs_20000.dll",
-                                      exper=exper)
-        else:
-            val_funcs = load_val_data(size=MAX_VAL_FUNCS, n_samples=exper.args.x_samples, noise_sigma=NOISE_SIGMA,
-                                      dim=exper.args.x_dim,
-                                      logger=meta_logger, exper=exper)
+        val_funcs = load_val_data(num_of_funcs=exper.config.num_val_funcs, n_samples=exper.args.x_samples,
+                                  stddev=exper.config.stddev, dim=exper.args.x_dim, logger=meta_logger,
+                                  exper=exper)
     else:
         val_funcs = None
 
@@ -191,14 +184,8 @@ def main():
 
         for i in range(num_of_batches):
 
-            if exper.args.problem == "quadratic":
-                reg_funcs = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
-                                         use_cuda=exper.args.cuda)
-
-            elif exper.args.problem == "regression":
-                reg_funcs = RegressionFunction(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
-                                               stddev=NOISE_SIGMA, x_dim=exper.args.x_dim,
-                                               use_cuda=exper.args.cuda)
+            reg_funcs = get_batch_functions(exper, exper.config.stddev)
+            func_is_nn_module = nn.Module in reg_funcs.__class__.__bases__
             # if we're using a standard optimizer
             if exper.args.learner == 'manual':
                 meta_optimizer = OPTIMIZER_DICT[exper.args.optimizer]([reg_funcs.params], lr=STD_OPT_LR)
@@ -252,11 +239,7 @@ def main():
                     meta_optimizer.reset_lstm(keep_states=False)
                     reg_funcs.reset_params()
                     loss_sum = 0
-
-                if exper.args.problem == "quadratic":
-                    loss = reg_funcs.compute_loss(average=False)
-                else:
-                    loss = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
+                loss = get_func_loss(exper, reg_funcs, average=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(backward_ones)
                 total_loss_steps += torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
@@ -269,13 +252,18 @@ def main():
                 # feed the RNN with the gradient of the error surface function
                 if exper.args.learner == 'meta':
                     delta_param = meta_optimizer.meta_update(reg_funcs)
-                    par_new = reg_funcs.params - delta_param
                     if exper.args.problem == "quadratic":
+                        par_new = reg_funcs.params - delta_param
                         loss_step = reg_funcs.compute_loss(average=True, params=par_new)
                         meta_optimizer.losses.append(Variable(loss_step.data))
-                    else:
+                    elif exper.args.problem == "regression":
                         # Regression
+                        par_new = reg_funcs.params - delta_param
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
+                    elif exper.args.problem == "rosenbrock":
+                        par_new = reg_funcs.get_flat_params() + delta_param
+                        loss_step = reg_funcs.evaluate(parameters=par_new, average=True)
+                        meta_optimizer.losses.append(Variable(loss_step.data.unsqueeze(1)))
 
                     reg_funcs.set_parameters(par_new)
                     if exper.args.version[0:2] == "V3":
@@ -307,7 +295,11 @@ def main():
                     # compute loss after update
                     loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
 
-                reg_funcs.params.grad.data.zero_()
+                # set gradients of optimizee to zero again
+                if func_is_nn_module:
+                    reg_funcs.zero_grad()
+                else:
+                    reg_funcs.params.grad.data.zero_()
 
                 if forward_steps == exper.args.truncated_bptt_step or k == optimizer_steps - 1:
                     # meta_logger.info("BPTT at {}".format(k + 1))
@@ -323,7 +315,6 @@ def main():
                             loss_optimizer += loss_sum.data
 
             # END of iterative function optimization. Compute final losses and probabilities
-
             # compute the final loss error for this function between last loss calculated and function min-value
             error = loss_step.data
             diff_min += (loss_step - reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(float)

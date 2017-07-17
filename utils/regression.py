@@ -2,7 +2,7 @@ import numpy as np
 from torch.autograd import Variable
 import torch
 from torch.nn import init
-from collections import OrderedDict
+import torch.nn as nn
 from matplotlib import pyplot as plt
 
 from datetime import datetime
@@ -110,6 +110,112 @@ def insert_samples_dim(X, size_dim1):
     X = X.expand(X.size(0), X.size(1), size_dim1)
     X = torch.transpose(X, 1, 2)
     return X
+
+
+class RosenBrock(nn.Module):
+
+    def __init__(self, batch_size=128, num_dims=2, stddev=1., use_cuda=False):
+        self.num_of_funcs = batch_size
+        self.noise_sigma = stddev
+        self.use_cuda = use_cuda
+        self.dim = num_dims
+        super(RosenBrock, self).__init__()
+
+        # trainable variables.
+        X = torch.FloatTensor(batch_size, 1)
+        Y = torch.FloatTensor(batch_size, 1)
+        if self.use_cuda:
+            self.X = nn.Parameter(init.normal(X, mean=0., std=stddev).cuda(), requires_grad=True)
+            self.Y = nn.Parameter(init.normal(Y, mean=0., std=stddev).cuda(), requires_grad=True)
+            self.true_X = Variable(torch.ones(X.size()).cuda(), requires_grad=False)
+            self.true_Y = Variable(torch.ones(Y.size()).cuda(), requires_grad=False)
+            self.ones = Variable(torch.ones(X.size()).cuda(), requires_grad=False)
+            self.true_minimum_nll = Variable(torch.zeros(1).cuda())
+        else:
+            self.X = nn.Parameter(init.normal(X, mean=0., std=stddev), requires_grad=True)
+            self.Y = nn.Parameter(init.normal(Y, mean=0., std=stddev), requires_grad=True)
+            self.true_X = Variable(torch.ones(X.size()), requires_grad=False)
+            self.true_Y = Variable(torch.ones(Y.size()), requires_grad=False)
+            self.ones = Variable(torch.ones(X.size()), requires_grad=False)
+            self.true_minimum_nll = Variable(torch.zeros(1))
+
+        self.param_hist = {}
+        self.initial_params = self.get_flat_params().clone()
+        self._add_param_values(self.initial_params)
+
+    def forward(self, average_over_funcs=False):
+
+        res = (self.ones - self.X) ** 2 + 100. * (self.Y - self.X * self.X) ** 2
+        if average_over_funcs:
+            res = res.mean()
+        return res
+
+    def evaluate(self, parameters, average=False):
+        """
+        in fact the same as forward, but needed a method that also takes the externals parameters
+        :param parameters:
+        :param average_over_funcs:
+        :return:
+        """
+        X, Y = self.split_parameters(parameters)
+        res = (self.ones - X) ** 2 + 100. * (Y - X * X) ** 2
+        if average:
+            res = torch.mean(res, 0)
+        return res.squeeze()
+
+    def split_parameters(self, parameters):
+        """
+        splitting a vector into the parameter vectors (X,Y) of our function
+        :param parameters:
+        :return:
+        """
+        offset = 0
+        X = parameters[offset:self.num_of_funcs]
+        offset += self.num_of_funcs
+        Y = parameters[offset:offset + self.num_of_funcs]
+        return tuple((X.unsqueeze(1), Y.unsqueeze(1)))
+
+    def _add_param_values(self, parameters):
+        self.param_hist[len(self.param_hist)] = parameters
+
+    def set_parameters(self, parameters):
+        """
+
+        :param parameters: expect parameters to come in a long vector: batch_size x num_dims
+        :return:
+        """
+        self._add_param_values(parameters)
+        offset = 0
+        self.X.data.copy_(parameters.data[offset:self.num_of_funcs])
+        offset += self.num_of_funcs
+        self.Y.data.copy_(parameters.data[offset:offset+self.num_of_funcs])
+
+    def get_flat_params(self):
+        params = [self._parameters['X'].view(-1), self._parameters['Y'].view(-1)]
+
+        return torch.cat(params)
+
+    def reset_params(self):
+        # break the backward chain by declaring param Variable again with same Tensor values
+        if self.use_cuda:
+            self.X = nn.Parameter(self.X.data.cuda(), requires_grad=True)
+            self.Y = nn.Parameter(self.Y.data.cuda(), requires_grad=True)
+        else:
+            self.X = nn.Parameter(self.X.data, requires_grad=True)
+            self.Y = nn.Parameter(self.Y.data, requires_grad=True)
+
+    def reset(self):
+        self.param_hist = {}
+        reset_params = self.initial_params.data.clone()
+        self.set_parameters(Variable(reset_params))
+
+    def param_error(self, average=True):
+        if average:
+            avg = 1/float(self.num_of_funcs)
+        else:
+            avg = 1.
+        res = avg * torch.sum((self.X - self.true_X)**2 + (self.Y - self.true_Y)**2)
+        return res.squeeze()
 
 
 class L2LQuadratic(object):

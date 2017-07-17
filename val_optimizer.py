@@ -3,17 +3,19 @@ import time
 import numpy as np
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-from utils.regression import RegressionFunction, L2LQuadratic, neg_log_likelihood_loss
+from utils.utils import load_val_data
 
-from utils.utils import softmax, stop_computing, save_exper, construct_prior_p_t_T, generate_fixed_weights
+from utils.utils import softmax, stop_computing, save_exper, construct_prior_p_t_T, generate_fixed_weights, \
+                        get_func_loss
 
 
 def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
                        num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False,
                        save_run=None):
-    val_set = val_set
+
     start_validate = time.time()
     global STD_OPT_LR
     # we will probably call this procedure later in another context (to evaluate meta-learners)
@@ -28,11 +30,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
         meta_logger.info("INFO - No validation set provided, generating new functions")
-        if exper.args.problem == 'regression':
-            val_set = RegressionFunction(n_funcs=10000, n_samples=100, stddev=1., x_dim=10)
-        else:
-            val_set = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
-                                   use_cuda=exper.args.cuda)
+        val_set = load_val_data(num_of_funcs=exper.config.num_val_funcs, n_samples=exper.args.x_samples,
+                                stddev=exper.config.stddev, dim=exper.args.x_dim, logger=meta_logger,
+                                exper=exper)
 
         plot_idx = [0]
     else:
@@ -41,6 +41,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     meta_logger.info("INFO - Epoch {}: Validating model {} with {} functions".format(exper.epoch, exper.args.model,
                                                                                      val_set.num_of_funcs))
     total_opt_loss = 0
+    func_is_nn_module = nn.Module in val_set.__class__.__bases__
     val_set.reset()
     if verbose:
         meta_logger.info("\tStart-value parameters {}".format(np.array_str(val_set.params.data.numpy()[np.array(plot_idx)])))
@@ -74,10 +75,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     if not exper.args.learner == 'manual':
         meta_learner.reset_lstm(keep_states=False)
     for i in range(max_steps):
-        if exper.args.problem == "quadratic":
-            loss = val_set.compute_loss(average=False)
-        else:
-            loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
+        loss = get_func_loss(exper, val_set, average=False)
         if save_qt_prob_funcs:
             exper.val_stats["loss_funcs"][:, i] = loss.data.cpu().squeeze().numpy()
         if verbose and not exper.args.learner == 'manual' and i % 2 == 0:
@@ -92,17 +90,22 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         col_param_losses.append(param_loss)
 
         if not exper.args.learner == 'manual':
-
             delta_p = meta_learner.meta_update(val_set, run_type="validation")
             if exper.args.learner == 'meta':
-                # gradient descent
-                par_new = val_set.params - delta_p
                 if exper.args.problem == "quadratic":
+                    # Quadratic function from L2L paper
+                    par_new = val_set.params - delta_p
                     loss_step = val_set.compute_loss(average=True, params=par_new)
                     meta_learner.losses.append(Variable(loss_step.data))
-                else:
+                elif exper.args.problem == "regression":
                     # Regression
+                    par_new = val_set.params - delta_p
                     _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
+                elif exper.args.problem == "rosenbrock":
+                    # Rosenbrock function
+                    par_new = val_set.get_flat_params() + delta_p
+                    loss_step = val_set.evaluate(parameters=par_new, average=False)
+                    meta_learner.losses.append(Variable(loss_step.data.unsqueeze(1)))
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
@@ -137,9 +140,12 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         else:
             meta_learner.step()
 
-        # collected the loss and parameter-error
+        # set gradients of optimizee to zero again
+        if func_is_nn_module:
+            val_set.zero_grad()
+        else:
+            val_set.params.grad.data.zero_()
 
-        val_set.params.grad.data.zero_()
         # increase the opt steps variable per function in case do_stop entry is False
         # NOTE: otherwise opt_steps will NOT BE INCREASED which means the value registered for this particular
         # function is equal to the stopping step (current t - 1) which should be correct because we tested
@@ -151,10 +157,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         """
 
     # make another step to register final loss
-    if exper.args.problem == "quadratic":
-        loss = val_set.compute_loss(average=False)
-    else:
-        loss = val_set.compute_neg_ll(average_over_funcs=False, size_average=False)
+    loss = get_func_loss(exper, val_set, average=False)
 
     if save_qt_prob_funcs:
         exper.val_stats["loss_funcs"][:, i+1] = loss.data.cpu().squeeze().numpy()

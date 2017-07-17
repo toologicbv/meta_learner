@@ -14,7 +14,11 @@ class MetaConfig(object):
         # directory for data e.g. validation data
         self.data_path = 'data'
         # filename for validation data
-        self.val_file_name_suffix = 'val_funcs_'
+        self.val_file_name_suffix = 'val_'
+        # standard deviation for noise when initializing validation functions
+        self.stddev = 1.
+        # number of validation functions
+        self.num_val_funcs = 10000
         # directory for logs, actually every run creates a new directory under this dir
         self.log_root_path = 'logs'
         # prefix for directory under logs for each run

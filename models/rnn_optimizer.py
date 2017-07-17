@@ -139,14 +139,23 @@ class MetaLearner(nn.Module):
 
         :rtype: object
         """
-        param_size = optimizee_with_grads.params.grad.size()
-        if run_type == "train":
-            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
-            delta_params = self(flat_grads)
+        # first determine whether the optimizee has base class nn.Module
+        is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
+        if is_nn_module:
+            if run_type == "train":
+                delta_params = self(Variable(optimizee_with_grads.get_flat_params().data.view(-1)))
+            else:
+                delta_params = self(optimizee_with_grads.get_flat_params().view(-1))
         else:
-            delta_params = self(optimizee_with_grads.params.grad.view(-1))
-        # reshape parameters
-        delta_params = delta_params.view(param_size)
+            param_size = optimizee_with_grads.params.grad.size()
+            if run_type == "train":
+                flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+                delta_params = self(flat_grads)
+            else:
+                delta_params = self(optimizee_with_grads.params.grad.view(-1))
+            # reshape parameters
+            delta_params = delta_params.view(param_size)
+
         return delta_params
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):

@@ -16,7 +16,7 @@ from torch.autograd import Variable
 import models.rnn_optimizer
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 from probs import ConditionalTimeStepDist
-from regression import RegressionFunction, L2LQuadratic
+from regression import RegressionFunction, L2LQuadratic, RosenBrock
 
 
 def create_logger(exper, file_handler=False):
@@ -226,11 +226,40 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     return meta_optimizer
 
 
-def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., dim=2, logger=None, file_name=None,
+def get_batch_functions(exper, stddev=1.):
+    if exper.args.problem == "quadratic":
+        funcs = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
+                                 use_cuda=exper.args.cuda)
+
+    elif exper.args.problem == "regression":
+        funcs = RegressionFunction(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
+                                   stddev=stddev, x_dim=exper.args.x_dim,
+                                   use_cuda=exper.args.cuda)
+    elif exper.args.problem == "rosenbrock":
+        funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=stddev, num_dims=2,
+                           use_cuda=exper.args.cuda)
+
+    return funcs
+
+
+def get_func_loss(exper, funcs, average=False):
+    if exper.args.problem == "quadratic":
+        loss = funcs.compute_loss(average=average)
+    elif exper.args.problem == "regression":
+        loss = funcs.compute_neg_ll(average_over_funcs=average, size_average=False)
+    elif exper.args.problem == "rosenbrock":
+        loss = funcs(average_over_funcs=average)
+
+    return loss
+
+
+def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1., dim=2, logger=None, file_name=None,
                   exper=None):
 
     if file_name is None:
-        file_name = config.val_file_name_suffix + str(size) + "_" + str(n_samples) + "_" + str(noise_sigma) + "_" + \
+        file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + "_" + \
+                    str(n_samples) + "_" + \
+                    str(stddev) + "_" + \
                     str(dim) + ".dll"
 
     if path_specs is not None:
@@ -245,15 +274,18 @@ def load_val_data(path_specs=None, size=10000, n_samples=100, noise_sigma=1., di
             logger.info("INFO - validation set loaded from {}".format(load_file))
         else:
             if exper.args.problem == "regression":
-                val_funcs = RegressionFunction(n_funcs=size, n_samples=exper.args.x_samples, stddev=1.,
+                val_funcs = RegressionFunction(n_funcs=num_of_funcs, n_samples=exper.args.x_samples, stddev=stddev,
                                                x_dim=exper.args.x_dim, use_cuda=exper.args.cuda,
                                                calc_true_params=False)
             elif exper.args.problem == "quadratic":
-                val_funcs = L2LQuadratic(batch_size=size, num_dims=exper.args.x_dim,
-                                                     stddev=0.01, use_cuda=exper.args.cuda)
+                val_funcs = L2LQuadratic(batch_size=num_of_funcs, num_dims=exper.args.x_dim,
+                                                     stddev=stddev, use_cuda=exper.args.cuda)
+            elif exper.args.problem == "rosenbrock":
+                val_funcs = RosenBrock(batch_size=num_of_funcs, stddev=stddev, num_dims=exper.args.x_dim,
+                                       use_cuda=exper.args.cuda)
             else:
                 raise ValueError("Problem type {} is not supported".format(exper.args.problem))
-            logger.info("Creating validation set of size {} for problem {}".format(size, exper.args.problem))
+            logger.info("Creating validation set of size {} for problem {}".format(num_of_funcs, exper.args.problem))
             with open(load_file, 'wb') as f:
                 dill.dump(val_funcs, f)
             logger.info("Successfully saved validation file {}".format(load_file))
