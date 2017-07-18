@@ -18,6 +18,8 @@ from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plo
 from probs import ConditionalTimeStepDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock
 
+CANONICAL = False
+
 
 def create_logger(exper, file_handler=False):
     # create logger
@@ -237,7 +239,7 @@ def get_batch_functions(exper, stddev=1.):
                                    use_cuda=exper.args.cuda)
     elif exper.args.problem == "rosenbrock":
         funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=stddev, num_dims=2,
-                           use_cuda=exper.args.cuda)
+                           use_cuda=exper.args.cuda, canonical=CANONICAL)
 
     return funcs
 
@@ -282,7 +284,7 @@ def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1.,
                                                      stddev=stddev, use_cuda=exper.args.cuda)
             elif exper.args.problem == "rosenbrock":
                 val_funcs = RosenBrock(batch_size=num_of_funcs, stddev=stddev, num_dims=exper.args.x_dim,
-                                       use_cuda=exper.args.cuda)
+                                       use_cuda=exper.args.cuda, canonical=CANONICAL)
             else:
                 raise ValueError("Problem type {} is not supported".format(exper.args.problem))
             logger.info("Creating validation set of size {} for problem {}".format(num_of_funcs, exper.args.problem))

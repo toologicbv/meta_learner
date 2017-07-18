@@ -42,6 +42,8 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                                                                                      val_set.num_of_funcs))
     total_opt_loss = 0
     func_is_nn_module = nn.Module in val_set.__class__.__bases__
+    # IMPORTANT - resetting hidden states and validation functions (set back to initial values)
+    meta_learner.reset_lstm(keep_states=False)
     val_set.reset()
     if verbose:
         meta_logger.info("\tStart-value parameters {}".format(np.array_str(val_set.params.data.numpy()[np.array(plot_idx)])))
@@ -90,7 +92,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         col_param_losses.append(param_loss)
 
         if not exper.args.learner == 'manual':
-            delta_p = meta_learner.meta_update(val_set, run_type="validation")
+            delta_p = meta_learner.meta_update(val_set, run_type="train")
             if exper.args.learner == 'meta':
                 if exper.args.problem == "quadratic":
                     # Quadratic function from L2L paper
@@ -103,6 +105,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                     _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
                 elif exper.args.problem == "rosenbrock":
                     # Rosenbrock function
+                    # meta_logger.info("Step {}".format(i+1))
                     par_new = val_set.get_flat_params() + delta_p
                     loss_step = val_set.evaluate(parameters=par_new, average=False)
                     meta_learner.losses.append(Variable(loss_step.data.unsqueeze(1)))
@@ -161,7 +164,9 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
     if save_qt_prob_funcs:
         exper.val_stats["loss_funcs"][:, i+1] = loss.data.cpu().squeeze().numpy()
-
+    # how many of the val funcs are close to global minimum? Temporary
+    last_losses = loss.data.cpu().squeeze().numpy()
+    # end
     diff_min = torch.mean(loss - val_set.true_minimum_nll.expand_as(loss)).data.cpu().squeeze().numpy()[0].astype(float)
     loss = torch.sum(torch.mean(loss, 0)).data.cpu().squeeze().numpy()[0].astype(float)
     param_loss = val_set.param_error(average=True).data.cpu().numpy().astype(float)
@@ -257,6 +262,19 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         # reset some variables of the meta learner otherwise the training procedures will have serious problems
         meta_learner.reset_final_loss()
     elif exper.args.learner == 'meta':
+        # Temporary
+        f_min_idx = np.where((last_losses >= -0.1) & (last_losses <= 0.1))
+        meta_logger.info("# functions close to minimum {}".format(f_min_idx[0].shape[0]))
+        # meta_logger.info("x-param values")
+        # x_np = val_set.X.data.cpu().squeeze().numpy()
+        # y_np = val_set.Y.data.cpu().squeeze().numpy()
+        # x_np = np.abs(x_np - val_set.a.data.cpu().squeeze().numpy())
+        # y_np = np.abs(y_np - val_set.a.data.cpu().squeeze().numpy()**2)
+        # minx_idx = np.where((x_np <= 0.1) & (x_np >= 0.))
+        # miny_idx = np.where((y_np <= 0.1) & (y_np >= 0.))
+        # meta_logger.info(minx_idx[0].shape[0])
+        # meta_logger.info("y-param values")
+        # meta_logger.info(miny_idx[0].shape[0])
         meta_learner.reset_losses()
 
     if save_run is not None:

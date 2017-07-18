@@ -125,8 +125,10 @@ class MetaLearner(nn.Module):
         x_t = self.linear1(x_t)
         for i in range(len(self.lstms)):
             if x_t.size(0) != self.hx[i].size(0):
-                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
-                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
+                shape_hx = list([x_t.size(0), self.hx[i].size(1)])
+                shape_cx = list([x_t.size(0), self.cx[i].size(1)])
+                self.hx[i] = self.hx[i].expand(*shape_hx)
+                self.cx[i] = self.cx[i].expand(*shape_cx)
 
             self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
             x_t = self.hx[i]

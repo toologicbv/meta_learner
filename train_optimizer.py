@@ -210,12 +210,11 @@ def main():
                 qt_param = qt_param.cuda()
 
             # outer loop with the optimization steps
-            # meta_logger.info("Total steps {}".format(optimizer_steps))
+            # meta_logger.info("Batch size {}".format(reg_funcs.num_of_funcs))
             for k in range(optimizer_steps):
 
                 if exper.args.learner == 'meta':
-                    # meta model uses truncated BPTT
-                    # Keep states for truncated BPTT
+                    # meta model uses truncated BPTT, Keep states for truncated BPTT
                     if k > exper.args.truncated_bptt_step - 1:
                         keep_states = True
                     else:
@@ -271,7 +270,11 @@ def main():
                     else:
                         # new_version (observed improvement)
                         # min_f = torch.min(torch.cat(meta_optimizer.losses[0:k+1], 0))
-                        # observed_imp = (-1.) * (min_f - loss_step)
+                        # observed_imp = loss_step - min_f
+                        # if i == 79:
+                        #    print(min_f.data.cpu().numpy()[0], loss_step.data.cpu().numpy()[0])
+                        #    meta_logger.info("Step {} - OI {:.3f}".format(k,
+                        #                                              observed_imp.data.cpu().squeeze().numpy()[0]))
                         # loss_sum += observed_imp
                         loss_sum = loss_sum + loss_step
                 # ACT model processing

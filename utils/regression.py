@@ -114,7 +114,7 @@ def insert_samples_dim(X, size_dim1):
 
 class RosenBrock(nn.Module):
 
-    def __init__(self, batch_size=128, num_dims=2, stddev=1., use_cuda=False):
+    def __init__(self, batch_size=128, num_dims=2, stddev=1., use_cuda=False, canonical=False):
         self.num_of_funcs = batch_size
         self.noise_sigma = stddev
         self.use_cuda = use_cuda
@@ -124,19 +124,25 @@ class RosenBrock(nn.Module):
         # trainable variables.
         X = torch.FloatTensor(batch_size, 1)
         Y = torch.FloatTensor(batch_size, 1)
+        a = torch.FloatTensor(batch_size, 1)
+        b = torch.FloatTensor(batch_size, 1)
         if self.use_cuda:
             self.X = nn.Parameter(init.normal(X, mean=0., std=stddev).cuda(), requires_grad=True)
             self.Y = nn.Parameter(init.normal(Y, mean=0., std=stddev).cuda(), requires_grad=True)
-            self.true_X = Variable(torch.ones(X.size()).cuda(), requires_grad=False)
-            self.true_Y = Variable(torch.ones(Y.size()).cuda(), requires_grad=False)
-            self.ones = Variable(torch.ones(X.size()).cuda(), requires_grad=False)
+            if canonical:
+                a[:] = 1.0
+                self.a = Variable(a.cuda(), requires_grad=False)
+                b[:] = 100.
+                self.b = Variable(b.cuda(), requires_grad=False)
+            else:
+                self.a = Variable(init.normal(a, mean=1., std=1.).cuda(), requires_grad=False)
+                self.b = Variable(init.normal(b, mean=100., std=1.).cuda(), requires_grad=False)
             self.true_minimum_nll = Variable(torch.zeros(1).cuda())
         else:
             self.X = nn.Parameter(init.normal(X, mean=0., std=stddev), requires_grad=True)
             self.Y = nn.Parameter(init.normal(Y, mean=0., std=stddev), requires_grad=True)
-            self.true_X = Variable(torch.ones(X.size()), requires_grad=False)
-            self.true_Y = Variable(torch.ones(Y.size()), requires_grad=False)
-            self.ones = Variable(torch.ones(X.size()), requires_grad=False)
+            self.a = Variable(init.normal(a, mean=1., std=1.).cuda(), requires_grad=False)
+            self.b = Variable(init.normal(b, mean=100., std=1.).cuda(), requires_grad=False)
             self.true_minimum_nll = Variable(torch.zeros(1))
 
         self.param_hist = {}
@@ -144,39 +150,50 @@ class RosenBrock(nn.Module):
         self._add_param_values(self.initial_params)
 
     def forward(self, average_over_funcs=False):
+        """
+        The Rosenbrock function f(x,y) = (a - x)**2 + b * (y - x**2)**2
+        we're trying to find x & y
 
-        res = (self.ones - self.X) ** 2 + 100. * (self.Y - self.X * self.X) ** 2
+        :param average_over_funcs:
+        :return:
+        """
+        res = (self.a - self.X) ** 2 + self.b * (self.Y - self.X * self.X) ** 2
         if average_over_funcs:
             res = res.mean()
         return res
 
-    def evaluate(self, parameters, average=False):
+    def evaluate(self, parameters, average=False, N=None):
         """
         in fact the same as forward, but needed a method that also takes the externals parameters
         :param parameters:
         :param average_over_funcs:
         :return:
         """
-        X, Y = self.split_parameters(parameters)
-        res = (self.ones - X) ** 2 + 100. * (Y - X * X) ** 2
+        if N is None:
+            N = self.num_of_funcs
+
+        X, Y = self.split_parameters(parameters, N=N)
+        res = (self.a - X) ** 2 + self.b * (Y - X * X) ** 2
         if average:
             res = torch.mean(res, 0)
         return res.squeeze()
 
-    def split_parameters(self, parameters):
+    def split_parameters(self, parameters, N=None):
         """
         splitting a vector into the parameter vectors (X,Y) of our function
         :param parameters:
         :return:
         """
+        if N is None:
+            N = self.num_of_funcs
         offset = 0
-        X = parameters[offset:self.num_of_funcs]
+        X = parameters[offset:N]
         offset += self.num_of_funcs
-        Y = parameters[offset:offset + self.num_of_funcs]
+        Y = parameters[offset:offset + N]
         return tuple((X.unsqueeze(1), Y.unsqueeze(1)))
 
     def _add_param_values(self, parameters):
-        self.param_hist[len(self.param_hist)] = parameters
+        self.param_hist[len(self.param_hist)] = parameters.data.cpu()
 
     def set_parameters(self, parameters):
         """
@@ -191,9 +208,8 @@ class RosenBrock(nn.Module):
         self.Y.data.copy_(parameters.data[offset:offset+self.num_of_funcs])
 
     def get_flat_params(self):
-        params = [self._parameters['X'].view(-1), self._parameters['Y'].view(-1)]
 
-        return torch.cat(params)
+        return torch.cat([self._parameters['X'].squeeze(), self._parameters['Y'].squeeze()])
 
     def reset_params(self):
         # break the backward chain by declaring param Variable again with same Tensor values
@@ -210,11 +226,16 @@ class RosenBrock(nn.Module):
         self.set_parameters(Variable(reset_params))
 
     def param_error(self, average=True):
+        """
+        Remember Rosenbrock function has minium at f(x,y)=(a, a**2)
+        :param average:
+        :return:
+        """
         if average:
             avg = 1/float(self.num_of_funcs)
         else:
             avg = 1.
-        res = avg * torch.sum((self.X - self.true_X)**2 + (self.Y - self.true_Y)**2)
+        res = avg * torch.sum((self.X - self.a)**2 + (self.Y - self.a**2)**2)
         return res.squeeze()
 
 
@@ -622,9 +643,6 @@ class RegressionFunction(object):
             # we end up here if we're are training the meta learner without ACT, so we only have losses
             losses = np.array_str(np.array(losses), precision=3, suppress_small=True)
             text = "losses {}".format(losses)
-            annotation = True
-        else:
-            annotation = False
 
         # if annotation:
         if 1 == 0:
