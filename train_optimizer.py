@@ -106,7 +106,8 @@ def main():
         torch.cuda.manual_seed(SEED)
 
     np.random.seed(SEED)
-    
+    if args.problem == "rosenbrock":
+        config.max_val_opt_steps = args.optimizer_steps
     exper = Experiment(args, config)
     # get distribution P(T) over possible number of total timesteps
     if args.learner == "act":
@@ -260,8 +261,14 @@ def main():
                         par_new = reg_funcs.params - delta_param
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
                     elif exper.args.problem == "rosenbrock":
-                        par_new = reg_funcs.get_flat_params() + delta_param
-                        loss_step = reg_funcs.evaluate(parameters=par_new, average=True)
+                        if exper.args.version[0:2] == "V4":
+                            # metaV4, meta_update returns tuple (delta_param, qt-value)
+                            par_new = reg_funcs.get_flat_params() + delta_param[0]
+                            loss_step = torch.mean(delta_param[1] * reg_funcs.evaluate(parameters=par_new,
+                                                                                       average=False), 0).squeeze()
+                        else:
+                            par_new = reg_funcs.get_flat_params() + delta_param
+                            loss_step = reg_funcs.evaluate(parameters=par_new, average=True)
                         meta_optimizer.losses.append(Variable(loss_step.data.unsqueeze(1)))
 
                     reg_funcs.set_parameters(par_new)

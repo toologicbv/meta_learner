@@ -157,6 +157,7 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
 
     if exper.args.version == 'V1' or exper.args.version == 'V2' \
         or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
+            or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'meta') \
             or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
@@ -174,16 +175,23 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
         # q(t|T, theta) approximation incorporated into the first LSTM (basically one loop, where V2 has
         # 2 separate loops and works on the mean of the gradients, where V1 works on the individual parameters
         # only use first 2 characters of args.version e.g. V1 instead of V1.1
-        act_class = getattr(models.rnn_optimizer, "AdaptiveMetaLearner" + exper.args.version[0:2])
+        str_classname = "AdaptiveMetaLearner" + exper.args.version[0:2]
+        act_class = getattr(models.rnn_optimizer, str_classname)
         meta_optimizer = act_class(num_params_optimizee,
                                    num_layers=exper.args.num_layers,
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
                                    output_bias=output_bias)
     else:
-        act_class = getattr(models.rnn_optimizer, "MetaLearner")
+        # the alternative model is our MetaLearner in different favours
+        if exper.args.version[0:2] == "V4":
+            str_classname = "MetaStepLearner"
+            meta_class = getattr(models.rnn_optimizer, str_classname)
+        else:
+            str_classname = "MetaLearner"
+            meta_class = getattr(models.rnn_optimizer, str_classname)
 
-        meta_optimizer = act_class(num_params_optimizee,
+        meta_optimizer = meta_class(num_params_optimizee,
                                      num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
                                      use_cuda=exper.args.cuda,
@@ -216,8 +224,10 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     meta_optimizer.name = exper.args.model
 
     if exper.args.cuda:
-        logger.info("Note: MetaLearner is running on GPU")
+        logger.info("Note: {} is running on GPU".format(str_classname))
         meta_optimizer.cuda()
+    else:
+        logger.info("Note: {} is running on CPU".format(str_classname))
     # print(meta_optimizer.state_dict().keys())
     param_list = []
     for name, param in meta_optimizer.named_parameters():
@@ -258,6 +268,8 @@ def get_func_loss(exper, funcs, average=False):
 def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1., dim=2, logger=None, file_name=None,
                   exper=None):
 
+    if exper.args.problem == "rosenbrock":
+        logger.info("Note CANONICAL set to {}".format(CANONICAL))
     if file_name is None:
         file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + "_" + \
                     str(n_samples) + "_" + \
@@ -375,7 +387,8 @@ def end_run(experiment, model, validation=True, on_server=False):
     save_exper(experiment)
     if not on_server:
         loss_plot(experiment, loss_type="loss", save=True, validation=validation)
-        loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation)
+        if experiment.args.problem == "rosenbrock":
+            loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation, log_scale=False)
         if experiment.args.learner == "act":
             # plot histogram of T distribution (number of optimization steps during training)
             # plot_dist_optimization_steps(experiment, data_set="train", save=True)

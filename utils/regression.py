@@ -13,6 +13,8 @@ from quadratic import create_exp_label
 from itertools import cycle
 from cycler import cycler
 
+# NLL from t-distribution http://web.itu.edu.tr/etaner/wseasJ05.pdf
+
 
 def neg_log_likelihood_loss(true_y, est_y, stddev, N, avg_batch=False, size_average=False):
     """
@@ -127,8 +129,8 @@ class RosenBrock(nn.Module):
         a = torch.FloatTensor(batch_size, 1)
         b = torch.FloatTensor(batch_size, 1)
         if self.use_cuda:
-            self.X = nn.Parameter(init.normal(X, mean=0., std=stddev).cuda(), requires_grad=True)
-            self.Y = nn.Parameter(init.normal(Y, mean=0., std=stddev).cuda(), requires_grad=True)
+            self.X = nn.Parameter(init.normal(X, mean=-1.2, std=stddev).cuda(), requires_grad=True)
+            self.Y = nn.Parameter(init.normal(Y, mean=1, std=stddev).cuda(), requires_grad=True)
             if canonical:
                 a[:] = 1.0
                 self.a = Variable(a.cuda(), requires_grad=False)
@@ -141,8 +143,14 @@ class RosenBrock(nn.Module):
         else:
             self.X = nn.Parameter(init.normal(X, mean=0., std=stddev), requires_grad=True)
             self.Y = nn.Parameter(init.normal(Y, mean=0., std=stddev), requires_grad=True)
-            self.a = Variable(init.normal(a, mean=1., std=1.).cuda(), requires_grad=False)
-            self.b = Variable(init.normal(b, mean=100., std=1.).cuda(), requires_grad=False)
+            if canonical:
+                a[:] = 1.0
+                self.a = Variable(a, requires_grad=False)
+                b[:] = 100.
+                self.b = Variable(b, requires_grad=False)
+            else:
+                self.a = Variable(init.normal(a, mean=1., std=1.).cuda(), requires_grad=False)
+                self.b = Variable(init.normal(b, mean=100., std=1.).cuda(), requires_grad=False)
             self.true_minimum_nll = Variable(torch.zeros(1))
 
         self.param_hist = {}
@@ -209,7 +217,10 @@ class RosenBrock(nn.Module):
 
     def get_flat_params(self):
 
-        return torch.cat([self._parameters['X'].squeeze(), self._parameters['Y'].squeeze()])
+        return torch.cat([self.X.squeeze(), self.Y.squeeze()])
+
+    def get_flat_grads(self):
+        return torch.cat([self.X.grad.squeeze(), self.Y.grad.squeeze()])
 
     def reset_params(self):
         # break the backward chain by declaring param Variable again with same Tensor values

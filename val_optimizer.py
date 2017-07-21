@@ -92,28 +92,48 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         col_param_losses.append(param_loss)
 
         if not exper.args.learner == 'manual':
-            delta_p = meta_learner.meta_update(val_set, run_type="train")
+            if func_is_nn_module:
+                # we already have flat parameters to pass to LSTM optimizer, no need for reshape
+                grads = Variable(val_set.get_flat_grads().data)
+                delta_p = meta_learner.forward(grads)
+            else:
+                meta_logger.info(val_set.params.grad.view(-1).size())
+                delta_p = meta_learner.forward(val_set.params.grad.view(-1))
+            # delta_p = meta_learner.meta_update(val_set, run_type="train")
             if exper.args.learner == 'meta':
                 if exper.args.problem == "quadratic":
                     # Quadratic function from L2L paper
-                    par_new = val_set.params - delta_p
+                    param_size = val_set.params.size()
+                    par_new = val_set.params - delta_p.view(param_size)
                     loss_step = val_set.compute_loss(average=True, params=par_new)
                     meta_learner.losses.append(Variable(loss_step.data))
                 elif exper.args.problem == "regression":
                     # Regression
-                    par_new = val_set.params - delta_p
+                    param_size = val_set.params.size()
+                    par_new = val_set.params - delta_p.view(param_size)
                     _ = meta_learner.step_loss(val_set, par_new, average_batch=True)
                 elif exper.args.problem == "rosenbrock":
                     # Rosenbrock function
-                    # meta_logger.info("Step {}".format(i+1))
-                    par_new = val_set.get_flat_params() + delta_p
-                    loss_step = val_set.evaluate(parameters=par_new, average=False)
+                    if exper.args.version[0:2] == "V4":
+                        # metaV4, meta_update returns tuple (delta_param, qt-value)
+                        par_new = val_set.get_flat_params() + delta_p[0]
+                        param_size = list([val_set.num_of_funcs, val_set.dim])
+                        delta_qt = torch.mean(delta_qt.view(*param_size), 1)
+                        loss_step = torch.mean(delta_qt * val_set.evaluate(parameters=par_new,
+                                                                             average=False), 0).squeeze()
+                        meta_learner.q_t.append(delta_p[1].data.cpu().numpy())
+                    else:
+                        # not necessary to reshape the ouput of LSTM because we're working with flat parameter anyway
+                        par_new = val_set.get_flat_params() + delta_p
+                        loss_step = val_set.evaluate(parameters=par_new, average=False)
                     meta_learner.losses.append(Variable(loss_step.data.unsqueeze(1)))
 
             elif exper.args.learner == 'act':
                 # in this case forward returns a tuple (parm_delta, qt)
-                par_new = val_set.params - delta_p[0]
-                qt_param = qt_param + delta_p[1]
+                param_size = val_set.params.size()
+                par_new = val_set.params - delta_p[0].view(param_size)
+                qt_delta = torch.mean(delta_p[1].view(param_size), 1)
+                qt_param = qt_param + qt_delta
                 qt_weights.append(qt_param.data.cpu().numpy().astype(float))
                 # actually only calculating step loss here meta_leaner will collect the losses in order to
                 # compute the final ACT loss
@@ -242,8 +262,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_logger.debug(
             "{} Epoch/Validation: CDF q(t) {}".format(exper.epoch, np.array_str(np.cumsum(np.mean(q_probs, 0)),
                                                                                 precision=4)))
-    # meta_logger.info("INFO - Epoch {}: Final step param-losses: {}".format(exper.epoch,
-    #                 np.array_str(exper.val_stats["step_param_losses"][exper.epoch], precision=4)))
     meta_logger.info("INFO - Epoch {}: Final step losses: {}".format(exper.epoch,
                                                                            np.array_str(
                                                                                exper.val_stats["step_losses"][
@@ -263,18 +281,54 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_learner.reset_final_loss()
     elif exper.args.learner == 'meta':
         # Temporary
-        f_min_idx = np.where((last_losses >= -0.1) & (last_losses <= 0.1))
-        meta_logger.info("# functions close to minimum {}".format(f_min_idx[0].shape[0]))
-        # meta_logger.info("x-param values")
-        # x_np = val_set.X.data.cpu().squeeze().numpy()
-        # y_np = val_set.Y.data.cpu().squeeze().numpy()
-        # x_np = np.abs(x_np - val_set.a.data.cpu().squeeze().numpy())
-        # y_np = np.abs(y_np - val_set.a.data.cpu().squeeze().numpy()**2)
-        # minx_idx = np.where((x_np <= 0.1) & (x_np >= 0.))
-        # miny_idx = np.where((y_np <= 0.1) & (y_np >= 0.))
-        # meta_logger.info(minx_idx[0].shape[0])
-        # meta_logger.info("y-param values")
-        # meta_logger.info(miny_idx[0].shape[0])
+        # f_min_idx = np.where((last_losses >= -0.1) & (last_losses <= 0.1))
+        if exper.args.problem == "rosenbrock":
+            X, Y = val_set.split_parameters(val_set.initial_params)
+            x_np = val_set.X.data.cpu().squeeze().numpy()
+            y_np = val_set.Y.data.cpu().squeeze().numpy()
+            a = val_set.a.data.cpu().squeeze().numpy()
+            b = val_set.b.data.cpu().squeeze().numpy()
+            a2 = a**2
+            x_delta = np.abs(x_np - a)
+            y_delta = np.abs(y_np - a**2)
+            minx_idx = np.where((x_delta <= 0.1) & (x_delta >= 0.) & (a2 >= 0.1))
+            miny_idx = np.where((y_delta <= 0.1) & (y_delta >= 0.) & (a2 >= 0.1))
+            local_min = np.where((np.abs(x_np) <= 0.1) & (np.abs(y_np) <= 0.1))
+            all = np.arange(val_set.num_of_funcs)
+            x = set(minx_idx[0])
+            y = set(miny_idx[0])
+            r = list(x.intersection(y))
+            r_comp = list(set(all) - set(r))
+            meta_logger.info("from {} close to global minimum {} - close to (0,0) {}".format(val_set.num_of_funcs,
+                                                                                             len(r),
+                                                                                             local_min[0].shape[0]))
+            if len(r) > 0:
+                try_idx = r[0]
+                meta_logger.info("function {} init({:.3f}, {:.3f}) "
+                                 "true({:.3f}, {:.3f}) "
+                                 "curr({:.3f}, {:.3f})".format(try_idx, X[try_idx].data.cpu().squeeze().numpy()[0],
+                                                        Y[try_idx].data.cpu().squeeze().numpy()[0],
+                                                        val_set.a[try_idx].data.cpu().squeeze().numpy()[0],
+                                                        val_set.a[try_idx].data.cpu().squeeze().numpy()[0]**2,
+                                                        val_set.X[try_idx].data.cpu().squeeze().numpy()[0],
+                                                        val_set.Y[try_idx].data.cpu().squeeze().numpy()[0]))
+            if False:
+                parm_x = val_set.X.data.cpu().squeeze().numpy()
+                parm_y = val_set.Y.data.cpu().squeeze().numpy()
+                meta_logger.info("true a")
+                meta_logger.info("{}".format(np.array_str(a[np.array(r_comp)[0:30]])))
+                meta_logger.info("true b")
+                meta_logger.info("{}".format(np.array_str(b[np.array(r_comp)[0:30]])))
+                meta_logger.info("current x")
+                meta_logger.info("{}".format(np.array_str(parm_x[np.array(r_comp)[0:30]])))
+                meta_logger.info("current y")
+                meta_logger.info("{}".format(np.array_str(parm_y[np.array(r_comp)[0:30]])))
+                meta_logger.info("current loss")
+                meta_logger.info("{}".format(np.array_str(last_losses[np.array(r_comp)[0:30]])))
+                if exper.args.learner == "meta" and exper.args.version[0:2] == "V4":
+                    qt = np.concatenate(meta_learner.q_t, 1)
+                    meta_logger.info("{}".format(np.array_str(qt[try_idx, :])))
+
         meta_learner.reset_losses()
 
     if save_run is not None:

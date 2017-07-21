@@ -16,7 +16,7 @@ class MetaConfig(object):
         # filename for validation data
         self.val_file_name_suffix = 'val_'
         # standard deviation for noise when initializing validation functions
-        self.stddev = 1.5
+        self.stddev = 1.
         # number of validation functions
         self.num_val_funcs = 1000
         # directory for logs, actually every run creates a new directory under this dir

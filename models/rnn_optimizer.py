@@ -83,6 +83,7 @@ class MetaLearner(nn.Module):
         self.lstms = nn.ModuleList()
         for i in range(num_layers):
             self.lstms.append(LayerLSTMCell(num_hidden, num_hidden, forget_gate_bias=fg_bias))
+            # self.lstms.append(nn.LSTMCell(num_hidden, num_hidden))
 
         self.linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.losses = []
@@ -125,10 +126,8 @@ class MetaLearner(nn.Module):
         x_t = self.linear1(x_t)
         for i in range(len(self.lstms)):
             if x_t.size(0) != self.hx[i].size(0):
-                shape_hx = list([x_t.size(0), self.hx[i].size(1)])
-                shape_cx = list([x_t.size(0), self.cx[i].size(1)])
-                self.hx[i] = self.hx[i].expand(*shape_hx)
-                self.cx[i] = self.cx[i].expand(*shape_cx)
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
 
             self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
             x_t = self.hx[i]
@@ -145,9 +144,7 @@ class MetaLearner(nn.Module):
         is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
         if is_nn_module:
             if run_type == "train":
-                delta_params = self(Variable(optimizee_with_grads.get_flat_params().data.view(-1)))
-            else:
-                delta_params = self(optimizee_with_grads.get_flat_params().view(-1))
+                delta_params = self(Variable(optimizee_with_grads.get_flat_grads().data))
         else:
             param_size = optimizee_with_grads.params.grad.size()
             if run_type == "train":
@@ -196,6 +193,70 @@ class MetaLearner(nn.Module):
     def final_loss(self, loss_weights, run_type='train'):
         losses = torch.mean(torch.cat(self.losses, 1), 0).squeeze()
         return torch.sum(losses * loss_weights)
+
+
+class MetaStepLearner(MetaLearner):
+
+    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False,
+                 output_bias=True):
+        super(MetaStepLearner, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers, use_cuda,
+                                              output_bias=output_bias, fg_bias=1)
+        self.q_t = []
+        self.qt_linear_out = nn.Linear(num_hidden, 1, bias=True)
+        if self.use_cuda:
+            self.cuda()
+
+    def forward(self, x_t):
+
+        if self.use_cuda and not x_t.is_cuda:
+            x_t = x_t.cuda()
+
+        x_t = x_t.unsqueeze(1)
+        x_t = self.linear1(x_t)
+        for i in range(len(self.lstms)):
+            if x_t.size(0) != self.hx[i].size(0):
+                self.hx[i] = self.hx[i].expand(x_t.size(0), self.hx[i].size(1))
+                self.cx[i] = self.cx[i].expand(x_t.size(0), self.cx[i].size(1))
+
+            self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
+            x_t = self.hx[i]
+
+        theta_out = self.linear_out(x_t)
+        qt_out = F.sigmoid(self.qt_linear_out(x_t))
+        # qt_out = self.act_qt_out (qt_out.view(param_shape))
+
+        return tuple((theta_out.squeeze(), qt_out.squeeze()))
+
+    def meta_update(self, optimizee_with_grads, run_type="train"):
+
+        """
+
+        :rtype: object
+        """
+        # first determine whether the optimizee has base class nn.Module
+        is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
+        if is_nn_module:
+            param_size = list([optimizee_with_grads.num_of_funcs, optimizee_with_grads.dim])
+            if run_type == "train":
+                delta_theta, delta_qt = self(Variable(optimizee_with_grads.get_flat_params().data.view(-1)))
+            else:
+                delta_theta, delta_qt = self(optimizee_with_grads.get_flat_params().view(-1))
+            delta_qt = torch.mean(delta_qt.view(*param_size), 1)
+        else:
+            param_size = optimizee_with_grads.params.grad.size()
+            if run_type == "train":
+                flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+                delta_theta, delta_qt = self(flat_grads)
+            else:
+                delta_theta, delta_qt = self(optimizee_with_grads.params.grad.view(-1))
+            # reshape parameters
+            delta_theta = delta_theta.view(param_size)
+
+        return delta_theta, delta_qt
+
+    def reset_losses(self):
+        self.losses = []
+        self.q_t = []
 
 
 class AdaptiveMetaLearnerV2(MetaLearner):
