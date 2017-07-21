@@ -97,7 +97,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                 grads = Variable(val_set.get_flat_grads().data)
                 delta_p = meta_learner.forward(grads)
             else:
-                meta_logger.info(val_set.params.grad.view(-1).size())
                 delta_p = meta_learner.forward(val_set.params.grad.view(-1))
             # delta_p = meta_learner.meta_update(val_set, run_type="train")
             if exper.args.learner == 'meta':
@@ -107,7 +106,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                     par_new = val_set.params - delta_p.view(param_size)
                     loss_step = val_set.compute_loss(average=True, params=par_new)
                     meta_learner.losses.append(Variable(loss_step.data))
-                elif exper.args.problem == "regression":
+                elif exper.args.problem[0:10] == "regression":
                     # Regression
                     param_size = val_set.params.size()
                     par_new = val_set.params - delta_p.view(param_size)

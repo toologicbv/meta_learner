@@ -256,7 +256,7 @@ def main():
                         par_new = reg_funcs.params - delta_param
                         loss_step = reg_funcs.compute_loss(average=True, params=par_new)
                         meta_optimizer.losses.append(Variable(loss_step.data))
-                    elif exper.args.problem == "regression":
+                    elif exper.args.problem[0:10] == "regression":
                         # Regression
                         par_new = reg_funcs.params - delta_param
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)

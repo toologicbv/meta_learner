@@ -8,7 +8,7 @@ import numpy as np
 from collections import OrderedDict
 from layer_lstm import LayerLSTMCell
 from utils.config import config
-from utils.regression import neg_log_likelihood_loss
+from utils.regression import neg_log_likelihood_loss, nll_with_t_dist, RegressionFunction, RegressionWithStudentT
 
 
 def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
@@ -42,6 +42,21 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
             raise ValueError("KL divergence can't be less than zero {}".format(kl_str))
 
     return kl_div
+
+
+def get_step_loss(optimizee_obj, new_parameters, avg_batch=False):
+    if optimizee_obj.__class__ == RegressionFunction:
+        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
+                                       stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
+                                       cavg_batch=avg_batch, size_average=False)
+    elif optimizee_obj.__class__ == RegressionWithStudentT:
+        loss = nll_with_t_dist(optimizee_obj.y, optimizee_obj.y_t(new_parameters), N=optimizee_obj.n_samples,
+                               shape_p=optimizee_obj.shape_p, scale_p=optimizee_obj.scale_p,
+                               avg_batch=avg_batch)
+    else:
+        raise ValueError("Optimizee class not supported {}".format(optimizee_obj.__class__))
+
+    return loss
 
 
 def init_stat_vars(conf=None):
@@ -159,9 +174,7 @@ class MetaLearner(nn.Module):
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
 
-        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
-                                             stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
-                                             avg_batch=False, size_average=False)
+        loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=average_batch)
         # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
         self.losses.append(Variable(loss.data))
         if average_batch:
@@ -340,8 +353,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
-        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(params=new_parameters),
-                                       stddev=optimizee_obj.stddev, N=N, size_average=False)
+        loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=False)
 
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor

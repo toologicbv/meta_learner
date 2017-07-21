@@ -16,7 +16,7 @@ from torch.autograd import Variable
 import models.rnn_optimizer
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 from probs import ConditionalTimeStepDist
-from regression import RegressionFunction, L2LQuadratic, RosenBrock
+from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
 
 CANONICAL = False
 
@@ -247,6 +247,10 @@ def get_batch_functions(exper, stddev=1.):
         funcs = RegressionFunction(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
                                    stddev=stddev, x_dim=exper.args.x_dim,
                                    use_cuda=exper.args.cuda)
+    elif exper.args.problem == "regression_T":
+        funcs = RegressionWithStudentT(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
+                                       x_dim=exper.args.x_dim, scale_p=1., shape_p=1,
+                                       use_cuda=exper.args.cuda)
     elif exper.args.problem == "rosenbrock":
         funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=stddev, num_dims=2,
                            use_cuda=exper.args.cuda, canonical=CANONICAL)
@@ -259,6 +263,8 @@ def get_func_loss(exper, funcs, average=False):
         loss = funcs.compute_loss(average=average)
     elif exper.args.problem == "regression":
         loss = funcs.compute_neg_ll(average_over_funcs=average, size_average=False)
+    elif exper.args.problem == "regression_T":
+        loss = funcs.compute_neg_ll(average_over_funcs=average)
     elif exper.args.problem == "rosenbrock":
         loss = funcs(average_over_funcs=average)
 
@@ -291,6 +297,10 @@ def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1.,
                 val_funcs = RegressionFunction(n_funcs=num_of_funcs, n_samples=exper.args.x_samples, stddev=stddev,
                                                x_dim=exper.args.x_dim, use_cuda=exper.args.cuda,
                                                calc_true_params=False)
+            elif exper.args.problem == "regression_T":
+                val_funcs = RegressionWithStudentT(n_funcs=num_of_funcs, n_samples=exper.args.x_samples,
+                                                   x_dim=exper.args.x_dim, scale_p=1., shape_p=1,
+                                                   use_cuda=exper.args.cuda)
             elif exper.args.problem == "quadratic":
                 val_funcs = L2LQuadratic(batch_size=num_of_funcs, num_dims=exper.args.x_dim,
                                                      stddev=stddev, use_cuda=exper.args.cuda)
@@ -387,8 +397,7 @@ def end_run(experiment, model, validation=True, on_server=False):
     save_exper(experiment)
     if not on_server:
         loss_plot(experiment, loss_type="loss", save=True, validation=validation)
-        if experiment.args.problem == "rosenbrock":
-            loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation, log_scale=False)
+        loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation, log_scale=False)
         if experiment.args.learner == "act":
             # plot histogram of T distribution (number of optimization steps during training)
             # plot_dist_optimization_steps(experiment, data_set="train", save=True)
@@ -398,7 +407,7 @@ def end_run(experiment, model, validation=True, on_server=False):
         # param_error_plot(experiment, save=True)
 
 
-def detailed_train_info(logger, func, f_idx, args, learner, step, optimizer_steps, error):
+def detailed_train_info(logger, func, f_idx, step, optimizer_steps, error):
     logger.info("INFO-track -----------------------------------------------------")
     logger.info("{}-th batch (op-steps {}): loss {:.4f}".format(step, optimizer_steps, error))
     logger.info("Example function: {}".format(func.poly_desc(f_idx)))

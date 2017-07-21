@@ -12,6 +12,7 @@ from config import config
 from quadratic import create_exp_label
 from itertools import cycle
 from cycler import cycler
+from scipy.special import gammaln
 
 # NLL from t-distribution http://web.itu.edu.tr/etaner/wseasJ05.pdf
 
@@ -40,6 +41,28 @@ def neg_log_likelihood_loss(true_y, est_y, stddev, N, avg_batch=False, size_aver
         ll = torch.sum(ll)
 
     return ll
+
+
+def nll_with_t_dist(true_y, est_y, N, shape_p=1, scale_p=1., avg_batch=False):
+    """
+
+    :param true_y:
+    :param est_y:
+    :param N:
+    :param shape_p: degrees of freedom (nu)
+    :param scale_p: scale parameter lambda
+    :param avg_batch: average over batch dimension (dim0)
+    :return: negative log-likelihood based on student-t distribution
+    """
+    # source of NLL is http://web.itu.edu.tr/etaner/wseasJ05.pdf eq(7)
+    C = (-1) * N * (gammaln((shape_p + 1)/2.) - gammaln(shape_p/2.) - 0.5 * np.log(np.pi * shape_p) -\
+                    np.log(scale_p))
+    nll = (shape_p + 1)/2. * torch.sum(torch.log(1. + ((true_y - est_y) * 1./(scale_p * np.sqrt(shape_p)))**2), 1)
+    nll += C
+    if avg_batch:
+        nll = torch.mean(nll, 0).squeeze()
+
+    return nll
 
 
 def get_axis_ranges(init_params, true_params, delta=2, steps=100):
@@ -354,6 +377,149 @@ class L2LQuadratic(object):
         loss = self.compute_loss(params=self.true_params, average=True)
         print(loss.data.cpu().numpy())
         return loss
+
+
+class RegressionWithStudentT(object):
+
+    def __init__(self, n_funcs=128, n_samples=10, scale_p=1., shape_p=1, x_dim=10.,
+                 calc_true_params=False, use_cuda=False):
+        self.use_cuda = use_cuda
+        self.scale_p = scale_p
+        self.shape_p = shape_p
+        self.num_of_funcs = n_funcs
+        self.n_samples = n_samples
+        self.xdim = x_dim
+
+        true_params = torch.FloatTensor(n_funcs, x_dim)
+        self.true_params = Variable(init.uniform(true_params), requires_grad=False)
+        params = torch.FloatTensor(n_funcs, x_dim)
+        if self.use_cuda:
+            self.params = Variable(init.normal(params, mean=0., std=1.).cuda(), requires_grad=True)
+            self.true_params = self.true_params.cuda()
+        else:
+            self.params = Variable(init.normal(params, mean=0., std=1.), requires_grad=True)
+
+        self.initial_params = self.params.clone()
+
+        w = torch.FloatTensor(self.num_of_funcs, self.n_samples, self.xdim)
+        self.W = Variable(init.uniform(w), requires_grad=False)
+        if self.use_cuda:
+            self.W = self.W.cuda()
+
+        self.y_no_noise = torch.squeeze(torch.bmm(self.W, self.true_params.unsqueeze(self.true_params.dim())))
+        if self.num_of_funcs ==1:
+            self.y_no_noise = self.y_no_noise.unsqueeze(0)
+        noise = np.random.standard_t(self.shape_p, size=(self.num_of_funcs, self.n_samples))
+        self.noise = Variable(torch.from_numpy(noise).float(), requires_grad=False)
+        true_minimum_nll = (-1) * self.n_samples * (gammaln((shape_p + 1)/2.) - gammaln(shape_p/2.) - \
+                                                    0.5 * np.log(np.pi * shape_p) - np.log(scale_p))
+        self.true_minimum_nll = Variable(torch.FloatTensor([true_minimum_nll]))
+        if self.use_cuda:
+            self.noise = self.noise.cuda()
+            self.true_minimum_nll = self.true_minimum_nll.cuda()
+
+        self.y = self.y_no_noise + self.noise.expand_as(self.y_no_noise)
+
+        if self.use_cuda:
+            self.y = self.y.cuda()
+
+        if calc_true_params:
+            self.true_params = self.get_true_params()
+
+        self.param_hist = {}
+        self._add_param_values(self.initial_params)
+
+    def set_parameters(self, parameters):
+        self._add_param_values(parameters)
+        self.params.data.copy_(parameters.data)
+
+    def _add_param_values(self, parameters):
+        self.param_hist[len(self.param_hist)] = parameters
+
+    def copy_params_to(self, reg_func_obj):
+        # copy parameter from the meta_model function we just updated in meta_update to the
+        # function that delivered the gradients...call it the "outside" function
+        reg_func_obj.params.data.copy_(self.params.data)
+
+    def reset(self):
+        self.param_hist = {}
+        reset_params = self.initial_params.data.clone()
+        if self.use_cuda:
+            self.params = Variable(reset_params.cuda(), requires_grad=True)
+        else:
+            self.params = Variable(reset_params, requires_grad=True)
+
+        self._add_param_values(self.initial_params)
+
+    def reset_params(self):
+        # break the backward chain by declaring param Variable again with same Tensor values
+        if self.use_cuda:
+            self.params = Variable(self.params.data.cuda(), requires_grad=True)
+        else:
+            self.params = Variable(self.params.data, requires_grad=True)
+
+    def compute_loss(self, average=True, params=None):
+        """
+        compute mean squared loss and if applicable apply average over functions
+        :param average:
+        :return: loss (Variable)
+        """
+        if params is None:
+            params = self.params
+        if self.use_cuda and not params.cuda():
+            params = params.cuda()
+        # size of W = [batch, n_samples, xdim] and params = [batch, xdim]
+        product = torch.squeeze(torch.bmm(self.W, params.unsqueeze(params.dim())))
+        if self.num_of_funcs ==1:
+            product = product.unsqueeze(0)
+
+        if average:
+            loss = torch.mean(torch.sum((product - self.y) ** 2, 1))
+        else:
+            loss = torch.sum((product - self.y) ** 2, 1)
+        return loss
+
+    def compute_neg_ll(self, average_over_funcs=False):
+        ll = nll_with_t_dist(self.y, self.y_t(), N=self.n_samples, shape_p=self.shape_p, scale_p=self.scale_p,
+                             avg_batch=average_over_funcs)
+        if average_over_funcs:
+            ll = torch.mean(ll, 0).squeeze()
+        return ll
+
+    def param_error(self, average=True):
+        """
+        computes parameter error and if applicable apply average over functions
+        :param average:
+        :return: parameter loss/error (Variable)
+        """
+        if average:
+            N = float(self.num_of_funcs)
+        else:
+            N = 1
+        param_error = 0.5 * torch.mean((self.true_params - self.params) ** 2, 1)
+        if average:
+            param_error = torch.mean(param_error)
+
+        return param_error.squeeze()
+
+    def y_t(self, params=None):
+        if params is None:
+            params = self.params
+
+        return torch.squeeze(torch.bmm(self.W, params.unsqueeze(params.dim())))
+
+    def poly_desc(self, idx, f_true=True):
+        if f_true:
+            f_params = self.true_params.data.numpy()[idx, :]
+        else:
+            f_params = self.params.data.numpy()[idx, :]
+        descr = r'${:.3} $'.format(f_params[0])
+        for i in range(1, self.xdim):
+            descr += r'$+ {:.3} x$ '.format(f_params[i])
+        return descr
+
+    def get_y_values(self, params):
+        return torch.bmm(self.W, params)
 
 
 class RegressionFunction(object):

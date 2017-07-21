@@ -18,7 +18,7 @@ class MetaConfig(object):
         # standard deviation for noise when initializing validation functions
         self.stddev = 1.
         # number of validation functions
-        self.num_val_funcs = 1000
+        self.num_val_funcs = 10000
         # directory for logs, actually every run creates a new directory under this dir
         self.log_root_path = 'logs'
         # prefix for directory under logs for each run
@@ -53,9 +53,9 @@ class MetaConfig(object):
         # probability of continue computation
 
         self.pT_shape_param = 0.95
-        self.ptT_shape_param = 0.3
+        self.ptT_shape_param = 0.9
         self.T = 150 # avg = 80 with 0.98
-        self.max_val_opt_steps = 50
+        self.max_val_opt_steps = 100
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
