@@ -174,7 +174,9 @@ class MetaLearner(nn.Module):
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
 
-        loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=average_batch)
+        # looks odd that we don't pass "average_batch" parameter to get_stop_loss function, but we first compute
+        # loss for all individual functions, then store the result and average (if necessary) afterwards
+        loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=False)
         # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
         self.losses.append(Variable(loss.data))
         if average_batch:
