@@ -97,8 +97,10 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
                 grads = Variable(val_set.get_flat_grads().data)
                 delta_p = meta_learner.forward(grads)
             else:
+                # remaining part from meta-learner that uses grads+params as input to LSTM
+                # delta_p = meta_learner.forward(torch.cat((val_set.params.grad.view(-1).unsqueeze(1), val_set.params.view(-1).unsqueeze(1)), 1))
                 delta_p = meta_learner.forward(val_set.params.grad.view(-1))
-            # delta_p = meta_learner.meta_update(val_set, run_type="train")
+            # delta_p = meta_learner.meta_update(val_set)
             if exper.args.learner == 'meta':
                 if exper.args.problem == "quadratic":
                     # Quadratic function from L2L paper

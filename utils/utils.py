@@ -457,3 +457,4 @@ def generate_fixed_weights(exper, logger, steps=None):
         fixed_weights = fixed_weights.cuda()
 
     return fixed_weights
+

@@ -7,6 +7,7 @@ from torch.autograd import Variable
 import numpy as np
 from collections import OrderedDict
 from layer_lstm import LayerLSTMCell
+from utils.helper import normalize
 from utils.config import config
 from utils.regression import neg_log_likelihood_loss, nll_with_t_dist, RegressionFunction, RegressionWithStudentT
 
@@ -33,12 +34,12 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
         raise ValueError
 
     if np.any(kl_div.data.cpu().numpy() < 0):
-        kl_np = kl_div.data.numpy()
+        kl_np = kl_div.data.cpu().numpy()
         if np.any(kl_np[(kl_np < 0) & (kl_np < threshold)]):
             print("************* Negative KL-divergence *****************")
-            print("sum(q_probs {:.2f}".format(torch.sum(q_probs.data.squeeze())))
-            print("sum(prior_probs {:.2f}".format(torch.sum(prior_probs.data.squeeze())))
-            kl_str = np.array_str(kl_div.data.squeeze().numpy(), precision=4)
+            print("sum(q_probs {:.2f}".format(torch.sum(q_probs.data.cpu().squeeze())))
+            print("sum(prior_probs {:.2f}".format(torch.sum(prior_probs.data.cpu().squeeze())))
+            kl_str = np.array_str(kl_div.data.cpu().squeeze().numpy(), precision=4)
             raise ValueError("KL divergence can't be less than zero {}".format(kl_str))
 
     return kl_div
@@ -94,6 +95,7 @@ class MetaLearner(nn.Module):
         # number of parameters we need to optimize, for regression we choose the polynomial degree of the
         # regression function
         self.num_params = num_params_optimizee
+        # self.linear1 = nn.Linear(2, num_hidden)
         self.linear1 = nn.Linear(num_inputs, num_hidden)
         self.lstms = nn.ModuleList()
         for i in range(num_layers):
@@ -134,7 +136,8 @@ class MetaLearner(nn.Module):
                Tensor shape: dim0=number of functions X dim1=number of parameters
             Coordinate wise processing:
         """
-        x_t = x_t.unsqueeze(1)
+        if x_t.dim() == 1:
+            x_t = x_t.unsqueeze(1)
         if self.use_cuda and not x_t.is_cuda:
             x_t = x_t.cuda()
 
@@ -158,15 +161,13 @@ class MetaLearner(nn.Module):
         # first determine whether the optimizee has base class nn.Module
         is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
         if is_nn_module:
-            if run_type == "train":
-                delta_params = self(Variable(optimizee_with_grads.get_flat_grads().data))
+            delta_params = self(Variable(optimizee_with_grads.get_flat_grads().data))
         else:
             param_size = optimizee_with_grads.params.grad.size()
-            if run_type == "train":
-                flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
-                delta_params = self(flat_grads)
-            else:
-                delta_params = self(optimizee_with_grads.params.grad.view(-1))
+            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+            # flat_params = Variable(optimizee_with_grads.params.data.view(-1).unsqueeze(1))
+            # input = torch.cat((flat_grads, flat_params), 1)
+            delta_params = self(flat_grads)
             # reshape parameters
             delta_params = delta_params.view(param_size)
 
@@ -237,7 +238,7 @@ class MetaStepLearner(MetaLearner):
             x_t = self.hx[i]
 
         theta_out = self.linear_out(x_t)
-        qt_out = F.sigmoid(self.qt_linear_out(x_t))
+        qt_out = self.qt_linear_out(x_t)
         # qt_out = self.act_qt_out (qt_out.view(param_shape))
 
         return tuple((theta_out.squeeze(), qt_out.squeeze()))
@@ -382,17 +383,17 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         self.q_soft = None
         # number of steps is in dimension 1 of prior probabilities
         num_of_steps = prior_probs.size(1)
+        # rl_weights = Variable(torch.arange(1, num_of_steps+1)).unsqueeze(0)
+        # if self.use_cuda:
+        #    rl_weights = rl_weights.cuda()
         # concatenate everything along dimension 1, the number of time-steps
         losses = torch.cat(self.losses, 1)
         q_t = torch.cat(self.q_t, 1)
         self.q_soft = F.softmax(q_t.double())
         kl_loss = kl_divergence(q_probs=self.q_soft, prior_probs=prior_probs.double())
-        # sum over horizon T (time-steps) and average over functions (dim0)
-        # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1), 0) + torch.mean(kl_loss, 0)).squeeze()
-        # q_help = Variable(torch.ones(self.q_soft.size()).double())
-        # if self.use_cuda:
-        #   q_help = q_help.cuda()
+        # rl_weights = rl_weights.expand_as(self.q_soft)
         loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
+        # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
         qts = torch.mean(self.q_soft, 0).data.cpu().squeeze().numpy()
         if run_type == 'train':
             self.qt_hist[num_of_steps] += qts

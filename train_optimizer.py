@@ -383,7 +383,7 @@ def main():
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(loss_optimizer[0])
         # if applicable, VALIDATE model performance
-        if exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch:
+        if (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch) and VALIDATE:
 
             if exper.args.learner == 'manual':
                 # the manual (e.g. SGD, Adam will be validated using full number of optimization steps

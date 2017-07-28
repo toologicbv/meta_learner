@@ -102,7 +102,12 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     if validation:
         plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
     plt.legend(loc="best")
-    plt.title("Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps), **title_font)
+    p_title = "Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps)
+    if (exper.args.learner == "meta" and exper.args.version == "V3.1") or \
+            (exper.args.learner == "act" and exper.args.version == "V2"):
+        p_title += r' ($\nu = {:.2}$)'.format(exper.config.ptT_shape_param)
+    plt.title(p_title, **title_font)
+
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
