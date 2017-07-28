@@ -206,12 +206,53 @@ class MetaLearner(nn.Module):
     def reset_losses(self):
         self.losses = []
 
-    def final_loss(self, loss_weights, run_type='train'):
+    def final_loss(self, loss_weights):
         losses = torch.mean(torch.cat(self.losses, 1), 0).squeeze()
         return torch.sum(losses * loss_weights)
 
 
+class MetaLearnerWithValueFunction(MetaLearner):
+    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False,
+                 output_bias=True):
+        super(MetaLearnerWithValueFunction, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers,
+                                                           use_cuda, output_bias=output_bias, fg_bias=1)
+
+    def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
+
+        # looks odd that we don't pass "average_batch" parameter to get_stop_loss function, but we first compute
+        # loss for all individual functions, then store the result and average (if necessary) afterwards
+        loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=False)
+        # ACTUALLY THIS IS WHY I CLONED THE STEP_LOSS METHOD from MetaLearner, because I need to append the loss
+        # without passing loss.data, in order to be able to execute .backward() later on
+        self.losses.append(loss)
+        if average_batch:
+            return torch.mean(loss)
+        else:
+            return loss
+
+    def final_loss(self, loss_weights):
+        # make a matrix out of list, results in tensor [batch_size, num_of_time_steps]
+        T = len(self.losses)
+        self.losses = torch.cat(self.losses, 1)
+        losses = Variable(torch.zeros(self.losses.size()))
+        if self.use_cuda:
+            losses = losses.cuda()
+        # now we loop backwards through the time steps, we skip step T
+        for t in np.arange(2, T+1):
+            l = self.losses[:, T-t:]
+            w = loss_weights[0:t].unsqueeze(0).expand_as(l)
+            losses[:, T-t] = torch.sum(l * w, 1)
+        # finally sum over all time steps for each function and then average over batch
+        return torch.mean(torch.sum(losses, 1), 0).squeeze()
+
+
 class MetaStepLearner(MetaLearner):
+    """
+        Implementation halve way. Should be a MetaLearner that also learns the loss-weights
+        Current implementation learn those weights without restriction.
+        Need to incorporate the constraint that they must sum to one
+        Note: Can be started with --learner=meta --version=V4
+    """
 
     def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False,
                  output_bias=True):
@@ -243,7 +284,7 @@ class MetaStepLearner(MetaLearner):
 
         return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
-    def meta_update(self, optimizee_with_grads, run_type="train"):
+    def meta_update(self, optimizee_with_grads):
 
         """
 
@@ -253,18 +294,12 @@ class MetaStepLearner(MetaLearner):
         is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
         if is_nn_module:
             param_size = list([optimizee_with_grads.num_of_funcs, optimizee_with_grads.dim])
-            if run_type == "train":
-                delta_theta, delta_qt = self(Variable(optimizee_with_grads.get_flat_params().data.view(-1)))
-            else:
-                delta_theta, delta_qt = self(optimizee_with_grads.get_flat_params().view(-1))
+            delta_theta, delta_qt = self(Variable(optimizee_with_grads.get_flat_params().data.view(-1)))
             delta_qt = torch.mean(delta_qt.view(*param_size), 1)
         else:
             param_size = optimizee_with_grads.params.grad.size()
-            if run_type == "train":
-                flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
-                delta_theta, delta_qt = self(flat_grads)
-            else:
-                delta_theta, delta_qt = self(optimizee_with_grads.params.grad.view(-1))
+            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+            delta_theta, delta_qt = self(flat_grads)
             # reshape parameters
             delta_theta = delta_theta.view(param_size)
 
@@ -330,7 +365,7 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
         return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
-    def meta_update(self, optimizee_with_grads, run_type="train"):
+    def meta_update(self, optimizee_with_grads):
         """
 
             :param optimizee_with_grads:
@@ -339,12 +374,8 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
         param_size = optimizee_with_grads.params.grad.size()
 
-        if run_type == "train":
-            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
-            delta_theta, delta_qt = self(flat_grads, param_size)
-        else:
-            delta_theta, delta_qt = self(optimizee_with_grads.params.grad.view(-1), param_size)
-
+        flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+        delta_theta, delta_qt = self(flat_grads, param_size)
         # reshape parameters
         delta_theta = delta_theta.view(param_size)
         # reshape qt-values and calculate mean

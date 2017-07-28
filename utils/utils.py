@@ -158,6 +158,7 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     if exper.args.version == 'V1' or exper.args.version == 'V2' \
         or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'meta') \
+            or (exper.args.version[0:2] == 'V5' and exper.args.learner == 'meta') \
             or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
@@ -186,6 +187,9 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
         # the alternative model is our MetaLearner in different favours
         if exper.args.version[0:2] == "V4":
             str_classname = "MetaStepLearner"
+            meta_class = getattr(models.rnn_optimizer, str_classname)
+        elif exper.args.version[0:2] == "V5":
+            str_classname = "MetaLearnerWithValueFunction"
             meta_class = getattr(models.rnn_optimizer, str_classname)
         else:
             str_classname = "MetaLearner"
@@ -436,7 +440,8 @@ def generate_fixed_weights(exper, logger, steps=None):
     if steps is None:
         steps = exper.args.optimizer_steps
 
-    if exper.args.learner == 'meta' and exper.args.version[0:2] == "V3":
+    fixed_weights = None
+    if exper.args.learner == 'meta' and (exper.args.version[0:2] == "V3" or exper.args.version[0:2] == "V4"):
         # Version 3.1 of MetaLearner uses a fixed geometric distribution as loss weights
         if exper.args.version == "V3.1":
             logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
@@ -450,6 +455,12 @@ def generate_fixed_weights(exper, logger, steps=None):
             fixed_weights[:] = 1. / float(steps)
             logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
                 torch.sum(fixed_weights).data.cpu().squeeze()[0]))
+        elif exper.args.version[0:2] == "V5":
+            # in metaV5 we construct the loss-weights based on the RL approach for cumulative discounted reward
+            # we take gamma = ptT_shape_param - that we normally use to construct the prior geometric distribution
+            weights = [Variable(torch.FloatTensor([exper.config.ptT_shape_param**i]))
+                       for i in np.arange(steps)]
+            fixed_weights = torch.cat(weights)
     else:
         fixed_weights = Variable(torch.ones(steps))
 

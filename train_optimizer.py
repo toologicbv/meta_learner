@@ -14,13 +14,22 @@ from utils.probs import TimeStepsDist
 from val_optimizer import validate_optimizer
 
 """
-    TODO:
-    (1) cuda seems at least to "run" but takes twice the time of cpu implementation (25 secs <-> 55 secs)
-    (2) re-training does not seem to work. at a certain moment the model predicts gibberish. first thought
-    this had to do with validation of model but tested without validation and result stays the same.
+    The following models can be run for the following problems/tasks:
+    ----------------------------------------------------------------------------------------------------------------
+    learner             version                 problem                                     comments
+
+    meta                V1                      quadratic, rosenbrock, regression(_T)       baseline model L2L
+    meta                V2                      same as V1                                  baseline + stochastic
+                                                                                            learning
+    meta                V3.1                    same as V1                                  baseline + geometric weights
+    meta                V3.2                    same as V1                                  baseline + uniform weights
+    meta                V4                      same as V1                                  baseline + learn loss-weights
+    meta                V5                      same as V1                                  baseline + ValueFunction
+    act                 V1                      regression(_T)                              act learner with 2
+                                                                                            separate LSTMS
+    act                 V2                      regression(_T)                              act learner with 1 LSTM
 """
 
-VALIDATE = True
 # for standard optimizer which we compare to
 STD_OPT_LR = 4e-1
 VALID_VERBOSE = False
@@ -124,6 +133,9 @@ def main():
             # Note, we choose here an absolute limit of the horizon, set in the config-file
             pt_dist = TimeStepsDist(T=config.T, q_prob=config.pT_shape_param)
             exper.avg_num_opt_steps = pt_dist.mean
+        elif args.learner == 'meta' and args.version[0:2] == 'V5':
+            # disable BPTT by setting truncated bptt steps to optimizer steps
+            exper.args.truncated_bptt_step = exper.args.optimizer_steps
 
     # prepare the experiment
     exper = prepare(exper=exper)
@@ -133,7 +145,7 @@ def main():
     print_flags(exper, meta_logger)
 
     # load the validation functions
-    if VALIDATE:
+    if exper.args.eval_freq != 0:
         val_funcs = load_val_data(num_of_funcs=exper.config.num_val_funcs, n_samples=exper.args.x_samples,
                                   stddev=exper.config.stddev, dim=exper.args.x_dim, logger=meta_logger,
                                   exper=exper)
@@ -310,12 +322,16 @@ def main():
                     reg_funcs.zero_grad()
                 else:
                     reg_funcs.params.grad.data.zero_()
-
+                # Check whether we need to execute BPTT
                 if forward_steps == exper.args.truncated_bptt_step or k == optimizer_steps - 1:
                     # meta_logger.info("BPTT at {}".format(k + 1))
                     if exper.args.learner == 'meta' or (exper.args.learner == 'act' and exper.args.version[0:2] == "V1"):
                         # meta_logger.info("{}/{} Sum loss {:.3f}".format(i, k,
                         # loss_sum.data.cpu().squeeze().numpy()[0]))
+                        if exper.args.learner == 'meta' and exper.args.version[0:2] == "V5":
+                            # in this version we make sure we never execute BPTT, we calculate the cumulative
+                            # discounted reward at time step T (backward sweep)
+                            loss_sum = meta_optimizer.final_loss(fixed_weights)
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
@@ -383,7 +399,7 @@ def main():
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(loss_optimizer[0])
         # if applicable, VALIDATE model performance
-        if (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch) and VALIDATE:
+        if exper.args.eval_freq != 0 and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
 
             if exper.args.learner == 'manual':
                 # the manual (e.g. SGD, Adam will be validated using full number of optimization steps
