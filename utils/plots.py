@@ -8,7 +8,7 @@ from datetime import datetime
 from pytz import timezone
 from itertools import cycle
 from probs import ConditionalTimeStepDist
-from regression import neg_log_likelihood_loss
+from regression import neg_log_likelihood_loss, nll_with_t_dist
 
 
 def create_exper_label(exper):
@@ -324,6 +324,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
                          loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
                          with_stddev=True, runID=None):
+    extra_labels = ["", " (grads+params)"]
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -416,7 +417,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             if expers[e].args.learner == "act":
                 l_label = "{}(stop={})".format(model, stop_step)
             else:
-                l_label = "{}".format(model)
+                l_label = "{}".format(model) + extra_labels[e]
 
         if log_scale:
             # res_dict[best_val_runs[e]][min_step:max_step]
@@ -443,8 +444,9 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         plt.title(plot_title, **title_font)
 
     if do_save:
-        dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
-        dt = str.replace(str.replace(dt, ':', '_'), '-', '')
+        # dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
+        # dt = str.replace(str.replace(dt, ':', '_'), '-', '')
+        dt = ""
         if fig_name is None:
             fig_name = "best_val_results"
         fig_name = os.path.join(config.figure_path, fig_name + dt + config.dflt_plot_ext)
@@ -727,14 +729,20 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     print("Run with key {}".format(keys[-1]))
     qt_probs = exper.val_stats["qt_funcs"][keys[-1]]
 
-    nll_init = neg_log_likelihood_loss(funcs.y, funcs.y_t(funcs.initial_params),
-                                       funcs.stddev, N=funcs.n_samples,
-                                       sum_batch=False,
-                                       size_average=False)
-    nll_min = neg_log_likelihood_loss(funcs.y, funcs.y_t(funcs.true_params),
-                                      funcs.stddev, N=funcs.n_samples,
-                                      sum_batch=False,
-                                      size_average=False)
+    if exper.args.problem == "regression":
+        nll_init = neg_log_likelihood_loss(funcs.y, funcs.y_t(funcs.initial_params),
+                                           funcs.stddev, N=funcs.n_samples,
+                                           sum_batch=False,
+                                           size_average=False)
+        nll_min = neg_log_likelihood_loss(funcs.y, funcs.y_t(funcs.true_params),
+                                          funcs.stddev, N=funcs.n_samples,
+                                          sum_batch=False,
+                                          size_average=False)
+    else:
+        nll_init = nll_with_t_dist(funcs.y, funcs.y_t(funcs.initial_params), N=funcs.n_samples, shape_p=1, scale_p=1.,
+                                   avg_batch=False)
+        nll_min = nll_with_t_dist(funcs.y, funcs.y_t(funcs.true_params), N=funcs.n_samples, shape_p=1, scale_p=1.,
+                                  avg_batch=False)
 
     nll_distance = (nll_init - nll_min).data.cpu().squeeze().numpy()
     max_idx_probs = np.argmax(qt_probs, 1) + 1
@@ -754,17 +762,17 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     if not exper.args.fixed_horizon:
         p_title += " (stochastic training E[T]={})".format(int(exper.avg_num_opt_steps))
     fig.suptitle(p_title , **config.title_font)
-    bins = np.unique(max_idx_probs).shape[0]
-
+    bins = np.unique(max_idx_probs)
+    # print(bins)
     ax1 = plt.subplot(4, 2, 1)
     ax1.set_title("Max mode-step versus NLL distance at step 0 (N={})".format(nll_distance.shape[0]),
                   **config.title_font)
     _ = ax1.scatter(max_idx_probs, nll_distance, s=5, color='g', alpha=0.2)
     ax1.set_xlim([min_x - 1, max_x + 1])
-    if bins > 50:
+    if len(bins) > 10:
         ax1.set_xticks(np.arange(min_x - 1, max_x + 2), 5)
     else:
-        ax1.set_xticks(np.arange(min_x - 1, max_x + 2), 1)
+        ax1.set_xticks(bins)
 
     ax1.set_xlabel("Maximum mode-step")
     ax1.set_ylim([0, max_y])
@@ -775,16 +783,19 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     ax2.set_title("Distribution max-mode steps (N={}) mean={:.1f}".format(nll_distance.shape[0], mean_mode),
                   **config.title_font)
 
-    _ = ax2.hist(max_idx_probs, bins=bins, normed=True)
+    if len(bins) == 1:
+        bins = np.array([bins[0]-1, bins[0], bins[0]+1])
+    _ = ax2.hist(max_idx_probs, bins=bins, align='left', normed=True)
     ax2.set_xlim([min_x - 1, max_x + 1])
-    if bins > 50:
+    if len(bins) > 10:
         ax2.set_xticks(np.arange(min_x - 1, max_x + 2), 5)
     else:
-        ax2.set_xticks(np.arange(min_x - 1, max_x + 2), 1)
+        ax2.set_xticks(bins)
 
     ax2.set_xlabel("Maximum mode-step")
 
-    bins = np.unique(stops_steps).shape[0]
+    bins = np.unique(stops_steps)
+    # print(bins)
     min_x = np.min(stops_steps)
     max_x = np.max(stops_steps)
     ax3 = plt.subplot(4, 2, 3)
@@ -793,10 +804,10 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     _ = ax3.scatter(stops_steps, nll_distance, s=5, alpha=0.2, color="r",
                     label=r'threshold ${:.2f}$'.format(threshold))
     ax3.set_xlim([min_x - 1, max_x + 1])
-    if bins > 50:
+    if len(bins) > 10:
         ax3.set_xticks(np.arange(min_x - 1, max_x + 2), 5)
     else:
-        ax3.set_xticks(np.arange(min_x - 1, max_x + 2), 1)
+        ax3.set_xticks(bins)
     ax3.set_xlabel("Stopping step")
     ax3.set_ylim([0, max_y])
     ax3.set_ylabel("Distance NLL(start)-NLL(min)")
@@ -806,18 +817,18 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
     mean_step = np.mean(stops_steps)
     ax4.set_title("Distribution stopping steps (N={}) mean={:.1f}".format(nll_distance.shape[0], mean_step),
                   **config.title_font)
-    bins = np.unique(max_idx_probs).shape[0]
-    _ = ax4.hist(stops_steps, bins=bins, normed=True, label=r'threshold ${:.2f}$'.format(threshold))
+
+    _ = ax4.hist(stops_steps, bins=bins, normed=True, align='left', label=r'threshold ${:.2f}$'.format(threshold))
     ax4.set_xlim([min_x - 1, max_x + 1])
-    if bins > 50:
+    if len(bins) > 10:
         ax4.set_xticks(np.arange(min_x - 1, max_x + 2), 5)
     else:
-        ax4.set_xticks(np.arange(min_x - 1, max_x + 2), 1)
+        ax4.set_xticks(bins)
     ax4.set_xlabel("Stopping step")
     ax4.legend(loc="best")
 
     if fig_name is None and do_save:
-        fig_name = "_" + create_exper_label(exper)
+        fig_name = "_" + create_exper_label(exper) + "_td{:.2f}".format(threshold)
         fig_name = os.path.join(exper.output_dir, "qt_detailed_stats" + fig_name + ".png")
 
     if do_save:

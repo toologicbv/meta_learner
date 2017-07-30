@@ -179,7 +179,6 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
             ************ END OF A VALIDATION OPTIMIZATION  ******************
 
         """
-
     # make another step to register final loss
     loss = get_func_loss(exper, val_set, average=False)
 
@@ -208,7 +207,7 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         # TODO currently we set T=max_steps because we are not stopping at the optimal step!!!
         # TODO again max_steps need to be adjusted later here when we really stop!!!
         priors = construct_prior_p_t_T(max_steps, exper.config.ptT_shape_param, val_set.num_of_funcs, exper.args.cuda)
-        total_opt_loss = meta_learner.final_loss(prior_probs=priors, run_type='val').data.squeeze()[0]
+        total_opt_loss = meta_learner.final_loss(prior_probs=priors).data.squeeze()[0]
         str_q_probs = np.array_str(np.around(softmax(np.array(qt_weights)), decimals=5))
     elif exper.args.learner == "meta":
         total_opt_loss = meta_learner.final_loss(loss_weights=fixed_weights).data.squeeze()[0]

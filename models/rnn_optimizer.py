@@ -230,7 +230,7 @@ class MetaLearnerWithValueFunction(MetaLearner):
         else:
             return loss
 
-    def final_loss(self, loss_weights):
+    def final_loss(self, loss_weights, run_type="train"):
         # make a matrix out of list, results in tensor [batch_size, num_of_time_steps]
         T = len(self.losses)
         self.losses = torch.cat(self.losses, 1)
@@ -238,11 +238,13 @@ class MetaLearnerWithValueFunction(MetaLearner):
         if self.use_cuda:
             losses = losses.cuda()
         # now we loop backwards through the time steps, we skip step T
+        losses[:, T-1] = self.losses[:, T-1]
         for t in np.arange(2, T+1):
             l = self.losses[:, T-t:]
             w = loss_weights[0:t].unsqueeze(0).expand_as(l)
             losses[:, T-t] = torch.sum(l * w, 1)
         # finally sum over all time steps for each function and then average over batch
+
         return torch.mean(torch.sum(losses, 1), 0).squeeze()
 
 
