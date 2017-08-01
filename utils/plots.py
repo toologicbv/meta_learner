@@ -76,7 +76,7 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
 
 
 def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=False, show=False, validation=True,
-              log_scale=False):
+              log_scale=False, only_val=False):
 
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
     plt.figure(figsize=(height, width))
@@ -84,10 +84,11 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     plt.xlabel("epochs")
     x_vals = range(1, exper.epoch+1, 1)
 
-    if log_scale:
-        plt.semilogy(x_vals[2:], train_loss[2:], 'r', label="train-loss")
-    else:
-        plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
+    if not only_val:
+        if log_scale:
+            plt.semilogy(x_vals[2:], train_loss[2:], 'r', label="train-loss")
+        else:
+            plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
 
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
@@ -100,7 +101,11 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
         offset = 0
 
     if validation:
-        plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
+        if log_scale:
+            plt.semilogy(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
+        else:
+            plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
+
     plt.legend(loc="best")
     p_title = "Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps)
     if (exper.args.learner == "meta" and exper.args.version == "V3.1") or \
@@ -324,7 +329,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
                          loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
                          with_stddev=True, runID=None):
-    extra_labels = ["", " (grads+params)"]
+    # extra_labels = ["", ""]
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
@@ -417,7 +422,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             if expers[e].args.learner == "act":
                 l_label = "{}(stop={})".format(model, stop_step)
             else:
-                l_label = "{}".format(model) + extra_labels[e]
+                l_label = "{}".format(model) # + extra_labels[e]
 
         if log_scale:
             # res_dict[best_val_runs[e]][min_step:max_step]

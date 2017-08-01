@@ -57,7 +57,8 @@ def print_flags(exper, logger):
         logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
         if not exper.args.fixed_horizon:
-            logger.info("horizon limit for p(T) due to memory shortage {}".format(exper.config.T))
+            logger.info("horizon limit for p(T|nu={:.3f}) due to memory shortage {}".format(exper.config.pT_shape_param,
+                                                                                            exper.config.T))
 
 
 def softmax(x, dim=1):
@@ -159,6 +160,7 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
         or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V5' and exper.args.learner == 'meta') \
+            or (exper.args.version[0:2] == 'V6' and exper.args.learner == 'meta') \
             or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
@@ -441,7 +443,7 @@ def generate_fixed_weights(exper, logger, steps=None):
         steps = exper.args.optimizer_steps
 
     fixed_weights = None
-    if exper.args.learner == 'meta' and (exper.args.version[0:2] == "V3" or exper.args.version[0:2] == "V4"):
+    if exper.args.learner == 'meta' and (exper.args.version[0:2] == "V3" or exper.args.version[0:2] == "V5"):
         # Version 3.1 of MetaLearner uses a fixed geometric distribution as loss weights
         if exper.args.version == "V3.1":
             logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(

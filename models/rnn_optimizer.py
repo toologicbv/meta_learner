@@ -230,6 +230,16 @@ class MetaLearnerWithValueFunction(MetaLearner):
         else:
             return loss
 
+    def final_loss_weighted(self, loss_weights, run_type="train"):
+        T = len(self.losses)
+        w = Variable(torch.arange(1, T+1))
+        if self.use_cuda:
+            w = w.cuda()
+        self.losses = torch.cat(self.losses, 1)
+        self.losses = torch.mul(self.losses, w.unsqueeze(0).expand_as(self.losses))
+        self.losses = torch.mul(self.losses, loss_weights.unsqueeze(0).expand_as(self.losses))
+        return torch.mean(torch.sum(self.losses, 1), 0).squeeze()
+
     def final_loss(self, loss_weights, run_type="train"):
         # make a matrix out of list, results in tensor [batch_size, num_of_time_steps]
         T = len(self.losses)
@@ -243,6 +253,9 @@ class MetaLearnerWithValueFunction(MetaLearner):
             l = self.losses[:, T-t:]
             w = loss_weights[0:t].unsqueeze(0).expand_as(l)
             losses[:, T-t] = torch.sum(l * w, 1)
+        # if run_type != "train":
+        #    print(loss_weights.data.cpu().squeeze().numpy())
+        #    print(torch.mean(losses, 0).data.cpu().squeeze().numpy())
         # finally sum over all time steps for each function and then average over batch
 
         return torch.mean(torch.sum(losses, 1), 0).squeeze()
@@ -416,15 +429,18 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         self.q_soft = None
         # number of steps is in dimension 1 of prior probabilities
         num_of_steps = prior_probs.size(1)
-        # rl_weights = Variable(torch.arange(1, num_of_steps+1)).unsqueeze(0)
-        # if self.use_cuda:
-        #    rl_weights = rl_weights.cuda()
+        rl_weights = Variable(torch.arange(1, num_of_steps+1)).unsqueeze(0)
+        rl_weights = normalize(rl_weights)
+        if self.use_cuda:
+            rl_weights = rl_weights.cuda()
+
         # concatenate everything along dimension 1, the number of time-steps
         losses = torch.cat(self.losses, 1)
         q_t = torch.cat(self.q_t, 1)
         self.q_soft = F.softmax(q_t.double())
         kl_loss = kl_divergence(q_probs=self.q_soft, prior_probs=prior_probs.double())
-        # rl_weights = rl_weights.expand_as(self.q_soft)
+        rl_weights = rl_weights.expand_as(self.q_soft)
+        losses = torch.mul(rl_weights, losses)
         loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
         # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
         qts = torch.mean(self.q_soft, 0).data.cpu().squeeze().numpy()

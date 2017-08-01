@@ -25,6 +25,8 @@ from val_optimizer import validate_optimizer
     meta                V3.2                    same as V1                                  baseline + uniform weights
     meta                V4                      same as V1                                  baseline + learn loss-weights
     meta                V5                      same as V1                                  baseline + ValueFunction
+    meta                V6                      only regression(_T)                         baseline with improvement
+                                                                                            instead of func-loss
     act                 V1                      regression(_T)                              act learner with 2
                                                                                             separate LSTMS
     act                 V2                      regression(_T)                              act learner with 1 LSTM
@@ -133,7 +135,7 @@ def main():
             # Note, we choose here an absolute limit of the horizon, set in the config-file
             pt_dist = TimeStepsDist(T=config.T, q_prob=config.pT_shape_param)
             exper.avg_num_opt_steps = pt_dist.mean
-        elif args.learner == 'meta' and args.version[0:2] == 'V5':
+        elif args.learner == 'meta' and (args.version[0:2] == 'V5' or args.version[0:2] == 'V6'):
             # disable BPTT by setting truncated bptt steps to optimizer steps
             exper.args.truncated_bptt_step = exper.args.optimizer_steps
 
@@ -223,7 +225,6 @@ def main():
                 qt_param = qt_param.cuda()
 
             # outer loop with the optimization steps
-            # meta_logger.info("Batch size {}".format(reg_funcs.num_of_funcs))
             for k in range(optimizer_steps):
 
                 if exper.args.learner == 'meta':
@@ -255,9 +256,11 @@ def main():
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(backward_ones)
                 total_loss_steps += torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
-                # new_version ("observed improvement")
-                # if exper.args.learner == 'meta' and k == 0:
-                #    meta_optimizer.losses.append(Variable(torch.mean(loss, 0).data.squeeze()))
+                # V6 improvement
+                if exper.args.learner == "meta" and k == 0 and exper.args.version == "V6":
+                    loss_sum = Variable(torch.mean(loss.data.squeeze(), 0))
+                    # we only need to append here for t_0 because the .step_loss function adds t_i's
+                    meta_optimizer.losses.append(Variable(torch.mean(loss, 0).data.squeeze()))
 
                 # meta_logger.info("{}/{} Sum optimizee gradients {:.3f}".format(
                 #    i, k, torch.sum(reg_funcs.params.grad.data)))
@@ -272,6 +275,14 @@ def main():
                         # Regression
                         par_new = reg_funcs.params - delta_param
                         loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
+                        if exper.args.learner == "meta" and exper.args.version == "V6":
+                            # V6 improvement
+                            meta_optimizer.losses[-1] = loss_step
+                            min_f = torch.min(torch.cat(meta_optimizer.losses[0:k + 1], 0))
+                            observed_imp = loss_step - min_f
+                        else:
+                            observed_imp = None
+
                     elif exper.args.problem == "rosenbrock":
                         if exper.args.version[0:2] == "V4":
                             # metaV4, meta_update returns tuple (delta_param, qt-value)
@@ -286,15 +297,10 @@ def main():
                     reg_funcs.set_parameters(par_new)
                     if exper.args.version[0:2] == "V3":
                         loss_sum = loss_sum + torch.mul(fixed_weights[k], loss_step)
+
+                    elif exper.args.learner == "meta" and exper.args.version == "V6":
+                        loss_sum = loss_sum + observed_imp
                     else:
-                        # new_version (observed improvement)
-                        # min_f = torch.min(torch.cat(meta_optimizer.losses[0:k+1], 0))
-                        # observed_imp = loss_step - min_f
-                        # if i == 79:
-                        #    print(min_f.data.cpu().numpy()[0], loss_step.data.cpu().numpy()[0])
-                        #    meta_logger.info("Step {} - OI {:.3f}".format(k,
-                        #                                              observed_imp.data.cpu().squeeze().numpy()[0]))
-                        # loss_sum += observed_imp
                         loss_sum = loss_sum + loss_step
                 # ACT model processing
                 elif exper.args.learner == 'act':
@@ -332,6 +338,7 @@ def main():
                             # in this version we make sure we never execute BPTT, we calculate the cumulative
                             # discounted reward at time step T (backward sweep)
                             loss_sum = meta_optimizer.final_loss(fixed_weights)
+
                         loss_sum.backward()
                         optimizer.step()
                         meta_optimizer.zero_grad()
