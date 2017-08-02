@@ -127,13 +127,17 @@ def main():
         pt_dist = TimeStepsDist(T=config.T, q_prob=config.pT_shape_param)
         if args.fixed_horizon:
             exper.avg_num_opt_steps = args.optimizer_steps
+            max_time_steps = args.optimizer_steps
         else:
             exper.avg_num_opt_steps = pt_dist.mean
+            max_time_steps = exper.config.T
     else:
         exper.avg_num_opt_steps = args.optimizer_steps
+        max_time_steps = args.optimizer_steps
         if args.learner == 'meta' and args.version[0:2] == 'V2':
             # Note, we choose here an absolute limit of the horizon, set in the config-file
             pt_dist = TimeStepsDist(T=config.T, q_prob=config.pT_shape_param)
+            max_time_steps = exper.config.T
             exper.avg_num_opt_steps = pt_dist.mean
         elif args.learner == 'meta' and (args.version[0:2] == 'V5' or args.version[0:2] == 'V6'):
             # disable BPTT by setting truncated bptt steps to optimizer steps
@@ -182,6 +186,7 @@ def main():
         total_loss_steps = 0.
         loss_optimizer = 0.
         diff_min = 0.
+        exper.epoch_stats["step_losses"][exper.epoch] = np.zeros(max_time_steps + 1)
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
         # ALSO NOTE:
@@ -198,7 +203,6 @@ def main():
             optimizer_steps = exper.args.optimizer_steps
 
         for i in range(num_of_batches):
-
             reg_funcs = get_batch_functions(exper, exper.config.stddev)
             func_is_nn_module = nn.Module in reg_funcs.__class__.__bases__
             # if we're using a standard optimizer
@@ -255,7 +259,9 @@ def main():
                 loss = get_func_loss(exper, reg_funcs, average=False)
                 # compute gradients of optimizee which will need for the meta-learner
                 loss.backward(backward_ones)
-                total_loss_steps += torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+                avg_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+                exper.epoch_stats["step_losses"][exper.epoch][k] += avg_loss
+                total_loss_steps += avg_loss
                 # V6 improvement
                 if exper.args.learner == "meta" and k == 0 and exper.args.version == "V6":
                     loss_sum = Variable(torch.mean(loss.data.squeeze(), 0))
@@ -351,7 +357,9 @@ def main():
             # compute the final loss error for this function between last loss calculated and function min-value
             error = loss_step.data
             diff_min += (loss_step - reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(float)
-            total_loss_steps += loss_step.data.cpu().squeeze().numpy()[0]
+            avg_loss = loss_step.data.cpu().squeeze().numpy()[0]
+            exper.epoch_stats["step_losses"][exper.epoch][k] += avg_loss
+            total_loss_steps += avg_loss
             # back-propagate ACT loss that was accumulated during optimization steps
             if exper.args.learner == 'act':
                 # processing ACT loss

@@ -438,8 +438,11 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
                          linewidth=2., label=l_label)
             if with_stddev:
                 plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
-        if len(index) > 41:
-            plt.xlim([0, len(index)+1])
+
+        plt.xlim([0, len(index) + 1])
+        if len(index) > 150:
+            index = np.arange(1, len(index) + 1, 50)
+        elif len(index) > 41:
             index = np.arange(1, len(index)+1, 10)
         plt.ylim([y_min_value, y_max_value])
         plt.xticks(index)

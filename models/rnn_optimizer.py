@@ -12,6 +12,23 @@ from utils.config import config
 from utils.regression import neg_log_likelihood_loss, nll_with_t_dist, RegressionFunction, RegressionWithStudentT
 
 
+def generate_reversed_cum(q_probs_in, priors_in, use_cuda=False):
+    T = q_probs_in.size(1)
+    if use_cuda:
+        q_probs = Variable(torch.DoubleTensor(q_probs_in.size()).cuda())
+        priors = Variable(torch.DoubleTensor(priors_in.size()).cuda())
+    else:
+        q_probs = Variable(torch.DoubleTensor(q_probs_in.size()))
+        priors = Variable(torch.DoubleTensor(priors_in.size()))
+    q_probs[:, 0] = 1.
+    priors[:, 0] = 1.
+    for t in np.arange(1, T):
+        q_probs[:, t] = 1. - torch.sum(q_probs_in[:, 0:t], 1)
+        priors[:, t] = 1. - torch.sum(priors_in[:, 0:t], 1)
+
+    return q_probs, priors
+
+
 def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
     """
     Kullback-Leibler divergence loss
@@ -412,6 +429,55 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         else:
             return loss
 
+    def final_lossV2(self, prior_probs, run_type='train'):
+        """
+            Calculates the loss of the ACT model.
+            converts lists self.losses & self.q_t which contain the q(t|T) and loss_t values for each function
+                over the T time-steps.
+            The final dimensions of losses & q_t is [batch_size, opt_steps]
+            KL-divergence is computed for each batch function. For the final loss value the D_KLs are averaged
+
+        :param prior_probs: the prior probabilities of the stopping-distribution p(t|T).
+                            has dimensions: [batch_size, opt_steps]
+        :param run_type: train/valid, indicates in which dictionary we need to save the result for later analysis
+        :return: scalar loss
+        """
+        assert len(self.losses) == len(self.q_t), "Length of two objects is not the same!"
+        eps = 1e-10
+        self.q_soft = None
+        # number of steps is in dimension 1 of prior probabilities
+        num_of_steps = prior_probs.size(1)
+        rl_weights = Variable(torch.arange(1, num_of_steps+1).double()).unsqueeze(0)
+        if self.use_cuda:
+            rl_weights = rl_weights.cuda()
+
+        # concatenate everything along dimension 1, the number of time-steps
+        losses = torch.cat(self.losses, 1)
+        q_t = torch.cat(self.q_t, 1)
+        self.q_soft = F.softmax(q_t.double())
+        q, p = generate_reversed_cum(self.q_soft, prior_probs, self.use_cuda)
+        rl_weights = rl_weights.expand_as(self.q_soft)
+        if np.isnan(np.sum(q.data.cpu().numpy())):
+            print("**** Nan value in q tensor ****")
+        kl_loss = torch.mul(rl_weights , q * (torch.log(q + eps) - torch.log(p + eps)))
+        if np.isnan(np.sum(kl_loss.data.cpu().numpy())):
+            print("**** Nan value in kl_loss ****")
+        losses = torch.mul(rl_weights, losses.double())
+        # print(kl_loss[10, :].data.cpu().squeeze().numpy())
+        kl_loss = torch.sum(kl_loss, 1)
+        # print(torch.mul(q, losses)[10, :].data.cpu().squeeze().numpy())
+        loss = (torch.mean(torch.sum(torch.mul(q, losses), 1) + kl_loss, 0)).squeeze()
+        qts = torch.mean(self.q_soft, 0).data.cpu().squeeze().numpy()
+        if run_type == 'train':
+            self.qt_hist[num_of_steps] += qts
+            self.opt_step_hist[num_of_steps - 1] += 1
+        elif run_type == 'val':
+            self.ll_loss += torch.mean(losses.double(), 0).data.cpu().squeeze().numpy()
+            self.kl_div += torch.mean(torch.log(prior_probs.double() + self.eps), 0).data.cpu().squeeze().numpy()
+            self.kl_entropy += torch.mean(torch.log(self.q_soft + self.eps), 0).data.cpu().squeeze().numpy()
+
+        return loss
+
     def final_loss(self, prior_probs, run_type='train'):
         """
             Calculates the loss of the ACT model.
@@ -429,20 +495,12 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         self.q_soft = None
         # number of steps is in dimension 1 of prior probabilities
         num_of_steps = prior_probs.size(1)
-        rl_weights = Variable(torch.arange(1, num_of_steps+1)).unsqueeze(0)
-        rl_weights = normalize(rl_weights)
-        if self.use_cuda:
-            rl_weights = rl_weights.cuda()
-
         # concatenate everything along dimension 1, the number of time-steps
         losses = torch.cat(self.losses, 1)
         q_t = torch.cat(self.q_t, 1)
         self.q_soft = F.softmax(q_t.double())
         kl_loss = kl_divergence(q_probs=self.q_soft, prior_probs=prior_probs.double())
-        rl_weights = rl_weights.expand_as(self.q_soft)
-        losses = torch.mul(rl_weights, losses)
         loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
-        # loss = (torch.mean(torch.sum(self.q_soft * losses.double(), 1) + kl_loss, 0)).squeeze()
         qts = torch.mean(self.q_soft, 0).data.cpu().squeeze().numpy()
         if run_type == 'train':
             self.qt_hist[num_of_steps] += qts

@@ -331,7 +331,7 @@ class Experiment(object):
     def __init__(self, run_args, config=None):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                            "opt_loss": []}
+                            "opt_loss": [], "step_losses": OrderedDict()}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
