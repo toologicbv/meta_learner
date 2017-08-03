@@ -53,9 +53,9 @@ class MetaConfig(object):
         # probability of continue computation
 
         self.pT_shape_param = 0.955
-        self.ptT_shape_param = 0.5
+        self.ptT_shape_param = 0.6
         self.T = 150 # avg = 80 with 0.98
-        self.max_val_opt_steps = 50
+        self.max_val_opt_steps = 100
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}

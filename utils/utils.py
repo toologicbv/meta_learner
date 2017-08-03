@@ -129,8 +129,6 @@ def get_experiment(path_to_exp, full_path=False):
         new_config.ptT_shape_param = new_config.continue_prob
         experiment.config = new_config
     # if not hasattr(experiment.args.config, 'ptT_shape_param'):
-
-
     return experiment
 
 

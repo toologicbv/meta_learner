@@ -1,5 +1,6 @@
 from config import config
 import matplotlib.pyplot as plt
+import cmocean
 
 import os
 import numpy as np
@@ -843,6 +844,47 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
 
+    if do_show:
+        plt.show()
+
+    plt.close()
+
+
+def plot_image_training_loss(exper, fig_name=None, width=18, height=15, do_save=False, do_show=False,
+                             cmap=cmocean.cm.haline):
+
+    X = np.vstack(exper.epoch_stats["step_losses"].values())
+    # we can be (nearly) sure to never reach zero loss values (exactly) and because those value disturbe the colormap
+    # we set them to a "bad" value in order to color them specifically. This is necessary for the ACT model when
+    # trained with a stochastic horizon
+    min_value = np.min(X[X > 0])
+    X[X == 0] = -1
+    plt.figure(figsize=(width, height))
+    if exper.args.learner == "act" or (exper.args.learner == "meta" and exper.args.version == "V2"):
+        stochastic = r" (stochastic horizon E[T]={} $\nu={:.3f}$)".format(int(exper.avg_num_opt_steps),
+                                                                          exper.config.pT_shape_param)
+    else:
+        stochastic = ""
+    plt.title("Loss per time step during training epochs" + stochastic, **config.title_font)
+    # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
+    # color
+    cmap.set_under(color='darkgray')
+    im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=(min_value - 0.5*min_value))
+    plt.xlabel("Number of optimization steps")
+    plt.ylabel("Training epoch")
+    if X.shape[0] > 25:
+        y_step_size = X.shape[0] // 10
+    else:
+        y_step_size = 1
+    plt.yticks(np.arange(0, X.shape[0], y_step_size), np.arange(1, X.shape[0]+1, y_step_size))
+    plt.colorbar(im)
+
+    if fig_name is None and do_save:
+        fig_name = "_" + create_exper_label(exper)
+        fig_name = os.path.join(exper.output_dir, "train_step_loss_map" + fig_name + ".png")
+    if do_save:
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
     if do_show:
         plt.show()
 

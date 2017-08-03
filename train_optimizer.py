@@ -187,6 +187,7 @@ def main():
         loss_optimizer = 0.
         diff_min = 0.
         exper.epoch_stats["step_losses"][exper.epoch] = np.zeros(max_time_steps + 1)
+        exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(max_time_steps+1)
         # in each epoch we optimize args.functions_per_epoch functions in total, packaged in batches of args.batch_size
         # and therefore ideally functions_per_epoch should be a multiple of batch_size
         # ALSO NOTE:
@@ -261,6 +262,7 @@ def main():
                 loss.backward(backward_ones)
                 avg_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
                 exper.epoch_stats["step_losses"][exper.epoch][k] += avg_loss
+                exper.epoch_stats["opt_step_hist"][exper.epoch][k] += 1
                 total_loss_steps += avg_loss
                 # V6 improvement
                 if exper.args.learner == "meta" and k == 0 and exper.args.version == "V6":
@@ -358,7 +360,8 @@ def main():
             error = loss_step.data
             diff_min += (loss_step - reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(float)
             avg_loss = loss_step.data.cpu().squeeze().numpy()[0]
-            exper.epoch_stats["step_losses"][exper.epoch][k] += avg_loss
+            exper.epoch_stats["step_losses"][exper.epoch][k+1] += avg_loss
+            exper.epoch_stats["opt_step_hist"][exper.epoch][k+1] += 1
             total_loss_steps += avg_loss
             # back-propagate ACT loss that was accumulated during optimization steps
             if exper.args.learner == 'act':
@@ -391,7 +394,9 @@ def main():
         final_act_loss *= 1./float(num_of_batches)
         total_loss_steps *= 1./float(num_of_batches)
         loss_optimizer *= 1./float(num_of_batches)
-
+        step_loss_factors = np.where(exper.epoch_stats["opt_step_hist"][exper.epoch]>0,
+                                     1./exper.epoch_stats["opt_step_hist"][exper.epoch], 0)
+        exper.epoch_stats["step_losses"][exper.epoch] *= step_loss_factors
         end_epoch = time.time()
 
         meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
