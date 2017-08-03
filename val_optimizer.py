@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 from utils.utils import load_val_data
 
-from utils.utils import softmax, stop_computing, save_exper, construct_prior_p_t_T, generate_fixed_weights, \
+from utils.utils import softmax, stop_computing, construct_prior_p_t_T, generate_fixed_weights, \
                         get_func_loss
 
 
@@ -332,5 +332,5 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         meta_learner.reset_losses()
 
     if save_run is not None:
-        save_exper(exper, file_name="exp_statistics_" + save_run + ".dll")
+        exper.save(file_name="exp_statistics_" + save_run + ".dll")
 

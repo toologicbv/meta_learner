@@ -9,3 +9,4 @@ def normalize(v):
     """
     factor = (1./torch.sum(v)).data.cpu().squeeze().numpy()[0]
     return v * float(factor)
+

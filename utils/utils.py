@@ -3,6 +3,7 @@ import torch
 import os
 import dill
 import shutil
+import time
 from config import config, MetaConfig
 from datetime import datetime
 from pytz import timezone
@@ -15,10 +16,18 @@ from collections import OrderedDict
 from torch.autograd import Variable
 import models.rnn_optimizer
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
-from probs import ConditionalTimeStepDist
+from plots import plot_image_training_loss
+from probs import ConditionalTimeStepDist, TimeStepsDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
 
 CANONICAL = False
+
+OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
+                  'adadelta': torch.optim.Adadelta, # Adadelta
+                  'adagrad': torch.optim.Adagrad, # Adagrad
+                  'adam': torch.optim.Adam, # Adam
+                  'rmsprop': torch.optim.RMSprop # RMSprop
+                  }
 
 
 def create_logger(exper, file_handler=False):
@@ -102,7 +111,6 @@ def prepare_retrain(exper_path, new_args):
     exper.args.log_dir = new_args.log_dir
     exper.avg_num_opt_steps = new_args.avg_num_opt_steps
 
-    exper = prepare(exper=exper)
     # get our logger (one to std-out and one to file)
     meta_logger = create_logger(exper, file_handler=True)
 
@@ -344,6 +352,9 @@ class Experiment(object):
         self.config = config
         self.val_funcs = None
         self.past_epochs = 0
+        self.max_time_steps = self.args.optimizer_steps
+        self._set_pathes()
+        self.run_validation = True if self.args.eval_freq != 0 else False
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
@@ -351,64 +362,94 @@ class Experiment(object):
                           "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
                           "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
 
+    def start(self, epoch_obj, meta_logger):
+        if self.args.learner == "act":
+            if self.args.version[0:2] not in ['V1', 'V2']:
+                raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(self.args.version))
 
-def save_exper(exper, file_name=None):
-    if file_name is None:
-        file_name = "exp_statistics" + ".dll"
+            if self.args.fixed_horizon:
+                self.avg_num_opt_steps = self.args.optimizer_steps
 
-    outfile = os.path.join(exper.output_dir, file_name)
+            else:
+                self.avg_num_opt_steps = epoch_obj.pt_dist.mean
+                self.max_time_steps = self.config.T
+        else:
+            self.avg_num_opt_steps = self.args.optimizer_steps
+            if self.args.learner == 'meta' and self.args.version[0:2] == 'V2':
+                # Note, we choose here an absolute limit of the horizon, set in the config-file
+                self.max_time_steps = self.config.T
+                self.avg_num_opt_steps = epoch_obj.pt_dist.mean
+            elif self.args.learner == 'meta' and (self.args.version[0:2] == 'V5' or self.args.version[0:2] == 'V6'):
+                # disable BPTT by setting truncated bptt steps to optimizer steps
+                self.args.truncated_bptt_step = self.args.optimizer_steps
 
-    with open(outfile, 'wb') as f:
-        dill.dump(exper, f)
-    print("INFO - Successfully saved experimental details to {}".format(outfile))
+        if self.args.problem == "rosenbrock":
+            assert self.args.learner == "meta", "Rosenbrock problem is only suited for MetaLearner"
+            self.config.max_val_opt_steps = self.args.optimizer_steps
 
+        if self.args.eval_freq != 0:
+            val_funcs = load_val_data(num_of_funcs=self.config.num_val_funcs, n_samples=self.args.x_samples,
+                                      stddev=self.config.stddev, dim=self.args.x_dim, logger=meta_logger,
+                                      exper=self)
+        else:
+            val_funcs = None
 
-def prepare(exper):
+        return val_funcs
 
-    if exper.args.log_dir == 'default':
-        exper.args.log_dir = exper.config.exper_prefix + \
-                            str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
-                                '%Y-%m-%d %H:%M:%S.%f')[:-7],
-                                ' ', '_') + "_" + create_exper_label(exper) + \
-                            "_lr" + "{:.0e}".format(exper.args.lr) + "_" + exper.args.optimizer
-        exper.args.log_dir = str.replace(str.replace(exper.args.log_dir, ':', '_'), '-', '')
+    def _set_pathes(self):
+        if self.args.log_dir == 'default':
+            self.args.log_dir = self.config.exper_prefix + \
+                                 str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
+                                     '%Y-%m-%d %H:%M:%S.%f')[:-7],
+                                             ' ', '_') + "_" + create_exper_label(self) + \
+                                 "_lr" + "{:.0e}".format(self.args.lr) + "_" + self.args.optimizer
+            self.args.log_dir = str.replace(str.replace(self.args.log_dir, ':', '_'), '-', '')
 
-    else:
-        # custom log dir
-        exper.args.log_dir = str.replace(exper.args.log_dir, ' ', '_')
-        exper.args.log_dir = str.replace(str.replace(exper.args.log_dir, ':', '_'), '-', '')
-    log_dir = os.path.join(exper.config.log_root_path, exper.args.log_dir)
-    if not os.path.isdir(log_dir):
-        os.makedirs(log_dir)
-        fig_path = os.path.join(log_dir, exper.config.figure_path)
-        os.makedirs(fig_path)
-    else:
-        # make a back-up copy of the contents
-        dst = os.path.join(log_dir, "backup")
-        shutil.copytree(log_dir, dst)
+        else:
+            # custom log dir
+            self.args.log_dir = str.replace(self.args.log_dir, ' ', '_')
+            self.args.log_dir = str.replace(str.replace(self.args.log_dir, ':', '_'), '-', '')
+        log_dir = os.path.join(self.config.log_root_path, self.args.log_dir)
+        if not os.path.isdir(log_dir):
+            os.makedirs(log_dir)
+            fig_path = os.path.join(log_dir, self.config.figure_path)
+            os.makedirs(fig_path)
+        else:
+            # make a back-up copy of the contents
+            dst = os.path.join(log_dir, "backup")
+            shutil.copytree(log_dir, dst)
 
-    exper.output_dir = log_dir
-    return exper
+        self.output_dir = log_dir
 
+    def save(self, file_name=None):
+        if file_name is None:
+            file_name = "exp_statistics" + ".dll"
 
-def end_run(experiment, model, validation=True, on_server=False):
-    if not experiment.args.learner == 'manual' and model.name is not None:
-        model_path = os.path.join(experiment.output_dir, model.name + config.save_ext)
-        torch.save(model.state_dict(), model_path)
-        experiment.model_path = model_path
-        print("INFO - Successfully saved model parameters to {}".format(model_path))
+        outfile = os.path.join(self.output_dir, file_name)
 
-    save_exper(experiment)
-    if not on_server:
-        loss_plot(experiment, loss_type="loss", save=True, validation=validation)
-        loss_plot(experiment, loss_type="opt_loss", save=True, validation=validation, log_scale=False)
-        if experiment.args.learner == "act":
-            # plot histogram of T distribution (number of optimization steps during training)
-            # plot_dist_optimization_steps(experiment, data_set="train", save=True)
-            # plot_dist_optimization_steps(experiment, data_set="val", save=True)
-            plot_qt_probs(experiment, data_set="train", save=True)
-            # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
-        # param_error_plot(experiment, save=True)
+        with open(outfile, 'wb') as f:
+            dill.dump(self, f)
+        print("INFO - Successfully saved experimental details to {}".format(outfile))
+
+    def end(self, model):
+        if not self.args.learner == 'manual' and model.name is not None:
+            model_path = os.path.join(self.output_dir, model.name + config.save_ext)
+            torch.save(model.state_dict(), model_path)
+            self.model_path = model_path
+            print("INFO - Successfully saved model parameters to {}".format(model_path))
+
+        self.save()
+        if not self.args.on_server:
+            loss_plot(self, loss_type="loss", save=True, validation=self.run_validation)
+            loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
+            plot_image_training_loss(self, do_save=True)
+            if self.args.learner == "act":
+                # plot histogram of T distribution (number of optimization steps during training)
+                # plot_dist_optimization_steps(experiment, data_set="train", save=True)
+                # plot_dist_optimization_steps(experiment, data_set="val", save=True)
+                plot_qt_probs(self, data_set="train", save=True)
+                # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+                # param_error_plot(experiment, save=True)
 
 
 def detailed_train_info(logger, func, f_idx, step, optimizer_steps, error):
@@ -469,3 +510,69 @@ def generate_fixed_weights(exper, logger, steps=None):
 
     return fixed_weights
 
+
+class Epoch(object):
+
+    def __init__(self, exper, meta_logger):
+        # want to start at 0
+        self.epoch_id = -1
+        self.start_time = time.time()
+        self.loss_last_time_step = 0.0
+        self.final_act_loss = 0.
+        self.param_loss = 0.
+        self.total_loss_steps = 0.
+        self.loss_optimizer = 0.
+        self.diff_min = 0.
+        self.duration = 0.
+        self.avg_opt_steps = []
+        self.logger = meta_logger
+        self.num_of_batches = exper.args.functions_per_epoch // exper.args.batch_size
+        self.pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.pT_shape_param)
+        self.prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
+                                                 exper.args.batch_size, exper.args.cuda)
+        self.backward_ones = torch.ones(exper.args.batch_size)
+        self.fixed_weights = generate_fixed_weights(exper, meta_logger)
+        if exper.args.cuda:
+            self.backward_ones = self.backward_ones.cuda()
+
+    def start(self):
+        self.epoch_id += 1
+        self.start_time = time.time()
+        self.loss_last_time_step = 0.0
+        self.final_act_loss = 0.
+        self.param_loss = 0.
+        self.total_loss_steps = 0.
+        self.loss_optimizer = 0.
+        self.diff_min = 0.
+        self.duration = 0.
+        self.avg_opt_steps = []
+        # prepare epoch variables
+
+    def end(self, exper):
+        self.duration = time.time() - self.start_time
+
+        self.logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
+                         "avg total loss (over time-steps) {:.4f} /"
+                         " avg final step loss {:.4f} / final-true_min {:.4f}".format(self.epoch_id + 1,
+                                                                                      self.duration,
+                                                                                      self.loss_optimizer[0],
+                                                                                      self.total_loss_steps,
+                                                                                      self.loss_last_time_step[0],
+                                                                                      self.diff_min))
+        if exper.args.learner == 'act':
+            self.logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(self.epoch_id + 1,
+                                                                                     self.final_act_loss[0]))
+            avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
+            self.logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
+                                                                                          avg_opt_steps))
+        if exper.args.learner == 'meta' and exper.args.version[0:2] == "V2":
+            avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
+            self.logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
+                                                                                          avg_opt_steps))
+
+        exper.epoch_stats["loss"].append(self.total_loss_steps)
+        exper.epoch_stats["param_error"].append(self.param_loss[0])
+        if exper.args.learner == 'act':
+            exper.epoch_stats["opt_loss"].append(self.final_act_loss[0])
+        elif exper.args.learner == 'meta':
+            exper.epoch_stats["opt_loss"].append(self.loss_optimizer[0])

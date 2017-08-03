@@ -7,7 +7,6 @@ from torch.autograd import Variable
 import numpy as np
 from collections import OrderedDict
 from layer_lstm import LayerLSTMCell
-from utils.helper import normalize
 from utils.config import config
 from utils.regression import neg_log_likelihood_loss, nll_with_t_dist, RegressionFunction, RegressionWithStudentT
 
