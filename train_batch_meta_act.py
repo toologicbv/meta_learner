@@ -18,12 +18,12 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
     forward_steps = 0
     # determine the number of optimization steps for this batch
     if exper.args.learner == 'meta' and exper.args.version[0:2] == 'V2':
-        optimizer_steps = epoch_obj.pt_dist.rvs(n=1)[0]
+        optimizer_steps = exper.pt_dist.rvs(n=1)[0]
 
     elif exper.args.learner == 'act' and not exper.args.fixed_horizon:
         # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
         # add one to choice because we actually want values between [1, config.T]
-        optimizer_steps = epoch_obj.pt_dist.rvs(n=1)[0]
+        optimizer_steps = exper.pt_dist.rvs(n=1)[0]
         epoch_obj.prior_probs = construct_prior_p_t_T(optimizer_steps, exper.config.ptT_shape_param,
                                                       exper.args.batch_size,
                                                       exper.args.cuda)
@@ -114,7 +114,7 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
 
             reg_funcs.set_parameters(par_new)
             if exper.args.version[0:2] == "V3":
-                loss_sum = loss_sum + torch.mul(epoch_obj.fixed_weights[k], loss_step)
+                loss_sum = loss_sum + torch.mul(exper.fixed_weights[k], loss_step)
 
             elif exper.args.learner == "meta" and exper.args.version == "V6":
                 loss_sum = loss_sum + observed_imp
@@ -156,7 +156,7 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
                 if exper.args.learner == 'meta' and exper.args.version[0:2] == "V5":
                     # in this version we make sure we never execute BPTT, we calculate the cumulative
                     # discounted reward at time step T (backward sweep)
-                    loss_sum = meta_optimizer.final_loss(epoch_obj.fixed_weights)
+                    loss_sum = meta_optimizer.final_loss(exper.fixed_weights)
 
                 loss_sum.backward()
                 optimizer.step()

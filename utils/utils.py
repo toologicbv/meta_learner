@@ -55,19 +55,19 @@ def create_logger(exper, file_handler=False):
     return logger
 
 
-def print_flags(exper, logger):
+def print_flags(exper):
     """
     Prints all entries in argument parser.
     """
     for key, value in vars(exper.args).items():
-        logger.info(key + ' : ' + str(value))
+        exper.meta_logger.info(key + ' : ' + str(value))
 
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V3'):
-        logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
+        exper.meta_logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
         if not exper.args.fixed_horizon:
-            logger.info("horizon limit for p(T|nu={:.3f}) due to memory shortage {}".format(exper.config.pT_shape_param,
-                                                                                            exper.config.T))
+            exper.meta_logger.info("horizon limit for p(T|nu={:.3f}) due to memory "
+                                   "shortage {}".format(exper.config.pT_shape_param, exper.config.T))
 
 
 def softmax(x, dim=1):
@@ -353,8 +353,10 @@ class Experiment(object):
         self.val_funcs = None
         self.past_epochs = 0
         self.max_time_steps = self.args.optimizer_steps
-        self._set_pathes()
         self.run_validation = True if self.args.eval_freq != 0 else False
+        self.pt_dist = TimeStepsDist(T=self.config.T, q_prob=self.config.pT_shape_param)
+        self.meta_logger = None
+        self.fixed_weights = None
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
@@ -362,7 +364,8 @@ class Experiment(object):
                           "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
                           "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
 
-    def start(self, epoch_obj, meta_logger):
+    def start(self, epoch_obj):
+
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
                 raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(self.args.version))
@@ -371,14 +374,14 @@ class Experiment(object):
                 self.avg_num_opt_steps = self.args.optimizer_steps
 
             else:
-                self.avg_num_opt_steps = epoch_obj.pt_dist.mean
+                self.avg_num_opt_steps = self.pt_dist.mean
                 self.max_time_steps = self.config.T
         else:
             self.avg_num_opt_steps = self.args.optimizer_steps
             if self.args.learner == 'meta' and self.args.version[0:2] == 'V2':
                 # Note, we choose here an absolute limit of the horizon, set in the config-file
                 self.max_time_steps = self.config.T
-                self.avg_num_opt_steps = epoch_obj.pt_dist.mean
+                self.avg_num_opt_steps = self.pt_dist.mean
             elif self.args.learner == 'meta' and (self.args.version[0:2] == 'V5' or self.args.version[0:2] == 'V6'):
                 # disable BPTT by setting truncated bptt steps to optimizer steps
                 self.args.truncated_bptt_step = self.args.optimizer_steps
@@ -386,10 +389,15 @@ class Experiment(object):
         if self.args.problem == "rosenbrock":
             assert self.args.learner == "meta", "Rosenbrock problem is only suited for MetaLearner"
             self.config.max_val_opt_steps = self.args.optimizer_steps
+        # unfortunately need self.avg_num_opt_steps before we can make the path
+        self._set_pathes()
+        self.meta_logger = create_logger(self, file_handler=True)
+        self.meta_logger.info("Initializing experiment - may take a while to load validation set")
+        self.fixed_weights = generate_fixed_weights(self)
 
         if self.args.eval_freq != 0:
             val_funcs = load_val_data(num_of_funcs=self.config.num_val_funcs, n_samples=self.args.x_samples,
-                                      stddev=self.config.stddev, dim=self.args.x_dim, logger=meta_logger,
+                                      stddev=self.config.stddev, dim=self.args.x_dim, logger=self.meta_logger,
                                       exper=self)
         else:
             val_funcs = None
@@ -476,7 +484,7 @@ def construct_prior_p_t_T(optimizer_steps, continue_prob, batch_size, cuda=False
     return prior_probs.expand(batch_size, prior_probs.size(0))
 
 
-def generate_fixed_weights(exper, logger, steps=None):
+def generate_fixed_weights(exper, steps=None):
 
     if steps is None:
         steps = exper.args.optimizer_steps
@@ -485,7 +493,7 @@ def generate_fixed_weights(exper, logger, steps=None):
     if exper.args.learner == 'meta' and (exper.args.version[0:2] == "V3" or exper.args.version[0:2] == "V5"):
         # Version 3.1 of MetaLearner uses a fixed geometric distribution as loss weights
         if exper.args.version == "V3.1":
-            logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
+            exper.meta_logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
                 steps, exper.config.ptT_shape_param))
             prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
                                                 batch_size=1, cuda=exper.args.cuda)
@@ -494,7 +502,7 @@ def generate_fixed_weights(exper, logger, steps=None):
         elif exper.args.version == "V3.2":
             fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
             fixed_weights[:] = 1. / float(steps)
-            logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
+            exper.meta_logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
                 torch.sum(fixed_weights).data.cpu().squeeze()[0]))
         elif exper.args.version[0:2] == "V5":
             # in metaV5 we construct the loss-weights based on the RL approach for cumulative discounted reward
@@ -513,7 +521,7 @@ def generate_fixed_weights(exper, logger, steps=None):
 
 class Epoch(object):
 
-    def __init__(self, exper, meta_logger):
+    def __init__(self, exper):
         # want to start at 0
         self.epoch_id = -1
         self.start_time = time.time()
@@ -525,13 +533,10 @@ class Epoch(object):
         self.diff_min = 0.
         self.duration = 0.
         self.avg_opt_steps = []
-        self.logger = meta_logger
         self.num_of_batches = exper.args.functions_per_epoch // exper.args.batch_size
-        self.pt_dist = TimeStepsDist(T=exper.config.T, q_prob=exper.config.pT_shape_param)
         self.prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
                                                  exper.args.batch_size, exper.args.cuda)
         self.backward_ones = torch.ones(exper.args.batch_size)
-        self.fixed_weights = generate_fixed_weights(exper, meta_logger)
         if exper.args.cuda:
             self.backward_ones = self.backward_ones.cuda()
 
@@ -551,24 +556,24 @@ class Epoch(object):
     def end(self, exper):
         self.duration = time.time() - self.start_time
 
-        self.logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
-                         "avg total loss (over time-steps) {:.4f} /"
-                         " avg final step loss {:.4f} / final-true_min {:.4f}".format(self.epoch_id + 1,
-                                                                                      self.duration,
-                                                                                      self.loss_optimizer[0],
-                                                                                      self.total_loss_steps,
-                                                                                      self.loss_last_time_step[0],
-                                                                                      self.diff_min))
+        exper.meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
+                               "avg total loss (over time-steps) {:.4f} /"
+                               " avg final step loss {:.4f} / final-true_min {:.4f}".format(self.epoch_id + 1,
+                                                                                            self.duration,
+                                                                                            self.loss_optimizer[0],
+                                                                                            self.total_loss_steps,
+                                                                                            self.loss_last_time_step[0],
+                                                                                            self.diff_min))
         if exper.args.learner == 'act':
-            self.logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(self.epoch_id + 1,
-                                                                                     self.final_act_loss[0]))
+            exper.meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(self.epoch_id + 1,
+                                                                                           self.final_act_loss[0]))
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
-            self.logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
-                                                                                          avg_opt_steps))
+            exper.meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
+                                                                                                avg_opt_steps))
         if exper.args.learner == 'meta' and exper.args.version[0:2] == "V2":
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
-            self.logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
-                                                                                          avg_opt_steps))
+            exper.meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
+                                                                                                avg_opt_steps))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
         exper.epoch_stats["param_error"].append(self.param_loss[0])

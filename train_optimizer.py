@@ -109,19 +109,17 @@ def main():
         torch.cuda.manual_seed(SEED)
 
     np.random.seed(SEED)
-
     exper = Experiment(args, config)
     # get our logger (one to std-out and one to file)
-    meta_logger = create_logger(exper, file_handler=True)
-    epoch_obj = Epoch(exper, meta_logger)
+    epoch_obj = Epoch(exper)
     # print the argument flags
-    print_flags(exper, meta_logger)
     # Initialize EVERYTHING? i.e. if necessary load the validation functions
-    val_funcs = exper.start(epoch_obj, meta_logger)
+    val_funcs = exper.start(epoch_obj)
+    print_flags(exper)
 
     lr = exper.args.lr
     if not exper.args.learner == 'manual':
-        meta_optimizer = get_model(exper, exper.args.x_dim, retrain=exper.args.retrain, logger=meta_logger)
+        meta_optimizer = get_model(exper, exper.args.x_dim, retrain=exper.args.retrain, logger=exper.meta_logger)
         optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
@@ -135,8 +133,11 @@ def main():
         exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(exper.max_time_steps + 1)
 
         for i in range(epoch_obj.num_of_batches):
-            reg_funcs = get_batch_functions(exper, exper.config.stddev)
-            execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
+            if exper.args.learner in ['meta', 'act']:
+                reg_funcs = get_batch_functions(exper, exper.config.stddev)
+                execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
+            else:
+                raise ValueError("args.learner {} not support by this implementation".format(exper.args.learner))
 
         # END OF EPOCH, calculate average final loss/error and print summary
         # we computed the average loss per function in the batch! and added those losses to the final loss
@@ -160,7 +161,7 @@ def main():
             else:
                 opt_steps = exper.config.max_val_opt_steps
 
-            validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=meta_logger,
+            validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=exper.meta_logger,
                                verbose=VALID_VERBOSE,
                                plot_func=PLOT_VALIDATION_FUNCS,
                                max_steps=opt_steps,
