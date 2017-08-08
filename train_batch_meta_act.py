@@ -164,11 +164,11 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
                 # Slightly sloppy. Actually for the ACTV1 model we only register the ACT loss as the
                 # so called optimizer-loss. But actually ACTV1 is using both losses
                 if exper.args.learner == 'meta':
-                    epoch_obj.loss_optimizer += loss_sum.data
+                    epoch_obj.loss_optimizer += loss_sum.data.cpu().squeeze().numpy()[0]
 
     # END of iterative function optimization. Compute final losses and probabilities
     # compute the final loss error for this function between last loss calculated and function min-value
-    error = loss_step.data
+    error = loss_step.data.cpu().squeeze().numpy()[0]
     epoch_obj.diff_min += (loss_step -
                            reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(
         float)
@@ -182,10 +182,10 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
         act_loss = meta_optimizer.final_loss(epoch_obj.prior_probs, run_type='train')
         act_loss.backward()
         optimizer.step()
-        epoch_obj.final_act_loss += act_loss.data
+        epoch_obj.final_act_loss += act_loss.data.cpu().squeeze().numpy()[0]
         # set grads of meta_optimizer to zero after update parameters
         meta_optimizer.zero_grad()
-        epoch_obj.loss_optimizer += act_loss.data
+        epoch_obj.loss_optimizer += act_loss.data.cpu().squeeze().numpy()[0]
 
     if exper.args.learner == "act":
         meta_optimizer.reset_final_loss()
@@ -193,6 +193,6 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
         meta_optimizer.reset_losses()
     # END OF BATCH: FUNCTION OPTIMIZATION
     epoch_obj.loss_last_time_step += error
-    epoch_obj.param_loss += reg_funcs.param_error(average=True).data
+    epoch_obj.param_loss += reg_funcs.param_error(average=True).data.cpu().squeeze().numpy()[0]
 
 

@@ -15,6 +15,7 @@ from collections import OrderedDict
 
 from torch.autograd import Variable
 import models.rnn_optimizer
+import models.sb_act_optimizer
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
 from plots import plot_image_training_loss
 from probs import ConditionalTimeStepDist, TimeStepsDist
@@ -191,7 +192,14 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
                                    output_bias=output_bias)
-    else:
+    elif exper.args.learner == "act_sb":
+        str_classname = "StickBreakingACTBaseModel"
+        act_class = getattr(models.sb_act_optimizer, str_classname)
+        meta_optimizer = act_class(num_layers=exper.args.num_layers,
+                                   num_hidden=exper.args.hidden_size,
+                                   use_cuda=exper.args.cuda,
+                                   output_bias=output_bias)
+    elif exper.args.learner == "meta":
         # the alternative model is our MetaLearner in different favours
         if exper.args.version[0:2] == "V4":
             str_classname = "MetaStepLearner"
@@ -250,21 +258,21 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
     return meta_optimizer
 
 
-def get_batch_functions(exper, stddev=1.):
+def get_batch_functions(exper):
     if exper.args.problem == "quadratic":
         funcs = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
                                  use_cuda=exper.args.cuda)
 
     elif exper.args.problem == "regression":
         funcs = RegressionFunction(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
-                                   stddev=stddev, x_dim=exper.args.x_dim,
+                                   stddev=exper.config.stddev, x_dim=exper.args.x_dim,
                                    use_cuda=exper.args.cuda)
     elif exper.args.problem == "regression_T":
         funcs = RegressionWithStudentT(n_funcs=exper.args.batch_size, n_samples=exper.args.x_samples,
                                        x_dim=exper.args.x_dim, scale_p=1., shape_p=1,
                                        use_cuda=exper.args.cuda)
     elif exper.args.problem == "rosenbrock":
-        funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=stddev, num_dims=2,
+        funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=exper.config.stddev, num_dims=2,
                            use_cuda=exper.args.cuda, canonical=CANONICAL)
 
     return funcs
@@ -337,12 +345,12 @@ class Experiment(object):
     def __init__(self, run_args, config=None):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                            "opt_loss": [], "step_losses": OrderedDict()}
+                            "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": []}
+                          "loss_funcs": [], "halting_step": {}}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -363,6 +371,30 @@ class Experiment(object):
                           "step_losses": OrderedDict(),
                           "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
                           "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
+
+    def add_halting_steps(self, halting_steps):
+        # expect opt_steps to be an autograd.Variable
+        np_array = halting_steps.data.cpu().squeeze().numpy()
+        idx_sort = np.argsort(np_array)
+        np_array = np_array[idx_sort]
+        vals, _, count = np.unique(np_array, return_counts=True, return_index=True)
+        self.epoch_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
+
+    def add_opt_steps(self, step):
+        # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
+        self.epoch_stats["opt_step_hist"][self.epoch][step] += 1
+
+    def add_step_loss(self, step_loss, step):
+        # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
+        if not isinstance(step_loss, (np.float, np.float32, np.float64)):
+            raise ValueError("step_loss must be a numpy.float but is type {}".format(type(step_loss)))
+        self.epoch_stats["step_losses"][self.epoch][step] += step_loss
+
+    def scale_step_losses(self):
+        step_loss_factors = np.zeros(self.epoch_stats["opt_step_hist"][self.epoch].shape[0])
+        idx_where = np.where(self.epoch_stats["opt_step_hist"][self.epoch] > 0)
+        step_loss_factors[idx_where] = 1. / self.epoch_stats["opt_step_hist"][self.epoch][idx_where]
+        self.epoch_stats["step_losses"][self.epoch] *= step_loss_factors
 
     def start(self, epoch_obj):
 
@@ -458,6 +490,8 @@ class Experiment(object):
                 plot_qt_probs(self, data_set="train", save=True)
                 # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
                 # param_error_plot(experiment, save=True)
+        else:
+            plot_image_training_loss(self, do_save=True)
 
 
 def detailed_train_info(logger, func, f_idx, step, optimizer_steps, error):
@@ -522,8 +556,8 @@ def generate_fixed_weights(exper, steps=None):
 class Epoch(object):
 
     def __init__(self, exper):
-        # want to start at 0
-        self.epoch_id = -1
+        # want to start at 1
+        self.epoch_id = 0
         self.start_time = time.time()
         self.loss_last_time_step = 0.0
         self.final_act_loss = 0.
@@ -537,17 +571,31 @@ class Epoch(object):
         self.prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
                                                  exper.args.batch_size, exper.args.cuda)
         self.backward_ones = torch.ones(exper.args.batch_size)
+        self.max_time_steps_taken = 0
         if exper.args.cuda:
             self.backward_ones = self.backward_ones.cuda()
+
+    def add_step_loss(self, avg_loss, last_time_step=False):
+        if not isinstance(avg_loss, (np.float, np.float32, np.float64)):
+            raise ValueError("avg_loss must be a numpy.float but is type {}".format(type(avg_loss)))
+        self.total_loss_steps += avg_loss
+        if last_time_step:
+            self.loss_last_time_step += avg_loss
+
+    def add_act_loss(self, loss):
+        if not isinstance(loss, (np.float, np.float32, np.float64)):
+            raise ValueError("loss must be a numpy.float but is type {}".format(type(loss)))
+        self.final_act_loss += loss
+        self.loss_optimizer += loss
 
     def start(self):
         self.epoch_id += 1
         self.start_time = time.time()
-        self.loss_last_time_step = 0.0
-        self.final_act_loss = 0.
+        self.loss_last_time_step = 0
+        self.final_act_loss = 0
         self.param_loss = 0.
         self.total_loss_steps = 0.
-        self.loss_optimizer = 0.
+        self.loss_optimizer = 0
         self.diff_min = 0.
         self.duration = 0.
         self.avg_opt_steps = []
@@ -558,26 +606,50 @@ class Epoch(object):
 
         exper.meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
                                "avg total loss (over time-steps) {:.4f} /"
-                               " avg final step loss {:.4f} / final-true_min {:.4f}".format(self.epoch_id + 1,
+                               " avg final step loss {:.4f} / final-true_min {:.4f}".format(self.epoch_id ,
                                                                                             self.duration,
-                                                                                            self.loss_optimizer[0],
+                                                                                            self.loss_optimizer,
                                                                                             self.total_loss_steps,
-                                                                                            self.loss_last_time_step[0],
+                                                                                            self.loss_last_time_step,
                                                                                             self.diff_min))
         if exper.args.learner == 'act':
-            exper.meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(self.epoch_id + 1,
-                                                                                           self.final_act_loss[0]))
+            exper.meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(self.epoch_id,
+                                                                                           self.final_act_loss))
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
             exper.meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
                                                                                                 avg_opt_steps))
         if exper.args.learner == 'meta' and exper.args.version[0:2] == "V2":
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
-            exper.meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
-                                                                                                avg_opt_steps))
+            exper.meta_logger.info("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id,
+                                                                                               avg_opt_steps))
+        if exper.args.learner == 'act_sb':
+            np_array = exper.epoch_stats["halting_step"][self.epoch_id]
+            num_of_steps = np_array.shape[0]
+            num_of_funcs = np.sum(np_array)
+            values = np.arange(0, num_of_steps)
+            avg_opt_steps = int(np.sum(1./num_of_funcs * values * np_array))
+            E_x_2 = np.sum(1. / num_of_funcs * values**2 * np_array)
+            stddev = np.sqrt(E_x_2 - avg_opt_steps**2)
+            cum_sum = np.cumsum(np_array)
+            if cum_sum[np.nonzero(cum_sum)[0][0]] > num_of_funcs/2.:
+                median = np.nonzero(cum_sum)[0][0]
+            else:
+                median = np.argmax(cum_sum[cum_sum < num_of_funcs/2.]) + 1
+            print(exper.epoch_stats["step_losses"][self.epoch_id][0:self.max_time_steps_taken+1])
+            print(np_array[0:self.max_time_steps_taken+1])
+            # median = int(np.median(np_array))
+            exper.meta_logger.info("Epoch: {}, Average number of optimization steps {} "
+                                   "stddev {:.3f} median {}".format(self.epoch_id, avg_opt_steps, stddev, median))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
-        exper.epoch_stats["param_error"].append(self.param_loss[0])
+        exper.epoch_stats["param_error"].append(self.param_loss)
         if exper.args.learner == 'act':
-            exper.epoch_stats["opt_loss"].append(self.final_act_loss[0])
+            exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':
-            exper.epoch_stats["opt_loss"].append(self.loss_optimizer[0])
+            exper.epoch_stats["opt_loss"].append(self.loss_optimizer)
+
+    def set_max_time_steps_taken(self, steps):
+        self.max_time_steps_taken = steps
+
+    def get_max_time_steps_taken(self):
+        return self.max_time_steps_taken

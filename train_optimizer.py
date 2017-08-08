@@ -1,3 +1,7 @@
+import sys
+if "/home/jogi/.local/lib/python2.7/site-packages" in sys.path:
+    sys.path.remove("/home/jogi/.local/lib/python2.7/site-packages")
+
 import argparse
 import numpy as np
 
@@ -5,10 +9,10 @@ import torch
 
 from utils.config import config
 from utils.utils import Experiment, get_model, print_flags
-from utils.utils import create_logger
 from utils.utils import get_batch_functions
 from utils.utils import OPTIMIZER_DICT, Epoch
 from train_batch_meta_act import execute_batch
+from train_batch_sb_act import ACTBatch
 
 from val_optimizer import validate_optimizer
 
@@ -128,16 +132,26 @@ def main():
 
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
+        ACTBatch.id = 0
         epoch_obj.start()
         exper.epoch_stats["step_losses"][exper.epoch] = np.zeros(exper.max_time_steps + 1)
-        exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(exper.max_time_steps + 1)
-
+        exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
+        exper.epoch_stats["halting_step"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
-                reg_funcs = get_batch_functions(exper, exper.config.stddev)
+                reg_funcs = get_batch_functions(exper)
                 execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
+            elif exper.args.learner in ['act_sb']:
+                batch = ACTBatch(exper)
+                ACTBatch.id += 1
+                batch(exper, epoch_obj, meta_optimizer, is_train=True)
+                act_loss = batch.backward(epoch_obj, meta_optimizer, optimizer, kl_scaler=1.)
+                exper.add_halting_steps(batch.halting_steps)
+                epoch_obj.add_act_loss(act_loss)
+                # exper.meta_logger.info("{} batch - batch-loss {:.4f}".format(batch.id,
+                #                                                             batch.loss_sum.data.cpu().numpy()[0]))
             else:
-                raise ValueError("args.learner {} not support by this implementation".format(exper.args.learner))
+                raise ValueError("args.learner {} not supported by this implementation".format(exper.args.learner))
 
         # END OF EPOCH, calculate average final loss/error and print summary
         # we computed the average loss per function in the batch! and added those losses to the final loss
@@ -147,9 +161,7 @@ def main():
         epoch_obj.final_act_loss *= 1./float(epoch_obj.num_of_batches)
         epoch_obj.total_loss_steps *= 1./float(epoch_obj.num_of_batches)
         epoch_obj.loss_optimizer *= 1./float(epoch_obj.num_of_batches)
-        step_loss_factors = np.where(exper.epoch_stats["opt_step_hist"][exper.epoch] > 0,
-                                     1./exper.epoch_stats["opt_step_hist"][exper.epoch], 0)
-        exper.epoch_stats["step_losses"][exper.epoch] *= step_loss_factors
+        exper.scale_step_losses()
         epoch_obj.end(exper)
 
         # if applicable, VALIDATE model performance

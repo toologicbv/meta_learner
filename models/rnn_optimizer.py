@@ -65,7 +65,7 @@ def get_step_loss(optimizee_obj, new_parameters, avg_batch=False):
     if optimizee_obj.__class__ == RegressionFunction:
         loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
                                        stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
-                                       cavg_batch=avg_batch, size_average=False)
+                                       avg_batch=avg_batch, size_average=False)
     elif optimizee_obj.__class__ == RegressionWithStudentT:
         loss = nll_with_t_dist(optimizee_obj.y, optimizee_obj.y_t(new_parameters), N=optimizee_obj.n_samples,
                                shape_p=optimizee_obj.shape_p, scale_p=optimizee_obj.scale_p,
@@ -195,6 +195,8 @@ class MetaLearner(nn.Module):
         # loss for all individual functions, then store the result and average (if necessary) afterwards
         loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=False)
         # passing it as a new Variable breaks the backward...actually not necessary here, but for actV1 model
+        if loss.dim() == 1:
+            loss = loss.unsqueeze(1)
         self.losses.append(Variable(loss.data))
         if average_batch:
             return torch.mean(loss)
@@ -240,6 +242,8 @@ class MetaLearnerWithValueFunction(MetaLearner):
         loss = get_step_loss(optimizee_obj, new_parameters, avg_batch=False)
         # ACTUALLY THIS IS WHY I CLONED THE STEP_LOSS METHOD from MetaLearner, because I need to append the loss
         # without passing loss.data, in order to be able to execute .backward() later on
+        if loss.dim() == 1:
+            loss = loss.unsqueeze(1)
         self.losses.append(loss)
         if average_batch:
             return torch.mean(loss)
@@ -410,11 +414,11 @@ class AdaptiveMetaLearnerV2(MetaLearner):
         # reshape parameters
         delta_theta = delta_theta.view(param_size)
         # reshape qt-values and calculate mean
-        delta_qt = torch.mean(delta_qt.view(param_size), 1)
+        delta_qt = torch.mean(delta_qt.view(param_size), 1).unsqueeze(1)
         return delta_theta, delta_qt
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):
-        N = float(optimizee_obj.n_samples)
+
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
@@ -422,6 +426,8 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
         # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
         # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
+        if loss.dim() == 1:
+            loss = loss.unsqueeze(1)
         self.losses.append(loss)
         if average_batch:
             return torch.mean(loss)
