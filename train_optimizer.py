@@ -4,6 +4,7 @@ if "/home/jogi/.local/lib/python2.7/site-packages" in sys.path:
 
 import argparse
 import numpy as np
+from collections import OrderedDict
 
 import torch
 
@@ -137,6 +138,7 @@ def main():
         exper.epoch_stats["step_losses"][exper.epoch] = np.zeros(exper.max_time_steps + 1)
         exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
         exper.epoch_stats["halting_step"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
+        exper.epoch_stats["qt_hist"][exper.epoch] = np.zeros(exper.max_time_steps)
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)

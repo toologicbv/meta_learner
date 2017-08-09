@@ -17,7 +17,7 @@ from torch.autograd import Variable
 import models.rnn_optimizer
 import models.sb_act_optimizer
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
-from plots import plot_image_training_loss
+from plots import plot_image_training_loss, plot_image_training_data
 from probs import ConditionalTimeStepDist, TimeStepsDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
 
@@ -372,29 +372,74 @@ class Experiment(object):
                           "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
                           "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
 
-    def add_halting_steps(self, halting_steps):
+    def add_halting_steps(self, halting_steps, is_train=True):
         # expect opt_steps to be an autograd.Variable
         np_array = halting_steps.data.cpu().squeeze().numpy()
         idx_sort = np.argsort(np_array)
         np_array = np_array[idx_sort]
         vals, _, count = np.unique(np_array, return_counts=True, return_index=True)
-        self.epoch_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
+        if is_train:
+            self.epoch_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
+        else:
+            self.val_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
 
-    def add_opt_steps(self, step):
+    def add_opt_steps(self, step, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
-        self.epoch_stats["opt_step_hist"][self.epoch][step] += 1
+        if is_train:
+            self.epoch_stats["opt_step_hist"][self.epoch][step] += 1
+        else:
+            self.val_stats["opt_step_hist"][self.epoch][step] += 1
 
-    def add_step_loss(self, step_loss, step):
+    def add_step_loss(self, step_loss, step, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
         if not isinstance(step_loss, (np.float, np.float32, np.float64)):
             raise ValueError("step_loss must be a numpy.float but is type {}".format(type(step_loss)))
-        self.epoch_stats["step_losses"][self.epoch][step] += step_loss
+        if is_train:
+            self.epoch_stats["step_losses"][self.epoch][step] += step_loss
+        else:
+            self.val_stats["step_losses"][self.epoch][step] += step_loss
 
-    def scale_step_losses(self):
-        step_loss_factors = np.zeros(self.epoch_stats["opt_step_hist"][self.epoch].shape[0])
-        idx_where = np.where(self.epoch_stats["opt_step_hist"][self.epoch] > 0)
-        step_loss_factors[idx_where] = 1. / self.epoch_stats["opt_step_hist"][self.epoch][idx_where]
-        self.epoch_stats["step_losses"][self.epoch] *= step_loss_factors
+    def add_step_qts(self, qt_values, step=None, is_train=True):
+        # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
+        #
+        if not isinstance(qt_values, np.ndarray):
+            raise ValueError("qt_values must be a numpy.float but is type {}".format(type(qt_values)))
+
+        if qt_values.ndim > 1 and step is None:
+            if qt_values.shape[0] > 1:
+                # take mean over batch size
+                qt_values = np.mean(qt_values, axis=0)
+            else:
+                qt_values = np.squeeze(qt_values, axis=0)
+        # print(np.array_str(qt_values[:30], precision=5))
+        if step is None:
+            start = 0
+            end = qt_values.shape[0]
+        else:
+            start = step
+            end = step + 1
+        if is_train:
+            self.epoch_stats["qt_hist"][self.epoch][start:end] += qt_values
+        else:
+            self.val_stats["qt_hist"][self.epoch][start:end] += qt_values
+
+    def scale_step_losses(self, is_train=True):
+        if is_train:
+            opt_step_array = self.epoch_stats["opt_step_hist"][self.epoch]
+        else:
+            opt_step_array = self.val_stats["opt_step_hist"][self.epoch]
+
+        step_loss_factors = np.zeros(opt_step_array.shape[0])
+        idx_where = np.where(opt_step_array > 0)
+        step_loss_factors[idx_where] = 1. / opt_step_array[idx_where]
+        if is_train:
+            self.epoch_stats["step_losses"][self.epoch] *= step_loss_factors
+            # we can (have to) skip the first factor because that is for step 0 and only used for scaling the loss values
+            self.epoch_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
+        else:
+            self.val_stats["step_losses"][self.epoch] *= step_loss_factors
+            # see explanation above
+            self.val_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
 
     def start(self, epoch_obj):
 
@@ -483,15 +528,19 @@ class Experiment(object):
             loss_plot(self, loss_type="loss", save=True, validation=self.run_validation)
             loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
             plot_image_training_loss(self, do_save=True)
+            if self.args.learner == "act_sb":
+                plot_image_training_data(self, data="qt_value", do_save=True, do_show=False)
+                plot_image_training_data(self, data="halting_step", do_save=True, do_show=False)
+                plot_qt_probs(self, data_set="train", save=True)
+                if self.run_validation:
+                    plot_dist_optimization_steps(self, data_set="val", save=True)
             if self.args.learner == "act":
                 # plot histogram of T distribution (number of optimization steps during training)
-                # plot_dist_optimization_steps(experiment, data_set="train", save=True)
+                # plot_dist_optimization_steps(self.exper, data_set="train", save=True)
                 # plot_dist_optimization_steps(experiment, data_set="val", save=True)
                 plot_qt_probs(self, data_set="train", save=True)
                 # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
                 # param_error_plot(experiment, save=True)
-        else:
-            plot_image_training_loss(self, do_save=True)
 
 
 def detailed_train_info(logger, func, f_idx, step, optimizer_steps, error):
@@ -635,15 +684,21 @@ class Epoch(object):
                 median = np.nonzero(cum_sum)[0][0]
             else:
                 median = np.argmax(cum_sum[cum_sum < num_of_funcs/2.]) + 1
-            print(exper.epoch_stats["step_losses"][self.epoch_id][0:self.max_time_steps_taken+1])
-            print(np_array[0:self.max_time_steps_taken+1])
-            # median = int(np.median(np_array))
+            e_losses = exper.epoch_stats["step_losses"][self.epoch_id][0:self.max_time_steps_taken+1]
+            exper.meta_logger.info("time step losses")
+            exper.meta_logger.info(np.array_str(e_losses,  precision=3))
+            exper.meta_logger.info("qt values")
+            exper.meta_logger.info(np.array_str(exper.epoch_stats["qt_hist"][self.epoch_id]
+                                                [0:self.max_time_steps_taken + 1],  precision=4))
+            exper.meta_logger.info("halting step frequencies")
+            exper.meta_logger.info(np.array_str(np_array[0:self.max_time_steps_taken+1]))
+
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {} "
                                    "stddev {:.3f} median {}".format(self.epoch_id, avg_opt_steps, stddev, median))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
         exper.epoch_stats["param_error"].append(self.param_loss)
-        if exper.args.learner == 'act':
+        if exper.args.learner[0:3] == 'act':
             exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(self.loss_optimizer)

@@ -1,9 +1,11 @@
 from config import config
 import matplotlib.pyplot as plt
+from pylab import MaxNLocator
 import cmocean
 
 import os
 import numpy as np
+from scipy.stats import geom
 from collections import OrderedDict
 from datetime import datetime
 from pytz import timezone
@@ -80,21 +82,22 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
               log_scale=False, only_val=False):
 
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
-    plt.figure(figsize=(height, width))
+    ax = plt.figure(figsize=(height, width)).gca()
     num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
     plt.xlabel("epochs")
-    x_vals = range(1, exper.epoch+1, 1)
-
+    x_vals = np.arange(1, exper.epoch+1, 1)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     if not only_val:
         if log_scale:
-            plt.semilogy(x_vals[2:], train_loss[2:], 'r', label="train-loss")
+            plt.semilogy(x_vals[2:].astype(int), train_loss[2:], 'r', label="train-loss")
         else:
-            plt.plot(x_vals[2:], train_loss[2:], 'r', label="train-loss")
+            plt.plot(x_vals[2:].astype(int), train_loss[2:], 'r', label="train-loss")
 
     if len(x_vals) <= 10:
-        plt.xticks(x_vals)
+        plt.xticks(x_vals.astype(int))
 
-    x_vals = create_x_val_array(exper, val_loss)
+    if validation:
+        x_vals = create_x_val_array(exper, val_loss)
 
     if len(x_vals) > 2:
         offset = 1
@@ -103,9 +106,9 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
 
     if validation:
         if log_scale:
-            plt.semilogy(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
+            plt.semilogy(x_vals[offset:].astype(int), val_loss[offset:], 'b', label="valid-loss")
         else:
-            plt.plot(x_vals[offset:], val_loss[offset:], 'b', label="valid-loss")
+            plt.plot(x_vals[offset:].astype(int), val_loss[offset:], 'b', label="valid-loss")
 
     plt.legend(loc="best")
     p_title = "Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps)
@@ -185,14 +188,27 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     index = range(1, len(opt_step_hist) + 1)
     norms = 1. / np.sum(opt_step_hist) * opt_step_hist
     o_mean = int(round(np.sum(index * norms)))
+    if exper.args.learner != "act_sb":
+        p_title = "Distribution of number of optimization steps (E[T|{}]={})".format(T, o_mean)
+        p_label = "with p(T|nu)={:.3f})".format(config.pT_shape_param)
+
+    else:
+        p_title = r"Histogram w.r.t. number of optimization steps $p(t|\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+        p_label = ""
+        opt_step_hist = exper.epoch_stats["halting_step"][epoch]
+        maxT = np.max(opt_step_hist.nonzero())
+        index = range(1, maxT + 3)
+        norms = opt_step_hist[:maxT+2]
+
     plt.figure(figsize=(height, width))
     plt.bar(index, norms, bar_width, color='b', align='center',
-            label="with p(T|nu)={:.3f})".format(config.pT_shape_param))
+            label=p_label)
     # plot mean value again...in red
-    plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
+    if exper.args.learner != "act_sb":
+        plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("Number of optimization steps")
     plt.ylabel("Proportion")
-    plt.title("Distribution of optimization steps (E[T|{}]={})".format(T, o_mean), **title_font)
+    plt.title(p_title, **title_font)
     plt.legend(loc="best")
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, exper.config.T_dist_fig_name + "_" + data_set +
@@ -207,6 +223,22 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
 
 def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False, plot_idx=[],
                   plot_prior=False, epoch=None, add_info=False):
+    """
+    NOTE: this procedure can be used for plotting the qt distribution for the meta and act models but not for the
+    ACT_SB model!!!
+    :param exper:
+    :param data_set:
+    :param fig_name:
+    :param height:
+    :param width:
+    :param save:
+    :param show:
+    :param plot_idx:
+    :param plot_prior:
+    :param epoch:
+    :param add_info:
+    :return:
+    """
     if epoch is None:
         epoch = exper.epoch
 
@@ -882,6 +914,125 @@ def plot_image_training_loss(exper, fig_name=None, width=18, height=15, do_save=
     if fig_name is None and do_save:
         fig_name = "_" + create_exper_label(exper)
         fig_name = os.path.join(exper.output_dir, "train_step_loss_map" + fig_name + ".png")
+    if do_save:
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+    if do_show:
+        plt.show()
+
+    plt.close()
+
+
+def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False,
+                   plot_prior=False, epoch=None, add_info=False):
+
+    if epoch is None:
+        # just the last epoch of the experiment
+        epoch = exper.epoch
+
+    bar_width = 0.3
+    if data_set == "train":
+        T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero()) + 1
+        qt_hist = exper.epoch_stats["qt_hist"][epoch][:T]
+        print(np.array_str(exper.epoch_stats["qt_hist"][epoch][:T+2], precision=4))
+        plot_title = "Training " + exper.args.problem + r"- prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+    else:
+        T = len(exper.val_stats["qt_hist"][epoch])
+        qt_hist = exper.val_stats["qt_hist"][epoch]
+        plot_title = exper.args.problem + r" - $q(t|{}) \;\; \nu={:.2}$".format(
+            config.max_val_opt_steps, exper.config.ptT_shape_param)
+
+    fig = plt.figure(figsize=(height, width)).gca()
+    plt.title(plot_title, **config.title_font)
+    index = np.arange(1, qt_hist.shape[0] + 1)
+    plt.bar(index, qt_hist, bar_width, color='b', align='center',
+            label=r"$q(t)$")
+    if plot_prior:
+        priors = geom.pmf(index, exper.config.ptT_shape_param)
+        plt.bar(index+bar_width, priors, bar_width, color='orange', align='center',
+                label=r"$p(t|\nu={:.2})$".format(exper.config.ptT_shape_param))
+    if data_set == "train":
+        if len(index) > 15:
+            index = np.arange(1, len(index), 5)
+        plt.xticks(index)
+    plt.legend(loc="best")
+    plt.xlabel("time step")
+    plt.ylabel("qt probabilities")
+    plt.xlim([0, 21])
+
+    if add_info:
+        # determine max mode step. Add "1" because the argmax determines index and not step
+        idx_mode_probs = np.argmax(qt_hist, 1) + 1
+        N = qt_hist.shape[0]
+        mean_mode = np.mean(idx_mode_probs)
+        median = np.median(idx_mode_probs)
+        stddev_mode = np.std(idx_mode_probs)
+        min_mode = np.min(idx_mode_probs)
+        max_mode = np.max(idx_mode_probs)
+        stats = r"Max mode stats(N={}): Range({}, {}) / mean={:.1f} / median={} / stddev={:.1f}".format(N, min_mode,
+                                                                                                        max_mode,
+                                                                                                        mean_mode,
+                                                                                                        median,
+                                                                                                        stddev_mode)
+        plt.annotate(stats,
+                     xy=(0.5, 0), xytext=(0, 0),
+                     xycoords=('axes fraction', 'figure fraction'),
+                     textcoords='offset points',
+                     size=12, ha='center', va='bottom')
+
+    if fig_name is None:
+        fig_name = "_" + data_set + "_" + create_exper_label(exper)
+        fig_name = os.path.join(exper.output_dir, config.qt_dist_prefix + fig_name + ".png")
+    if save:
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+    if show:
+        plt.show()
+    plt.close()
+
+
+def plot_image_training_data(exper, fig_name=None, width=18, height=15, do_save=False, do_show=False,
+                             data="qt_value", cmap=cmocean.cm.haline):
+
+    if data == "qt_value":
+        X = np.vstack(exper.epoch_stats["qt_hist"].values())
+        title_prefix = "qt probabilities "
+        save_suffix = "qts"
+    elif data == "halting_step":
+        X = np.vstack(exper.epoch_stats["halting_step"].values())
+        title_prefix = "Halting step "
+        save_suffix = "halting"
+    else:
+        raise ValueError("Only support parameter values for -data- are 1) qt_value 2) halting_step")
+
+    # we can be (nearly) sure to never reach zero loss values (exactly) and because those value disturbe the colormap
+    # we set them to a "bad" value in order to color them specifically. This is necessary for the ACT model when
+    # trained with a stochastic horizon
+    min_value = np.min(X[X > 0])
+    X[X == 0] = -1
+    plt.figure(figsize=(width, height))
+    if exper.args.learner[0:3] == "act":
+        p_title = title_prefix + " per time step during training epochs" + \
+                     r" ($\nu={:.3f}$)".format(exper.config.pT_shape_param)
+    else:
+        p_title = ""
+    plt.title(p_title, **config.title_font)
+    # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
+    # color
+    cmap.set_under(color='darkgray')
+    im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=(min_value - 0.5*min_value))
+    plt.xlabel("Number of optimization steps")
+    plt.ylabel("Training epoch")
+    if X.shape[0] > 25:
+        y_step_size = X.shape[0] // 10
+    else:
+        y_step_size = 1
+    plt.yticks(np.arange(0, X.shape[0], y_step_size), np.arange(1, X.shape[0]+1, y_step_size))
+    plt.colorbar(im)
+
+    if fig_name is None and do_save:
+        fig_name = "_" + create_exper_label(exper)
+        fig_name = os.path.join(exper.output_dir, "train_step_map_" + save_suffix + fig_name + ".png")
     if do_save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)

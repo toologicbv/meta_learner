@@ -41,7 +41,7 @@ class ACTBatch(Batch):
         # will be intensively used to select the functions that still need to be optimzed after t steps
         self.bool_mask = Variable(torch.ones(self.batch_size, 1).type(torch.ByteTensor))
         self.float_mask = Variable(torch.ones(self.batch_size, 1))
-        self.max_T = Variable(torch.FloatTensor([exper.config.T]).expand_as(self.float_mask))
+        self.max_T = Variable(torch.FloatTensor([exper.config.T-1]).expand_as(self.float_mask))
         self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0.01, 0.05)
         self.one_minus_eps = Variable(1. - self.one_minus_eps)
         # IMPORTANT, this tensor needs to have the same size as exper.epoch_stats["opt_step_hist"][exper.epoch] which
@@ -152,8 +152,9 @@ class ACTBatch(Batch):
             self.step += 1
             exper.add_step_loss(avg_loss_step, self.step)
             exper.add_opt_steps(self.step)
-            epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
 
+        epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
+        exper.add_step_qts(self.qts[:, 0:self.step].data.cpu().numpy())
         # set the class variable if we reached a new maximum time steps
         if epoch_obj.get_max_time_steps_taken() < self.step:
             epoch_obj.set_max_time_steps_taken(self.step)
@@ -209,6 +210,7 @@ class ACTBatch(Batch):
         # sum over the time steps (dim 1) and average over the batch dimension
         losses = torch.mean(torch.sum(torch.mul(losses, qts), 1), 0)
         self.loss_sum = (losses + kl_term).squeeze()
+        # self.loss_sum = losses.squeeze()
 
     def set_qt_values(self, new_probs, next_iteration_condition, final_func_mask):
         qt = Variable(torch.zeros(new_probs.size(0)))
