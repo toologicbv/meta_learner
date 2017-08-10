@@ -5,18 +5,15 @@ import torch
 from torch.autograd import Variable
 
 
-from utils.utils import get_batch_functions, get_func_loss
+from utils.common import get_batch_functions, get_func_loss
 from utils.helper import tensor_and, tensor_any
 
 
 from models.rnn_optimizer import get_step_loss, kl_divergence
 
 
-class Batch(object):
+class BatchHandler(object):
     __metaclass__ = abc.ABCMeta
-
-    def __init__(self, exper):
-        self.batch_size = exper.args.batch_size
 
     @abc.abstractmethod
     def cuda(self):
@@ -31,18 +28,27 @@ class Batch(object):
         pass
 
 
-class ACTBatch(Batch):
+class ACTBatchHandler(BatchHandler):
 
     # static class variable to count the batches
     id = 0
 
-    def __init__(self, exper):
-        super(ACTBatch, self).__init__(exper)
+    def __init__(self, exper, is_train, optimizees=None):
+
+        self.is_train = is_train
+        if self.is_train:
+            self.functions = get_batch_functions(exper)
+        else:
+            if optimizees is None:
+                raise ValueError("Parameter -optimizees- can't be None. Please provide a test set")
+            self.functions = optimizees
+
+        self.batch_size = self.functions.num_of_funcs
         # will be intensively used to select the functions that still need to be optimzed after t steps
         self.bool_mask = Variable(torch.ones(self.batch_size, 1).type(torch.ByteTensor))
         self.float_mask = Variable(torch.ones(self.batch_size, 1))
         self.max_T = Variable(torch.FloatTensor([exper.config.T-1]).expand_as(self.float_mask))
-        self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0.01, 0.05)
+        self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0., 1.)
         self.one_minus_eps = Variable(1. - self.one_minus_eps)
         # IMPORTANT, this tensor needs to have the same size as exper.epoch_stats["opt_step_hist"][exper.epoch] which
         # is set in train_optimizer.py in the beginning of the epoch
@@ -55,13 +61,13 @@ class ACTBatch(Batch):
         self.compare_probs = Variable(torch.zeros(self.max_T.size()))
         self.remainder_probs = Variable(torch.zeros(self.max_T.size()))
         self.time_step = 0
-        self.functions = get_batch_functions(exper)
         self.step = 0
         self.loss_sum = 0
+        self.kl_term = 0
         self.batch_step_losses = []
         self.tensor_one = Variable(torch.ones(1))
         self.geom_shape_param = exper.config.ptT_shape_param
-        self.backward_ones = torch.ones(exper.args.batch_size)
+        self.backward_ones = torch.ones(self.batch_size)
 
         if exper.args.cuda:
             self.cuda()
@@ -80,7 +86,7 @@ class ACTBatch(Batch):
         self.tensor_one = self.tensor_one.cuda()
         self.backward_ones = self.backward_ones.cuda()
 
-    def act_step(self, exper, meta_optimizer, keep_fine_losses=False):
+    def act_step(self, exper, meta_optimizer):
         loss = get_func_loss(exper, self.functions, average=False)
         # compute gradients of optimizee which will need for the meta-learner
         loss.backward(self.backward_ones)
@@ -88,8 +94,12 @@ class ACTBatch(Batch):
         if self.step == 0:
             self.process_step0(exper, loss)
         param_size = self.functions.params.grad.size()
-        flat_grads = Variable(self.functions.params.grad.data.view(-1))
-        delta_param, delta_qt = meta_optimizer.forward(flat_grads)
+        if not self.is_train:
+            # flat_grads = Variable(self.functions.params.grad.data.view(-1))
+            delta_param, delta_qt = meta_optimizer.forward(self.functions.params.grad.view(-1))
+        else:
+            flat_grads = Variable(self.functions.params.grad.data.view(-1))
+            delta_param, delta_qt = meta_optimizer.forward(flat_grads)
         # (1) reshape parameter tensor (2) take mean to compute qt values
         delta_param = delta_param.view(param_size)
         delta_qt = torch.mean(delta_qt.view(*param_size), 1, keepdim=True)
@@ -128,21 +138,24 @@ class ACTBatch(Batch):
         self.bool_mask = new_float_mask.type(torch.cuda.ByteTensor) if exper.args.cuda else \
             new_float_mask.type(torch.ByteTensor)
         # compute the new step loss
-        loss_step = self.step_loss(par_new, average_batch=True, keep_fine_losses=keep_fine_losses)
+        loss_step = self.step_loss(par_new, average_batch=True)
         # update batch functions parameter for next step
         self.functions.set_parameters(par_new)
         self.functions.params.grad.data.zero_()
 
         return loss_step.data.cpu().squeeze().numpy()[0]
 
-    def __call__(self, exper, epoch_obj, meta_optimizer, is_train=False):
+    def __call__(self, exper, epoch_obj, meta_optimizer):
 
+        if not self.is_train:
+            exper.meta_logger.info("Epoch {} - Evaluating {} test functions".format(exper.epoch,
+                                                                                    self.batch_size))
         self.step = 0
         meta_optimizer.reset_lstm(keep_states=False)
         do_continue = tensor_any(tensor_and(torch.le(self.compare_probs, self.one_minus_eps),
                                             torch.le(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
         while do_continue:
-            avg_loss_step = self.act_step(exper, meta_optimizer, keep_fine_losses=is_train)
+            avg_loss_step = self.act_step(exper, meta_optimizer)
             # le1 = np.sum(torch.le(self.cum_qt, self.one_minus_eps).data.cpu().numpy())
             # le2 = np.sum(torch.le(self.counter_compare, self.max_T).data.cpu().numpy())
             do_continue = tensor_any(
@@ -150,14 +163,15 @@ class ACTBatch(Batch):
                            torch.le(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
 
             self.step += 1
-            exper.add_step_loss(avg_loss_step, self.step)
-            exper.add_opt_steps(self.step)
+            exper.add_step_loss(avg_loss_step, self.step, is_train=self.is_train)
+            exper.add_opt_steps(self.step, is_train=self.is_train)
+            epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
 
-        epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
-        exper.add_step_qts(self.qts[:, 0:self.step].data.cpu().numpy())
+        exper.add_step_qts(self.qts[:, 0:self.step].data.cpu().numpy(), is_train=self.is_train)
+
         # set the class variable if we reached a new maximum time steps
-        if epoch_obj.get_max_time_steps_taken() < self.step:
-            epoch_obj.set_max_time_steps_taken(self.step)
+        if epoch_obj.get_max_time_steps_taken(self.is_train) < self.step:
+            epoch_obj.set_max_time_steps_taken(self.step, self.is_train)
 
     def compute_probs(self, qts):
 
@@ -171,17 +185,18 @@ class ACTBatch(Batch):
         self.one_minus_qt[:, self.step] = self.tensor_one - Variable(qts.data.squeeze())
         return probs
 
-    def backward(self, epoch_obj, meta_optimizer, optimizer, kl_scaler=1.):
+    def backward(self, epoch_obj, meta_optimizer, optimizer, kl_weight=1.):
         if len(self.batch_step_losses) == 0:
             raise RuntimeError("No batch losses accumulated. Can't execute backward() on object")
-        self.compute_batch_loss(kl_scaler=kl_scaler)
+        self.compute_batch_loss(kl_weight=kl_weight)
+        epoch_obj.add_kl_term(self.kl_term)
         self.loss_sum.backward()
         optimizer.step()
         meta_optimizer.reset_final_loss()
         meta_optimizer.zero_grad()
         return self.loss_sum.data.cpu().squeeze().numpy()[0]
 
-    def step_loss(self, new_parameters, average_batch=True, keep_fine_losses=False):
+    def step_loss(self, new_parameters, average_batch=True):
 
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
@@ -189,38 +204,43 @@ class ACTBatch(Batch):
         loss = get_step_loss(self.functions, new_parameters, avg_batch=False)
         if loss.dim() == 1:
             loss = loss.unsqueeze(1)
-        # before we sum and optionally average, we keep the loss/function for the ACT loss computation later
-        # Note, that the only difference with V1 is that here we append the Variable-loss, not the Tensor
-        if keep_fine_losses:
-            self.batch_step_losses.append(loss)
+
+        qts = self.qts[:, self.step].unsqueeze(1).double()
+        elbo_loss = torch.mean(torch.mul(loss.double(), qts), 0, keepdim=True)
+        self.batch_step_losses.append(elbo_loss)
         if average_batch:
             return torch.mean(loss)
         else:
             return loss
 
-    def compute_batch_loss(self, kl_scaler=1.):
+    def compute_batch_loss(self, kl_weight=1.):
         # construct the individual priors for each batch function, return DoubleTensor[batch_size, self.steps]
         g_priors = self.construct_priors()
         # truncate the self.qts variable to the maximum number of opt steps we made
         qts = self.qts[:, 0:self.step].double()
         # compute KL divergence term
-        kl_term = kl_scaler * torch.mean(kl_divergence(qts, g_priors))
+        kl_term = kl_weight * torch.mean(kl_divergence(qts, g_priors))
+        self.kl_term = kl_term.data.cpu().squeeze().numpy()[0]
         # compute final loss, in which we multiply each loss by the qt time step values
         losses = torch.cat(self.batch_step_losses, 1).double()
         # sum over the time steps (dim 1) and average over the batch dimension
-        losses = torch.mean(torch.sum(torch.mul(losses, qts), 1), 0)
+        # losses = torch.mean(torch.sum(torch.mul(losses, qts), 1), 0)
+        # Changed the sequence of processing. We already calculate the mean avg loss for each step in the method "step_loss"
+        #           there, we already multiplied the losses for each optimizee with the qt-value generated by the RNN
+        #           so here we only need to sum over the dim1 which holds the time steps
+        losses = torch.sum(losses, 1)
         self.loss_sum = (losses + kl_term).squeeze()
-        # self.loss_sum = losses.squeeze()
+        # WITHOUT KL TERM self.loss_sum = losses.squeeze()
 
     def set_qt_values(self, new_probs, next_iteration_condition, final_func_mask):
         qt = Variable(torch.zeros(new_probs.size(0)))
-        next = torch.sum(next_iteration_condition).data.cpu().numpy()[0]
+        next_iter = torch.sum(next_iteration_condition).data.cpu().numpy()[0]
         finals = torch.sum(final_func_mask).data.cpu().squeeze().numpy()[0]
         next_idx = next_iteration_condition.data.squeeze().nonzero().squeeze()
         final_idx = final_func_mask.data.squeeze().nonzero().squeeze()
         if new_probs.is_cuda:
             qt = qt.cuda()
-        if next > 0:
+        if next_iter > 0:
             qt[next_idx] = new_probs[next_idx]
         # print("{} step next/final {}/{}".format(self.step, next, finals))
 
@@ -251,7 +271,7 @@ class ACTBatch(Batch):
         # passed to the geometric PMF function of scipy
         R = np.array([np.arange(1, i+1) for i in self.halting_steps.data.cpu().numpy()])
         R = np.vstack([np.lib.pad(a, (0, (self.step - len(a))), 'constant', constant_values=0) for a in R])
-        g_priors = geom.pmf(R, self.geom_shape_param)
+        g_priors = geom.pmf(R, p=(1-self.geom_shape_param))
         # create truncated priors
         g_priors *= 1./np.sum(g_priors, 1).reshape((self.batch_size, 1))
         g_priors = Variable(torch.from_numpy(g_priors).double())

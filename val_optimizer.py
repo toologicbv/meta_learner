@@ -6,9 +6,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-from utils.utils import load_val_data
+from utils.common import load_val_data
 
-from utils.utils import softmax, stop_computing, construct_prior_p_t_T, generate_fixed_weights, \
+from utils.common import softmax, stop_computing, construct_prior_p_t_T, generate_fixed_weights, \
                         get_func_loss
 
 

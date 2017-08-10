@@ -883,7 +883,7 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
 
 
 def plot_image_training_loss(exper, fig_name=None, width=18, height=15, do_save=False, do_show=False,
-                             cmap=cmocean.cm.haline):
+                             cmap=cmocean.cm.haline, scale=[13, 40]):
 
     X = np.vstack(exper.epoch_stats["step_losses"].values())
     # we can be (nearly) sure to never reach zero loss values (exactly) and because those value disturbe the colormap
@@ -894,14 +894,14 @@ def plot_image_training_loss(exper, fig_name=None, width=18, height=15, do_save=
     plt.figure(figsize=(width, height))
     if exper.args.learner == "act" or (exper.args.learner == "meta" and exper.args.version == "V2"):
         stochastic = r" (stochastic horizon E[T]={} $\nu={:.3f}$)".format(int(exper.avg_num_opt_steps),
-                                                                          exper.config.pT_shape_param)
+                                                                          exper.config.ptT_shape_param)
     else:
         stochastic = ""
     plt.title("Loss per time step during training epochs" + stochastic, **config.title_font)
     # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
     # color
     cmap.set_under(color='darkgray')
-    im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=(min_value - 0.5*min_value))
+    im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=scale[0], vmax=scale[1])
     plt.xlabel("Number of optimization steps")
     plt.ylabel("Training epoch")
     if X.shape[0] > 25:
@@ -992,16 +992,21 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
 
 
 def plot_image_training_data(exper, fig_name=None, width=18, height=15, do_save=False, do_show=False,
-                             data="qt_value", cmap=cmocean.cm.haline):
+                             data="qt_value", cmap=cmocean.cm.haline, scale=[0., 1.]):
 
     if data == "qt_value":
         X = np.vstack(exper.epoch_stats["qt_hist"].values())
         title_prefix = "qt probabilities "
         save_suffix = "qts"
+        scale[0] = 0.
+        scale[1] = 1.
     elif data == "halting_step":
         X = np.vstack(exper.epoch_stats["halting_step"].values())
         title_prefix = "Halting step "
         save_suffix = "halting"
+        scale[0] = np.min(X[X>0])
+        print("min {}".format(scale[0]))
+        scale[1] = np.max(X)
     else:
         raise ValueError("Only support parameter values for -data- are 1) qt_value 2) halting_step")
 
@@ -1013,14 +1018,14 @@ def plot_image_training_data(exper, fig_name=None, width=18, height=15, do_save=
     plt.figure(figsize=(width, height))
     if exper.args.learner[0:3] == "act":
         p_title = title_prefix + " per time step during training epochs" + \
-                     r" ($\nu={:.3f}$)".format(exper.config.pT_shape_param)
+                     r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
     else:
         p_title = ""
     plt.title(p_title, **config.title_font)
     # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
     # color
     cmap.set_under(color='darkgray')
-    im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=(min_value - 0.5*min_value))
+    im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=scale[0], vmax=scale[1])
     plt.xlabel("Number of optimization steps")
     plt.ylabel("Training epoch")
     if X.shape[0] > 25:

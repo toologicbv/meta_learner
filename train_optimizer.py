@@ -1,21 +1,22 @@
+import argparse
 import sys
+
+import numpy as np
+import torch
+
 if "/home/jogi/.local/lib/python2.7/site-packages" in sys.path:
     sys.path.remove("/home/jogi/.local/lib/python2.7/site-packages")
 
-import argparse
-import numpy as np
-from collections import OrderedDict
-
-import torch
-
+from utils.experiment import Experiment
+from utils.epoch import Epoch
 from utils.config import config
-from utils.utils import Experiment, get_model, print_flags
-from utils.utils import get_batch_functions
-from utils.utils import OPTIMIZER_DICT, Epoch
+from utils.common import get_model, print_flags
+from utils.common import get_batch_functions
+from utils.common import OPTIMIZER_DICT
 from train_batch_meta_act import execute_batch
-from train_batch_sb_act import ACTBatch
+from utils.batch_handler import ACTBatchHandler
 
-from val_optimizer import validate_optimizer
+
 
 """
     The following models can be run for the following problems/tasks:
@@ -95,6 +96,7 @@ parser.add_argument('--problem', type=str, default="regression", help="kind of o
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
+parser.add_argument('--kl_annealing', action='store_true', default=False, help="using KL cost annealing during training")
 
 
 parser.add_argument("--output_bias")
@@ -133,22 +135,24 @@ def main():
 
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
-        ACTBatch.id = 0
+        ACTBatchHandler.id = 0
         epoch_obj.start()
         exper.epoch_stats["step_losses"][exper.epoch] = np.zeros(exper.max_time_steps + 1)
         exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
         exper.epoch_stats["halting_step"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
         exper.epoch_stats["qt_hist"][exper.epoch] = np.zeros(exper.max_time_steps)
+
+        kl_weight = 1.
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
                 execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
             elif exper.args.learner in ['act_sb']:
-                batch = ACTBatch(exper)
-                ACTBatch.id += 1
-                batch(exper, epoch_obj, meta_optimizer, is_train=True)
-                act_loss = batch.backward(epoch_obj, meta_optimizer, optimizer, kl_scaler=1.)
-                exper.add_halting_steps(batch.halting_steps)
+                batch = ACTBatchHandler(exper, is_train=True)
+                ACTBatchHandler.id += 1
+                batch(exper, epoch_obj, meta_optimizer)
+                act_loss = batch.backward(epoch_obj, meta_optimizer, optimizer, kl_weight=kl_weight)
+                exper.add_halting_steps(batch.halting_steps, is_train=True)
                 epoch_obj.add_act_loss(act_loss)
                 # exper.meta_logger.info("{} batch - batch-loss {:.4f}".format(batch.id,
                 #                                                             batch.loss_sum.data.cpu().numpy()[0]))
@@ -163,25 +167,14 @@ def main():
         epoch_obj.final_act_loss *= 1./float(epoch_obj.num_of_batches)
         epoch_obj.total_loss_steps *= 1./float(epoch_obj.num_of_batches)
         epoch_obj.loss_optimizer *= 1./float(epoch_obj.num_of_batches)
+        epoch_obj.kl_term *= 1. / float(epoch_obj.num_of_batches)
+        exper.set_kl_term(epoch_obj.kl_term, kl_weight)
         exper.scale_step_losses()
         epoch_obj.end(exper)
 
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
-
-            if exper.args.learner == 'manual':
-                # the manual (e.g. SGD, Adam will be validated using full number of optimization steps
-                opt_steps = exper.args.optimizer_steps
-            else:
-                opt_steps = exper.config.max_val_opt_steps
-
-            validate_optimizer(meta_optimizer, exper, val_set=val_funcs, meta_logger=exper.meta_logger,
-                               verbose=VALID_VERBOSE,
-                               plot_func=PLOT_VALIDATION_FUNCS,
-                               max_steps=opt_steps,
-                               num_of_plots=exper.config.num_val_plots,
-                               save_qt_prob_funcs=True if epoch + 1 == exper.args.max_epoch else False,
-                               save_model=True)
+            exper.eval(epoch_obj, meta_optimizer, val_funcs)
         # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
         if exper.args.learner == 'act':
 

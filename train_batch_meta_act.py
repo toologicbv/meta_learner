@@ -2,7 +2,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 
-from utils.utils import OPTIMIZER_DICT, construct_prior_p_t_T, get_func_loss
+from utils.common import OPTIMIZER_DICT, construct_prior_p_t_T, get_func_loss
 
 STD_OPT_LR = 4e-1
 

@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from utils import config
+from config import config
 
 
 def find_nearest(array, value):
