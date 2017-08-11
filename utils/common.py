@@ -1,6 +1,7 @@
 import math
 import torch
 import os
+import sys
 import dill
 from config import config, MetaConfig
 
@@ -115,29 +116,6 @@ def prepare_retrain(exper_path, new_args):
     meta_logger = create_logger(exper, file_handler=True)
 
     return exper, meta_logger
-
-
-def get_experiment(path_to_exp, full_path=False):
-
-    if not full_path:
-        path_to_exp = os.path.join(config.log_root_path, os.path.join(path_to_exp, config.exp_file_name))
-    else:
-        path_to_exp = os.path.join(config.log_root_path, path_to_exp)
-
-    try:
-        with open(path_to_exp, 'rb') as f:
-            experiment = dill.load(f)
-    except:
-        raise IOError("Can't open file {}".format(path_to_exp))
-    # needed to add this for backward compatibility, because added these parameter later
-    if not hasattr(experiment.config, 'pT_shape_param'):
-        new_config = MetaConfig()
-        new_config.__dict__ = experiment.config.__dict__.copy()
-        new_config.pT_shape_param = new_config.continue_prob
-        new_config.ptT_shape_param = new_config.continue_prob
-        experiment.config = new_config
-    # if not hasattr(experiment.args.config, 'ptT_shape_param'):
-    return experiment
 
 
 def create_def_argparser(**kwargs):

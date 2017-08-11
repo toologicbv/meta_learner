@@ -1,5 +1,5 @@
 import torch
-from torch.autograd import Variable
+
 import os
 import dill
 import shutil
@@ -9,7 +9,7 @@ from pytz import timezone
 import numpy as np
 import time
 
-from config import config
+from config import config, MetaConfig
 from probs import TimeStepsDist
 from common import load_val_data, create_logger, generate_fixed_weights, create_exper_label
 from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps
@@ -308,10 +308,14 @@ class Experiment(object):
             file_name = "exp_statistics" + ".dll"
 
         outfile = os.path.join(self.output_dir, file_name)
-
+        logger = self.meta_logger
+        # we set meta_logger temporary to None, because encountering problems when loading the experiment later
+        # from file, if the experiment ran on a different machine "can't find .../run.log bla bla
+        self.meta_logger = None
         with open(outfile, 'wb') as f:
             dill.dump(self, f)
-        self.meta_logger.info("Epoch {} - Successfully saved experimental details to {}".format(self.epoch, outfile))
+        self.meta_logger = logger
+        self.meta_logger.info("Epoch {} - Saving experimental details to {}".format(self.epoch, outfile))
 
     def end(self, model):
 
@@ -326,25 +330,63 @@ class Experiment(object):
 
         self.save()
         if not self.args.on_server:
-            loss_plot(self, loss_type="loss", save=True, validation=self.run_validation) # self.run_validation
-            loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
-            plot_image_map_losses(self, data_set="train", do_save=True)
-            plot_dist_optimization_steps(self, data_set="train", save=True)
-            if self.run_validation:
-                plot_image_map_losses(self, data_set="eval", do_save=True)
+            self.generate_figures()
 
-            if self.args.learner == "act_sb":
-                plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
-                plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
-                plot_actsb_qts(self, data_set="train", save=True)
-                if self.run_validation:
-                    plot_dist_optimization_steps(self, data_set="eval", save=True)
-                    plot_actsb_qts(self, data_set="eval", save=True)
-                    plot_image_map_data(self, data_set="eval", data="qt_value", do_save=True, do_show=False)
-                    plot_image_map_data(self, data_set="eval", data="halting_step", do_save=True, do_show=False)
-            if self.args.learner == "act":
-                # plot histogram of T distribution (number of optimization steps during training)
-                # plot_dist_optimization_steps(self.exper, data_set="train", save=True)
-                # plot_dist_optimization_steps(experiment, data_set="val", save=True)
-                plot_qt_probs(self, data_set="train", save=True)
-                # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+    def generate_figures(self):
+        loss_plot(self, loss_type="loss", save=True, validation=self.run_validation)  # self.run_validation
+        loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
+        plot_image_map_losses(self, data_set="train", do_save=True)
+        plot_dist_optimization_steps(self, data_set="train", save=True)
+        if self.run_validation:
+            plot_image_map_losses(self, data_set="eval", do_save=True)
+
+        if self.args.learner == "act_sb":
+            plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
+            plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
+            plot_actsb_qts(self, data_set="train", save=True)
+            if self.run_validation:
+                plot_dist_optimization_steps(self, data_set="eval", save=True)
+                plot_actsb_qts(self, data_set="eval", save=True)
+                plot_image_map_data(self, data_set="eval", data="qt_value", do_save=True, do_show=False)
+                plot_image_map_data(self, data_set="eval", data="halting_step", do_save=True, do_show=False)
+        if self.args.learner == "act":
+            # plot histogram of T distribution (number of optimization steps during training)
+            # plot_dist_optimization_steps(self.exper, data_set="train", save=True)
+            # plot_dist_optimization_steps(experiment, data_set="val", save=True)
+            plot_qt_probs(self, data_set="train", save=True)
+            # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+
+    @staticmethod
+    def load(path_to_exp, full_path=False, do_log=False):
+
+        if not full_path:
+            path_to_exp = os.path.join(config.log_root_path, os.path.join(path_to_exp, config.exp_file_name))
+        else:
+            print(config.log_root_path, path_to_exp)
+            path_to_exp = os.path.join(config.log_root_path, path_to_exp)
+
+        try:
+            print(path_to_exp)
+            with open(path_to_exp, 'rb') as f:
+                experiment = dill.load(f)
+        except IOError as e:
+            print "I/O error({0}): {1}".format(e.errno, e.strerror)
+            print("Can't open file {}".format(path_to_exp))
+            raise IOError
+        except:
+            print "Unexpected error:", sys.exc_info()[0]
+            raise
+        # needed to add this for backward compatibility, because added these parameter later
+        if not hasattr(experiment.config, 'pT_shape_param'):
+            new_config = MetaConfig()
+            new_config.__dict__ = experiment.config.__dict__.copy()
+            new_config.pT_shape_param = new_config.continue_prob
+            new_config.ptT_shape_param = new_config.continue_prob
+            experiment.config = new_config
+        # we save experiments without their associated logger (because that's seeking trouble when loading the
+        # experiment from file. Therefore we need to create a logger in case we need it.
+        if experiment.meta_logger is None and do_log:
+            experiment.meta_logger = create_logger(experiment)
+            experiment.meta_logger.info("created local logger for experiment with model {}".format(experiment.model_name))
+
+        return experiment
