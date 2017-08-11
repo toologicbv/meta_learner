@@ -331,6 +331,4 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
 
         meta_learner.reset_losses()
 
-    if save_run is not None:
-        exper.save(file_name="exp_statistics_" + save_run + ".dll")
 

@@ -2,19 +2,17 @@ import math
 import torch
 import os
 import dill
-import time
 from config import config, MetaConfig
 
 import argparse
 import logging
 import numpy as np
-from collections import OrderedDict
 
 from torch.autograd import Variable
 import models.rnn_optimizer
 import models.sb_act_optimizer
 from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
-from plots import plot_image_training_loss, plot_image_training_data, plot_actsb_qts
+from plots import plot_image_map_losses, plot_image_map_data, plot_actsb_qts
 from probs import ConditionalTimeStepDist, TimeStepsDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
 
@@ -64,7 +62,8 @@ def print_flags(exper):
         exper.meta_logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
     if exper.args.learner == 'act_sb':
         exper.meta_logger.info("shape parameter of prior p(t|nu={:.3f})".format(exper.config.ptT_shape_param))
-        exper.meta_logger.info(" ! NOTE: using KL cost annealing")
+        if exper.args.kl_annealing:
+            exper.meta_logger.info(" ! NOTE: using KL cost annealing")
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
         if not exper.args.fixed_horizon:
             exper.meta_logger.info("horizon limit for p(T|nu={:.3f}) due to memory "
@@ -158,10 +157,6 @@ def create_def_argparser(**kwargs):
 
 
 def get_model(exper, num_params_optimizee, retrain=False, logger=None):
-
-    if exper.args.model == "default":
-        exper.args.model = exper.args.learner + exper.args.version + "_" + exper.args.problem + "_" + \
-            str(int(exper.avg_num_opt_steps)) + "ops"
 
     if exper.args.version == 'V1' or exper.args.version == 'V2' \
         or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \

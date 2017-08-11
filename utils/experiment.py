@@ -1,4 +1,5 @@
 import torch
+from torch.autograd import Variable
 import os
 import dill
 import shutil
@@ -6,19 +7,20 @@ from collections import OrderedDict
 from datetime import datetime
 from pytz import timezone
 import numpy as np
+import time
 
 from config import config
 from probs import TimeStepsDist
 from common import load_val_data, create_logger, generate_fixed_weights, create_exper_label
-from plots import plot_image_training_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps
-from plots import plot_actsb_qts, plot_image_training_loss
+from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps
+from plots import plot_actsb_qts, plot_image_map_losses
 from batch_handler import ACTBatchHandler
 from val_optimizer import validate_optimizer
 
 
 class Experiment(object):
 
-    def __init__(self, run_args, config=None):
+    def __init__(self, run_args, config):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                             "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {},
@@ -28,10 +30,11 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [], "halting_step": {}}
+                          "loss_funcs": [], "halting_step": {}, "kl_term": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
+        self.model_name = None
         # self.opt_step_hist = None
         self.avg_num_opt_steps = 0
         self.val_avg_num_opt_steps = 0
@@ -43,6 +46,13 @@ class Experiment(object):
         self.pt_dist = TimeStepsDist(T=self.config.T, q_prob=self.config.pT_shape_param)
         self.meta_logger = None
         self.fixed_weights = None
+        self.annealing_schedule = np.ones(self.args.max_epoch)
+
+    def init_epoch_stats(self):
+        self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)
+        self.epoch_stats["opt_step_hist"][self.epoch] = np.zeros(self.max_time_steps + 1).astype(int)
+        self.epoch_stats["halting_step"][self.epoch] = np.zeros(self.max_time_steps + 1).astype(int)
+        self.epoch_stats["qt_hist"][self.epoch] = np.zeros(self.max_time_steps)
 
     def init_val_stats(self):
         self.val_stats["step_losses"][self.epoch] = np.zeros(self.config.max_val_opt_steps + 1)
@@ -114,6 +124,10 @@ class Experiment(object):
         else:
             self.val_stats["qt_hist"][self.epoch][start:end] += qt_values
 
+    def generate_cost_annealing(self):
+        step_size = 1./self.args.max_epoch
+        self.annealing_schedule = np.arange(0., 1, step_size)
+
     def scale_step_losses(self, is_train=True):
         if is_train:
             opt_step_array = self.epoch_stats["opt_step_hist"][self.epoch]
@@ -132,15 +146,13 @@ class Experiment(object):
             # see explanation above
             self.val_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
 
-    def start(self, epoch_obj):
-
+    def start(self):
+        # Model specific things to initialize
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
                 raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(self.args.version))
-
             if self.args.fixed_horizon:
                 self.avg_num_opt_steps = self.args.optimizer_steps
-
             else:
                 self.avg_num_opt_steps = self.pt_dist.mean
                 self.max_time_steps = self.config.T
@@ -154,21 +166,38 @@ class Experiment(object):
                 # disable BPTT by setting truncated bptt steps to optimizer steps
                 self.args.truncated_bptt_step = self.args.optimizer_steps
 
+        if self.args.learner == "act_sb" and self.args.kl_annealing:
+            self.generate_cost_annealing()
+
+        # Problem specific initialization things
         if self.args.problem == "rosenbrock":
             assert self.args.learner == "meta", "Rosenbrock problem is only suited for MetaLearner"
             self.config.max_val_opt_steps = self.args.optimizer_steps
+
         # unfortunately need self.avg_num_opt_steps before we can make the path
         self._set_pathes()
         self.meta_logger = create_logger(self, file_handler=True)
         self.meta_logger.info("Initializing experiment - may take a while to load validation set")
         self.fixed_weights = generate_fixed_weights(self)
 
+        # in case we need to evaluate the model, get the test data
         if self.args.eval_freq != 0:
             val_funcs = load_val_data(num_of_funcs=self.config.num_val_funcs, n_samples=self.args.x_samples,
                                       stddev=self.config.stddev, dim=self.args.x_dim, logger=self.meta_logger,
                                       exper=self)
         else:
             val_funcs = None
+
+        # construct the name of the model. Will be used to save model to disk
+        if self.args.model == "default":
+            if self.args.learner != "act_sb":
+                self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
+                                   str(int(self.avg_num_opt_steps)) + "ops"
+            else:
+                self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
+                                   "nu{:.3}".format(self.config.ptT_shape_param)
+        if not self.args.learner == 'manual' and self.args.model is not None:
+            self.model_path = os.path.join(self.output_dir, self.args.model + config.save_ext)
 
         return val_funcs
 
@@ -178,7 +207,7 @@ class Experiment(object):
                                  str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
                                      '%Y-%m-%d %H:%M:%S.%f')[:-7],
                                              ' ', '_') + "_" + create_exper_label(self) + \
-                                 "_lr" + "{:.0e}".format(self.args.lr) + "_" + self.args.optimizer
+                                 "_lr" + "{:.0e}".format(self.args.lr)
             self.args.log_dir = str.replace(str.replace(self.args.log_dir, ':', '_'), '-', '')
 
         else:
@@ -197,20 +226,35 @@ class Experiment(object):
 
         self.output_dir = log_dir
 
-    def eval(self, epoch_obj, meta_optimizer, functions):
+    def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True):
+        start_validate = time.time()
         if self.args.learner == 'act_sb':
-
+            self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
+                                                                                    functions.num_of_funcs))
             self.init_val_stats()
+            functions.reset()
             test_batch = ACTBatchHandler(self, is_train=False, optimizees=functions)
             test_batch(self, epoch_obj, meta_optimizer)
             test_batch.compute_batch_loss()
             meta_optimizer.reset_final_loss()
             meta_optimizer.zero_grad()
             eval_loss = test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
-
-            self.meta_logger.info("Epoch {} - End test evaluation avg act loss {:.3f}".format(self.epoch,
-                                                                                              eval_loss))
+            end_tm = time.time() - start_validate
+            e_losses = self.val_stats["step_losses"][self.epoch][0:epoch_obj.test_max_time_steps_taken + 1]
+            self.meta_logger.info("Epoch: {} - evaluation result - time step losses".format(self.epoch))
+            self.meta_logger.info(np.array_str(e_losses, precision=3))
+            self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl "
+                                  "{:.3f}/{:.4f}".format(self.epoch, end_tm, eval_loss, test_batch.kl_term))
+            # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
+            # once, which is different during training because we process multiple batches in ONE EPOCH
+            # for the validation "loss" (not opt_loss) we can just sum the step_losses we collected earlier
+            self.val_stats["loss"].append(np.sum(self.val_stats["step_losses"][self.epoch]))
+            # this is the ACT-SB loss!
+            self.val_stats["opt_loss"].append(eval_loss)
+            # ja not consistent but .kl_term is already a numpy float whereas .loss_sum is not
+            self.val_stats["kl_term"].append(test_batch.kl_term)
             del test_batch
+
         else:
             # all other models...former ones, still running without Batch object
             if self.args.learner == 'manual':
@@ -226,6 +270,15 @@ class Experiment(object):
                                num_of_plots=self.config.num_val_plots,
                                save_qt_prob_funcs=True if self.epoch == self.args.max_epoch else False,
                                save_model=True)
+        # can be used for saving intermediate results...before they get lost later...
+        if save_run is not None:
+            self.save(file_name="exp_stats_run_" + save_run + ".dll")
+
+        if save_model and self.args.learner == 'act_sb':
+            model_path = os.path.join(self.output_dir, meta_optimizer.name + "_eval_run" + str(self.epoch) +
+                                      self.config.save_ext)
+            meta_optimizer.save_params(model_path)
+            self.meta_logger.info("Epoch: {} - Successfully saved model to {}".format(self.epoch, model_path))
 
     def save(self, file_name=None):
         if file_name is None:
@@ -235,30 +288,39 @@ class Experiment(object):
 
         with open(outfile, 'wb') as f:
             dill.dump(self, f)
-        print("INFO - Successfully saved experimental details to {}".format(outfile))
+        self.meta_logger.info("Epoch {} - Successfully saved experimental details to {}".format(self.epoch, outfile))
 
     def end(self, model):
-        if not self.args.learner == 'manual' and model.name is not None:
-            model_path = os.path.join(self.output_dir, model.name + config.save_ext)
-            torch.save(model.state_dict(), model_path)
-            self.model_path = model_path
-            print("INFO - Successfully saved model parameters to {}".format(model_path))
+
+        if self.model_path is not None:
+            if "save_params" in dir(model):
+                model.save_params(self.model_path)
+            else:
+                torch.save(model.state_dict(), self.model_path)
+
+            self.meta_logger.info("INFO - Successfully saved model parameters to {}".format(self.model_path))
 
         self.save()
         if not self.args.on_server:
-            loss_plot(self, loss_type="loss", save=True, validation=self.run_validation)
+            loss_plot(self, loss_type="loss", save=True, validation=self.run_validation) # self.run_validation
             loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
-            plot_image_training_loss(self, do_save=True)
+            plot_image_map_losses(self, data_set="train", do_save=True)
+            plot_dist_optimization_steps(self, data_set="train", save=True)
+            if self.run_validation:
+                plot_image_map_losses(self, data_set="eval", do_save=True)
+
             if self.args.learner == "act_sb":
-                plot_image_training_data(self, data="qt_value", do_save=True, do_show=False)
-                plot_image_training_data(self, data="halting_step", do_save=True, do_show=False)
+                plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
+                plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
                 plot_actsb_qts(self, data_set="train", save=True)
                 if self.run_validation:
-                    plot_dist_optimization_steps(self, data_set="val", save=True)
+                    plot_dist_optimization_steps(self, data_set="eval", save=True)
+                    plot_actsb_qts(self, data_set="eval", save=True)
+                    plot_image_map_data(self, data_set="eval", data="qt_value", do_save=True, do_show=False)
+                    plot_image_map_data(self, data_set="eval", data="halting_step", do_save=True, do_show=False)
             if self.args.learner == "act":
                 # plot histogram of T distribution (number of optimization steps during training)
                 # plot_dist_optimization_steps(self.exper, data_set="train", save=True)
                 # plot_dist_optimization_steps(experiment, data_set="val", save=True)
                 plot_qt_probs(self, data_set="train", save=True)
                 # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
-                # param_error_plot(experiment, save=True)

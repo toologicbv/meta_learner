@@ -5,7 +5,26 @@ import time
 from common import construct_prior_p_t_T
 
 
+def halting_step_stats(halting_steps):
+    num_of_steps = halting_steps.shape[0]
+    num_of_funcs = np.sum(halting_steps)
+    values = np.arange(0, num_of_steps)
+    total_steps = np.sum(values * halting_steps)
+    avg_opt_steps = int(np.sum(1. / num_of_funcs * values * halting_steps))
+    E_x_2 = np.sum(1. / num_of_funcs * values ** 2 * halting_steps)
+    stddev = np.sqrt(E_x_2 - avg_opt_steps ** 2)
+    cum_sum = np.cumsum(halting_steps)
+    if cum_sum[np.nonzero(cum_sum)[0][0]] > num_of_funcs / 2.:
+        median = np.nonzero(cum_sum)[0][0]
+    else:
+        median = np.argmax(cum_sum[cum_sum < num_of_funcs / 2.]) + 1
+
+    return avg_opt_steps, stddev, median, total_steps
+
+
 class Epoch(object):
+
+    epoch_id = 0
 
     def __init__(self, exper):
         # want to start at 1
@@ -16,7 +35,7 @@ class Epoch(object):
         self.param_loss = 0.
         self.total_loss_steps = 0.
         self.loss_optimizer = 0.
-        self.kl_term = 0
+        self.kl_term = 0.
         self.diff_min = 0.
         self.duration = 0.
         self.avg_opt_steps = []
@@ -48,7 +67,8 @@ class Epoch(object):
         self.kl_term += kl_term
 
     def start(self):
-        self.epoch_id += 1
+        Epoch.epoch_id += 1
+        self.epoch_id = Epoch.epoch_id
         self.start_time = time.time()
         self.loss_last_time_step = 0
         self.final_act_loss = 0
@@ -61,6 +81,13 @@ class Epoch(object):
         # prepare epoch variables
 
     def end(self, exper):
+        self.loss_last_time_step *= 1. / float(self.num_of_batches)
+        self.param_loss *= 1. / float(self.num_of_batches)
+        self.final_act_loss *= 1. / float(self.num_of_batches)
+        self.total_loss_steps *= 1. / float(self.num_of_batches)
+        self.loss_optimizer *= 1. / float(self.num_of_batches)
+        self.kl_term *= 1. / float(self.num_of_batches)
+
         self.duration = time.time() - self.start_time
 
         exper.meta_logger.info("Epoch: {}, elapsed time {:.2f} seconds: avg optimizer loss {:.4f} / "
@@ -83,28 +110,21 @@ class Epoch(object):
                                                                                                avg_opt_steps))
         if exper.args.learner == 'act_sb':
             np_array = exper.epoch_stats["halting_step"][self.epoch_id]
-            num_of_steps = np_array.shape[0]
-            num_of_funcs = np.sum(np_array)
-            values = np.arange(0, num_of_steps)
-            avg_opt_steps = int(np.sum(1./num_of_funcs * values * np_array))
-            E_x_2 = np.sum(1. / num_of_funcs * values**2 * np_array)
-            stddev = np.sqrt(E_x_2 - avg_opt_steps**2)
-            cum_sum = np.cumsum(np_array)
-            if cum_sum[np.nonzero(cum_sum)[0][0]] > num_of_funcs/2.:
-                median = np.nonzero(cum_sum)[0][0]
-            else:
-                median = np.argmax(cum_sum[cum_sum < num_of_funcs/2.]) + 1
+            avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_array)
             e_losses = exper.epoch_stats["step_losses"][self.epoch_id][0:self.train_max_time_steps_taken+1]
             exper.meta_logger.info("time step losses")
             exper.meta_logger.info(np.array_str(e_losses,  precision=3))
-            exper.meta_logger.info("qt values")
-            exper.meta_logger.info(np.array_str(exper.epoch_stats["qt_hist"][self.epoch_id]
+            exper.meta_logger.debug("qt values")
+            exper.meta_logger.debug(np.array_str(exper.epoch_stats["qt_hist"][self.epoch_id]
                                                 [0:self.train_max_time_steps_taken + 1],  precision=4))
             exper.meta_logger.info("halting step frequencies")
             exper.meta_logger.info(np.array_str(np_array[0:self.train_max_time_steps_taken+1]))
 
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {} "
-                                   "stddev {:.3f} median {}".format(self.epoch_id, avg_opt_steps, stddev, median))
+                                   "stddev {:.3f} median {} sum-steps{}".format(self.epoch_id,
+                                                                                avg_opt_steps,
+                                                                                stddev, median,
+                                                                                int(total_steps)))
             exper.meta_logger.info("Epoch: {}, ACT-SB - optimizer-loss/kl-term {:.4f}"
                                    "/{:.4f}".format(self.epoch_id, self.loss_optimizer, self.kl_term))
 

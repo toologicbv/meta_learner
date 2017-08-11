@@ -38,7 +38,9 @@ class ACTBatchHandler(BatchHandler):
         self.is_train = is_train
         if self.is_train:
             self.functions = get_batch_functions(exper)
+            self.horizon = exper.config.T
         else:
+            self.horizon = exper.config.max_val_opt_steps
             if optimizees is None:
                 raise ValueError("Parameter -optimizees- can't be None. Please provide a test set")
             self.functions = optimizees
@@ -47,7 +49,7 @@ class ACTBatchHandler(BatchHandler):
         # will be intensively used to select the functions that still need to be optimzed after t steps
         self.bool_mask = Variable(torch.ones(self.batch_size, 1).type(torch.ByteTensor))
         self.float_mask = Variable(torch.ones(self.batch_size, 1))
-        self.max_T = Variable(torch.FloatTensor([exper.config.T-1]).expand_as(self.float_mask))
+        self.max_T = Variable(torch.FloatTensor([self.horizon-1]).expand_as(self.float_mask))
         self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0., 1.)
         self.one_minus_eps = Variable(1. - self.one_minus_eps)
         # IMPORTANT, this tensor needs to have the same size as exper.epoch_stats["opt_step_hist"][exper.epoch] which
@@ -55,8 +57,8 @@ class ACTBatchHandler(BatchHandler):
         self.halting_steps = Variable(torch.zeros(self.max_T.size()))
         self.counter_compare = Variable(torch.zeros(self.max_T.size()))
         #
-        self.one_minus_qt = Variable(torch.zeros(self.batch_size, exper.config.T))
-        self.qts = Variable(torch.zeros(self.batch_size, exper.config.T))
+        self.one_minus_qt = Variable(torch.zeros(self.batch_size, self.horizon))
+        self.qts = Variable(torch.zeros(self.batch_size, self.horizon))
         # IMPORTANT: we're using cum_qt only for comparison in the WHILE loop in order to determine when to stop
         self.compare_probs = Variable(torch.zeros(self.max_T.size()))
         self.remainder_probs = Variable(torch.zeros(self.max_T.size()))
@@ -68,7 +70,8 @@ class ACTBatchHandler(BatchHandler):
         self.tensor_one = Variable(torch.ones(1))
         self.geom_shape_param = exper.config.ptT_shape_param
         self.backward_ones = torch.ones(self.batch_size)
-
+        # only used during evaluation to capture the last time step when at least one optimizee still needed processing
+        self.eval_last_step_taken = 0.
         if exper.args.cuda:
             self.cuda()
 
@@ -87,6 +90,12 @@ class ACTBatchHandler(BatchHandler):
         self.backward_ones = self.backward_ones.cuda()
 
     def act_step(self, exper, meta_optimizer):
+        """
+        Subtleties of the batch processing. TODO: NEED TO EXPLAIN THIS!!!
+        :param exper:
+        :param meta_optimizer:
+        :return: IMPORTANT RETURNS LOSS STEP THAT IS NOT MULTIPLIED BY QT-VALUE! NUMPY FLOAT32
+        """
         loss = get_func_loss(exper, self.functions, average=False)
         # compute gradients of optimizee which will need for the meta-learner
         loss.backward(self.backward_ones)
@@ -95,7 +104,7 @@ class ACTBatchHandler(BatchHandler):
             self.process_step0(exper, loss)
         param_size = self.functions.params.grad.size()
         if not self.is_train:
-            # flat_grads = Variable(self.functions.params.grad.data.view(-1))
+            # IMPORTANT! BECAUSE OTHERWISE RUNNING INTO MEMORY ISSUES - PASS GRADS NOT IN A NEW VARIABLE
             delta_param, delta_qt = meta_optimizer.forward(self.functions.params.grad.view(-1))
         else:
             flat_grads = Variable(self.functions.params.grad.data.view(-1))
@@ -103,6 +112,11 @@ class ACTBatchHandler(BatchHandler):
         # (1) reshape parameter tensor (2) take mean to compute qt values
         delta_param = delta_param.view(param_size)
         delta_qt = torch.mean(delta_qt.view(*param_size), 1, keepdim=True)
+        if not self.is_train:
+            # during evaluation we keep ALL parameters generated in order to be able to compute new loss values
+            # for all optimizees
+            eval_par_new = Variable(self.functions.params.data - delta_param.data)
+            eval_rho_new = Variable(delta_qt.data)
         # then, apply the previous batch mask, although we did the forward pass with all functions, we filter here
         delta_param = torch.mul(delta_param, self.float_mask)
         qt_new = torch.mul(delta_qt, self.float_mask)
@@ -138,40 +152,62 @@ class ACTBatchHandler(BatchHandler):
         self.bool_mask = new_float_mask.type(torch.cuda.ByteTensor) if exper.args.cuda else \
             new_float_mask.type(torch.ByteTensor)
         # compute the new step loss
-        loss_step = self.step_loss(par_new, average_batch=True)
+        if self.is_train:
+            loss_step = self.step_loss(par_new, average_batch=True)
+        else:
+            loss_step = self.step_loss(eval_par_new, average_batch=True)
         # update batch functions parameter for next step
-        self.functions.set_parameters(par_new)
+        if self.is_train:
+            self.functions.set_parameters(par_new)
+        else:
+            self.functions.set_parameters(eval_par_new)
+
         self.functions.params.grad.data.zero_()
 
         return loss_step.data.cpu().squeeze().numpy()[0]
 
     def __call__(self, exper, epoch_obj, meta_optimizer):
 
-        if not self.is_train:
-            exper.meta_logger.info("Epoch {} - Evaluating {} test functions".format(exper.epoch,
-                                                                                    self.batch_size))
         self.step = 0
         meta_optimizer.reset_lstm(keep_states=False)
-        do_continue = tensor_any(tensor_and(torch.le(self.compare_probs, self.one_minus_eps),
-                                            torch.le(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
+        if self.is_train:
+            do_continue = tensor_any(tensor_and(torch.le(self.compare_probs, self.one_minus_eps),
+                                                torch.le(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
+        else:
+            do_continue = True if self.step < self.horizon-1 else False
+
         while do_continue:
+            # IMPORTANT! avg_loss_step is NOT MULTIPLIED BY THE qt-value!!!!
             avg_loss_step = self.act_step(exper, meta_optimizer)
             # le1 = np.sum(torch.le(self.cum_qt, self.one_minus_eps).data.cpu().numpy())
             # le2 = np.sum(torch.le(self.counter_compare, self.max_T).data.cpu().numpy())
-            do_continue = tensor_any(
-                tensor_and(torch.le(self.compare_probs, self.one_minus_eps),
-                           torch.le(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
+            if self.is_train:
+                do_continue = tensor_any(
+                    tensor_and(torch.le(self.compare_probs, self.one_minus_eps),
+                               torch.le(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
+            else:
+                do_continue = True if self.step < self.horizon-1 else False
+                if self.eval_last_step_taken == 0:
+                    num_next_iter = torch.sum(self.float_mask).data.cpu().squeeze().numpy()[0]
+                    if num_next_iter == 0. and self.eval_last_step_taken == 0.:
+                        self.eval_last_step_taken = self.step + 1
 
+            # important increase step after "do_continue" stuff but before adding step losses
             self.step += 1
             exper.add_step_loss(avg_loss_step, self.step, is_train=self.is_train)
             exper.add_opt_steps(self.step, is_train=self.is_train)
             epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
 
         exper.add_step_qts(self.qts[:, 0:self.step].data.cpu().numpy(), is_train=self.is_train)
-
+        exper.add_halting_steps(self.halting_steps, is_train=self.is_train)
         # set the class variable if we reached a new maximum time steps
         if epoch_obj.get_max_time_steps_taken(self.is_train) < self.step:
             epoch_obj.set_max_time_steps_taken(self.step, self.is_train)
+        if not self.is_train:
+            if self.eval_last_step_taken == 0:
+                self.eval_last_step_taken = self.step
+            epoch_obj.set_max_time_steps_taken(self.eval_last_step_taken, self.is_train)
+            exper.meta_logger.info("! - Validation last step {} - !".format(self.eval_last_step_taken))
 
     def compute_probs(self, qts):
 
@@ -217,7 +253,11 @@ class ACTBatchHandler(BatchHandler):
         # construct the individual priors for each batch function, return DoubleTensor[batch_size, self.steps]
         g_priors = self.construct_priors()
         # truncate the self.qts variable to the maximum number of opt steps we made
-        qts = self.qts[:, 0:self.step].double()
+        if self.is_train:
+            qts = self.qts[:, 0:self.step].double()
+        else:
+            qts = self.qts[:, 0:self.eval_last_step_taken].double()
+            g_priors = g_priors[:, 0:self.eval_last_step_taken]
         # compute KL divergence term
         kl_term = kl_weight * torch.mean(kl_divergence(qts, g_priors))
         self.kl_term = kl_term.data.cpu().squeeze().numpy()[0]
@@ -281,8 +321,8 @@ class ACTBatchHandler(BatchHandler):
 
     def process_step0(self, exper, loss):
         baseline_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0]
-        exper.add_step_loss(baseline_loss, self.step)
-        exper.add_opt_steps(self.step)
+        exper.add_step_loss(baseline_loss, self.step, is_train=self.is_train)
+        exper.add_opt_steps(self.step, is_train=self.is_train)
 
 
 

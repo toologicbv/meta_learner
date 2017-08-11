@@ -35,6 +35,7 @@ from utils.batch_handler import ACTBatchHandler
     act                 V1                      regression(_T)                              act learner with 2
                                                                                             separate LSTMS
     act                 V2                      regression(_T)                              act learner with 1 LSTM
+    act_sb              V1                      regression(_T)                              act with stick-breaking approach
 """
 
 # for standard optimizer which we compare to
@@ -117,17 +118,14 @@ def main():
 
     np.random.seed(SEED)
     exper = Experiment(args, config)
-    # get our logger (one to std-out and one to file)
-    epoch_obj = Epoch(exper)
-    # print the argument flags
     # Initialize EVERYTHING? i.e. if necessary load the validation functions
-    val_funcs = exper.start(epoch_obj)
+    val_funcs = exper.start()
+    # print the argument flags
     print_flags(exper)
 
-    lr = exper.args.lr
     if not exper.args.learner == 'manual':
         meta_optimizer = get_model(exper, exper.args.x_dim, retrain=exper.args.retrain, logger=exper.meta_logger)
-        optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=lr)
+        optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=exper.args.lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
@@ -136,13 +134,11 @@ def main():
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
         ACTBatchHandler.id = 0
+        exper.init_epoch_stats()
+        epoch_obj = Epoch(exper)
         epoch_obj.start()
-        exper.epoch_stats["step_losses"][exper.epoch] = np.zeros(exper.max_time_steps + 1)
-        exper.epoch_stats["opt_step_hist"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
-        exper.epoch_stats["halting_step"][exper.epoch] = np.zeros(exper.max_time_steps + 1).astype(int)
-        exper.epoch_stats["qt_hist"][exper.epoch] = np.zeros(exper.max_time_steps)
-
-        kl_weight = 1.
+        kl_weight = float(exper.annealing_schedule[epoch])
+        exper.meta_logger.info("Epoch: {} - using kl-weight {:.4f}".format(exper.epoch, kl_weight))
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
@@ -152,29 +148,20 @@ def main():
                 ACTBatchHandler.id += 1
                 batch(exper, epoch_obj, meta_optimizer)
                 act_loss = batch.backward(epoch_obj, meta_optimizer, optimizer, kl_weight=kl_weight)
-                exper.add_halting_steps(batch.halting_steps, is_train=True)
                 epoch_obj.add_act_loss(act_loss)
-                # exper.meta_logger.info("{} batch - batch-loss {:.4f}".format(batch.id,
-                #                                                             batch.loss_sum.data.cpu().numpy()[0]))
             else:
                 raise ValueError("args.learner {} not supported by this implementation".format(exper.args.learner))
 
         # END OF EPOCH, calculate average final loss/error and print summary
         # we computed the average loss per function in the batch! and added those losses to the final loss
         # therefore we only need to divide through the number of batches to end up with the average loss per function
-        epoch_obj.loss_last_time_step *= 1./float(epoch_obj.num_of_batches)
-        epoch_obj.param_loss *= 1./float(epoch_obj.num_of_batches)
-        epoch_obj.final_act_loss *= 1./float(epoch_obj.num_of_batches)
-        epoch_obj.total_loss_steps *= 1./float(epoch_obj.num_of_batches)
-        epoch_obj.loss_optimizer *= 1./float(epoch_obj.num_of_batches)
-        epoch_obj.kl_term *= 1. / float(epoch_obj.num_of_batches)
+
         exper.set_kl_term(epoch_obj.kl_term, kl_weight)
         exper.scale_step_losses()
         epoch_obj.end(exper)
-
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
-            exper.eval(epoch_obj, meta_optimizer, val_funcs)
+            exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None) # "{}".format(exper.epoch)
         # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
         if exper.args.learner == 'act':
 
