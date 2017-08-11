@@ -93,7 +93,8 @@ parser.add_argument('--version', type=str, default="V1",
 parser.add_argument('--optimizer', type=str, default="adam",
                     help='which optimizer to use sgd, adam, adadelta, adagrad, rmsprop')
 parser.add_argument('--comments', type=str, default="", help="add comments to describe specific parameter settings")
-parser.add_argument('--problem', type=str, default="regression", help="kind of optimization problem (default quadratic")
+parser.add_argument('--problem', type=str, default="regression_T", help="kind of optimization problem "
+                                                                        "(default regression_T")
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")

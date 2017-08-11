@@ -121,15 +121,16 @@ class Epoch(object):
             exper.meta_logger.info(np.array_str(np_array[0:self.train_max_time_steps_taken+1]))
 
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {} "
-                                   "stddev {:.3f} median {} sum-steps{}".format(self.epoch_id,
-                                                                                avg_opt_steps,
-                                                                                stddev, median,
-                                                                                int(total_steps)))
+                                   "stddev {:.3f} median {} sum-steps {}".format(self.epoch_id,
+                                                                                 avg_opt_steps,
+                                                                                 stddev, median,
+                                                                                 int(total_steps)))
             exper.meta_logger.info("Epoch: {}, ACT-SB - optimizer-loss/kl-term {:.4f}"
                                    "/{:.4f}".format(self.epoch_id, self.loss_optimizer, self.kl_term))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
         exper.epoch_stats["param_error"].append(self.param_loss)
+        exper.add_duration(self.duration, is_train=True)
         if exper.args.learner[0:3] == 'act':
             exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':

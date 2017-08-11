@@ -246,11 +246,12 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
     exper.val_stats["param_error"].append(param_loss)
     if "opt_loss" in exper.val_stats.keys():
         exper.val_stats["opt_loss"].append(total_opt_loss)
-
+    duration = end_validate - start_validate
     meta_logger.info("INFO - Epoch {}, elapsed time {:.2f} seconds: ".format(exper.epoch,
-                                                                             (end_validate - start_validate)))
+                                                                             duration))
     meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
                      "final-true_min: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, loss, diff_min))
+    exper.add_duration(duration, is_train=False)
     if exper.args.learner == "act":
         # exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
         # exper.val_stats["kl_div"][exper.epoch] = meta_learner.kl_div

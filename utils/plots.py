@@ -450,17 +450,21 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if max_step is None:
             max_step = len(res_dict[best_val_runs[e]])
 
-        # print(min_step, max_step)
-        losses = expers[e].val_stats["loss_funcs"][:, min_step:max_step]
-        mean_losses = np.mean(losses, 0)
         index = np.arange(min_step, max_step)
-        std_losses = np.std(losses, 0)
-        mean_plus_std = mean_losses + std_losses
-        mean_min_std = mean_losses - std_losses
         icolor = iter_colors.next()
-        y_min_value = np.min(mean_min_std)
-        y_max_value = np.max(mean_plus_std)
-        # print("stddev[0] {:.4}".format(std_losses[0]))
+        if with_stddev:
+            losses = expers[e].val_stats["loss_funcs"][:, min_step:max_step]
+            mean_losses = np.mean(losses, 0)
+            std_losses = np.std(losses, 0)
+            mean_plus_std = mean_losses + std_losses
+            mean_min_std = mean_losses - std_losses
+            y_min_value = np.min(mean_min_std)
+            y_max_value = np.max(mean_plus_std)
+
+        else:
+            mean_losses = expers[e].val_stats["step_losses"][val_run]
+            y_min_value = np.min(mean_losses)
+            y_max_value = np.max(mean_losses)
         y_min_value -= y_min_value * 0.1
         y_max_value += y_max_value * 0.1
         if plot_best:

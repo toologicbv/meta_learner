@@ -1,4 +1,7 @@
 import sys
+import os
+from datetime import datetime
+from pytz import timezone
 
 import torch
 import torch.nn as nn
@@ -52,11 +55,18 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
     if np.any(kl_div.data.cpu().numpy() < 0):
         kl_np = kl_div.data.cpu().numpy()
         if np.any(kl_np[(kl_np < 0) & (kl_np < threshold)]):
+            qts = q_probs.data.cpu().squeeze().numpy()
+            vals_to_save = {"qt_values": qts}
+            dt_dttm = str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
+                '%Y-%m-%d %H:%M:%S.%f')[:-7], ' ', '_')
+            file_name = os.path.join(os.getcwd(), "qt_value_kl_"+dt_dttm)
+            np.savez(file_name, **vals_to_save)
             print("************* Negative KL-divergence *****************")
+            print("NOTE: saved qt_values object to {}".format(file_name))
             print("sum(q_probs {:.2f}".format(torch.sum(q_probs.data.cpu().squeeze())))
             print("sum(prior_probs {:.2f}".format(torch.sum(prior_probs.data.cpu().squeeze())))
-            kl_str = np.array_str(kl_div.data.cpu().squeeze().numpy(), precision=4)
-            raise ValueError("KL divergence can't be less than zero {}".format(kl_str))
+            # kl_str = np.array_str(kl_div.data.cpu().squeeze().numpy(), precision=4)
+            # raise ValueError("KL divergence can't be less than zero {}".format(kl_str))
 
     return kl_div
 

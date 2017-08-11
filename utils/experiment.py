@@ -25,12 +25,13 @@ class Experiment(object):
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                             "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {},
                             "kl_term": np.zeros(run_args.max_epoch),
-                            "kl_weight": np.zeros(run_args.max_epoch)}
+                            "kl_weight": np.zeros(run_args.max_epoch),
+                            "duration": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [], "halting_step": {}, "kl_term": []}
+                          "loss_funcs": [], "halting_step": {}, "kl_term": [], "duration": []}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -54,17 +55,20 @@ class Experiment(object):
         self.epoch_stats["halting_step"][self.epoch] = np.zeros(self.max_time_steps + 1).astype(int)
         self.epoch_stats["qt_hist"][self.epoch] = np.zeros(self.max_time_steps)
 
-    def init_val_stats(self):
-        self.val_stats["step_losses"][self.epoch] = np.zeros(self.config.max_val_opt_steps + 1)
-        self.val_stats["opt_step_hist"][self.epoch] = np.zeros(self.config.max_val_opt_steps + 1).astype(int)
-        self.val_stats["halting_step"][self.epoch] = np.zeros(self.config.max_val_opt_steps + 1).astype(int)
-        self.val_stats["qt_hist"][self.epoch] = np.zeros(self.config.max_val_opt_steps)
+    def init_val_stats(self, eval_time_steps=None):
+        if eval_time_steps is None:
+            eval_time_steps = self.config.max_val_opt_steps
+        self.val_stats["step_losses"][self.epoch] = np.zeros(eval_time_steps + 1)
+        self.val_stats["opt_step_hist"][self.epoch] = np.zeros(eval_time_steps + 1).astype(int)
+        self.val_stats["halting_step"][self.epoch] = np.zeros(eval_time_steps + 1).astype(int)
+        self.val_stats["qt_hist"][self.epoch] = np.zeros(eval_time_steps)
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                          "step_losses": OrderedDict(),
-                          "step_param_losses": OrderedDict(), "ll_loss": {}, "kl_div": {}, "kl_entropy": {},
-                          "qt_funcs": OrderedDict(), "loss_funcs": [], "opt_loss": []}
+                          "step_losses": OrderedDict(), "opt_loss": [],
+                          "step_param_losses": OrderedDict(),
+                          "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
+                          "loss_funcs": [], "halting_step": {}, "kl_term": [], "duration": []}
 
     def add_halting_steps(self, halting_steps, is_train=True):
         # expect opt_steps to be an autograd.Variable
@@ -92,6 +96,14 @@ class Experiment(object):
             self.epoch_stats["step_losses"][self.epoch][step] += step_loss
         else:
             self.val_stats["step_losses"][self.epoch][step] += step_loss
+
+    def add_duration(self, epoch_time, is_train=True):
+        if not isinstance(epoch_time, (np.float, np.float32, np.float64)):
+            raise ValueError("step_loss must be a numpy.float but is type {}".format(type(epoch_time)))
+        if is_train:
+            self.epoch_stats["duration"].append(epoch_time)
+        else:
+            self.val_stats["duration"].append(epoch_time)
 
     def set_kl_term(self, kl_term, kl_weight):
         if not isinstance(kl_term, (np.float, np.float32, np.float64)):
@@ -226,12 +238,15 @@ class Experiment(object):
 
         self.output_dir = log_dir
 
-    def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True):
+    def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
         if self.args.learner == 'act_sb':
             self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
                                                                                     functions.num_of_funcs))
-            self.init_val_stats()
+            if eval_time_steps is None:
+                self.init_val_stats()
+            else:
+                self.init_val_stats(eval_time_steps)
             functions.reset()
             test_batch = ACTBatchHandler(self, is_train=False, optimizees=functions)
             test_batch(self, epoch_obj, meta_optimizer)
@@ -239,12 +254,19 @@ class Experiment(object):
             meta_optimizer.reset_final_loss()
             meta_optimizer.zero_grad()
             eval_loss = test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
-            end_tm = time.time() - start_validate
-            e_losses = self.val_stats["step_losses"][self.epoch][0:epoch_obj.test_max_time_steps_taken + 1]
+            duration = time.time() - start_validate
+            if self.config.max_val_opt_steps > 200:
+                start = self.config.max_val_opt_steps - 100
+                end = self.config.max_val_opt_steps + 1
+                self.meta_logger.info("Epoch: {} - showing only last {} time steps".format(self.epoch, 100))
+            else:
+                start = 0
+                end = self.config.max_val_opt_steps + 1
+            e_losses = self.val_stats["step_losses"][self.epoch][start:end]
             self.meta_logger.info("Epoch: {} - evaluation result - time step losses".format(self.epoch))
             self.meta_logger.info(np.array_str(e_losses, precision=3))
             self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl "
-                                  "{:.3f}/{:.4f}".format(self.epoch, end_tm, eval_loss, test_batch.kl_term))
+                                  "{:.3f}/{:.4f}".format(self.epoch, duration, eval_loss, test_batch.kl_term))
             # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
             # once, which is different during training because we process multiple batches in ONE EPOCH
             # for the validation "loss" (not opt_loss) we can just sum the step_losses we collected earlier
@@ -253,6 +275,7 @@ class Experiment(object):
             self.val_stats["opt_loss"].append(eval_loss)
             # ja not consistent but .kl_term is already a numpy float whereas .loss_sum is not
             self.val_stats["kl_term"].append(test_batch.kl_term)
+            self.add_duration(duration, is_train=False)
             del test_batch
 
         else:
@@ -298,7 +321,8 @@ class Experiment(object):
             else:
                 torch.save(model.state_dict(), self.model_path)
 
-            self.meta_logger.info("INFO - Successfully saved model parameters to {}".format(self.model_path))
+            self.meta_logger.info("Epoch: {} - Successfully saved model parameters to {}".format(self.epoch,
+                                                                                                 self.model_path))
 
         self.save()
         if not self.args.on_server:
