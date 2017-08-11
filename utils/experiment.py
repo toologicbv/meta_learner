@@ -1,5 +1,5 @@
 import torch
-
+import sys
 import os
 import dill
 import shutil
@@ -315,7 +315,8 @@ class Experiment(object):
         with open(outfile, 'wb') as f:
             dill.dump(self, f)
         self.meta_logger = logger
-        self.meta_logger.info("Epoch {} - Saving experimental details to {}".format(self.epoch, outfile))
+        if self.meta_logger is not None:
+            self.meta_logger.info("Epoch {} - Saving experimental details to {}".format(self.epoch, outfile))
 
     def end(self, model):
 
@@ -362,11 +363,9 @@ class Experiment(object):
         if not full_path:
             path_to_exp = os.path.join(config.log_root_path, os.path.join(path_to_exp, config.exp_file_name))
         else:
-            print(config.log_root_path, path_to_exp)
             path_to_exp = os.path.join(config.log_root_path, path_to_exp)
 
         try:
-            print(path_to_exp)
             with open(path_to_exp, 'rb') as f:
                 experiment = dill.load(f)
         except IOError as e:
