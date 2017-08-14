@@ -27,13 +27,17 @@ OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   }
 
 
-def create_logger(exper, file_handler=False):
+def create_logger(exper=None, file_handler=False, output_dir=None):
     # create logger
+    if exper is None and output_dir is None:
+        raise ValueError("Parameter -experiment- and -output_dir- cannot be both equal to None")
     logger = logging.getLogger('meta learner')
     logger.setLevel(logging.DEBUG)
     # create file handler which logs even debug messages
     if file_handler:
-        fh = logging.FileHandler(os.path.join(exper.output_dir, config.logger_filename))
+        if output_dir is None:
+            output_dir = exper.output_dir
+        fh = logging.FileHandler(os.path.join(output_dir, config.logger_filename))
         # fh.setLevel(logging.INFO)
         fh.setLevel(logging.DEBUG)
         formatter_fh = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -134,7 +138,7 @@ def create_def_argparser(**kwargs):
     return args
 
 
-def get_model(exper, num_params_optimizee, retrain=False, logger=None):
+def get_model(exper, num_params_optimizee, retrain=False):
 
     if exper.args.version == 'V1' or exper.args.version == 'V2' \
         or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
@@ -196,37 +200,37 @@ def get_model(exper, num_params_optimizee, retrain=False, logger=None):
             # try to load model
             if os.path.exists(exper.model_path):
                 meta_optimizer.load_state_dict(torch.load(exper.model_path))
-                logger.info("INFO - loaded existing model from file {}".format(exper.model_path))
+                exper.meta_logger.info("INFO - loaded existing model from file {}".format(exper.model_path))
                 loaded = True
             else:
-                logger.info("Warning - model not found in {}".format(exper.model_path))
+                exper.meta_logger.info("Warning - model not found in {}".format(exper.model_path))
 
         if exper.args.model is not None and not loaded:
             model_file_name = os.path.join(config.model_path, (exper.args.model + config.save_ext))
             if os.path.exists(model_file_name):
                 meta_optimizer.load_state_dict(torch.load(model_file_name))
-                logger.info("INFO - loaded existing model from file {}".format(model_file_name))
+                exper.meta_logger.info("INFO - loaded existing model from file {}".format(model_file_name))
                 loaded = True
 
         if not loaded:
-            logger.info("Warning - retrain was enabled but model <{}> does not exist. "
-                        "Training a new model with this name.".format(exper.args.model))
+            exper.meta_logger.info("Warning - retrain was enabled but model <{}> does not exist. "
+                                   "Training a new model with this name.".format(exper.args.model))
 
     else:
-        logger.info("INFO - training a new model {}".format(exper.args.model))
+        exper.meta_logger.info("INFO - training a new model {}".format(exper.args.model))
     meta_optimizer.name = exper.args.model
 
     if exper.args.cuda:
-        logger.info("Note: {} is running on GPU".format(str_classname))
+        exper.meta_logger.info("Note: {} is running on GPU".format(str_classname))
         meta_optimizer.cuda()
     else:
-        logger.info("Note: {} is running on CPU".format(str_classname))
+        exper.meta_logger.info("Note: {} is running on CPU".format(str_classname))
     # print(meta_optimizer.state_dict().keys())
     param_list = []
     for name, param in meta_optimizer.named_parameters():
         param_list.append(name)
 
-    logger.info(param_list)
+    exper.meta_logger.info(param_list)
 
     return meta_optimizer
 

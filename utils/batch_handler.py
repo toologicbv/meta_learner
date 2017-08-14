@@ -221,10 +221,10 @@ class ACTBatchHandler(BatchHandler):
         self.one_minus_qt[:, self.step] = self.tensor_one - Variable(qts.data.squeeze())
         return probs
 
-    def backward(self, epoch_obj, meta_optimizer, optimizer, kl_weight=1.):
+    def backward(self, epoch_obj, meta_optimizer, optimizer):
         if len(self.batch_step_losses) == 0:
             raise RuntimeError("No batch losses accumulated. Can't execute backward() on object")
-        self.compute_batch_loss(kl_weight=kl_weight)
+        self.compute_batch_loss(kl_weight=epoch_obj.kl_weight)
         epoch_obj.add_kl_term(self.kl_term)
         self.loss_sum.backward()
         optimizer.step()

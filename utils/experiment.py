@@ -13,7 +13,7 @@ from config import config, MetaConfig
 from probs import TimeStepsDist
 from common import load_val_data, create_logger, generate_fixed_weights, create_exper_label
 from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps
-from plots import plot_actsb_qts, plot_image_map_losses
+from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats_with_loss, plot_loss_versus_halting_step
 from batch_handler import ACTBatchHandler
 from val_optimizer import validate_optimizer
 
@@ -23,7 +23,7 @@ class Experiment(object):
     def __init__(self, run_args, config):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                            "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {},
+                            "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}, "halting_stats": {},
                             "kl_term": np.zeros(run_args.max_epoch),
                             "kl_weight": np.zeros(run_args.max_epoch),
                             "duration": []}
@@ -31,7 +31,8 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [], "halting_step": {}, "kl_term": [], "duration": []}
+                          "loss_funcs": [] if run_args.learner != "act_sb" else {},
+                          "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -54,6 +55,8 @@ class Experiment(object):
         self.epoch_stats["opt_step_hist"][self.epoch] = np.zeros(self.max_time_steps + 1).astype(int)
         self.epoch_stats["halting_step"][self.epoch] = np.zeros(self.max_time_steps + 1).astype(int)
         self.epoch_stats["qt_hist"][self.epoch] = np.zeros(self.max_time_steps)
+        # 1) min 2) max 3) mean 4) stddev 5) median
+        self.epoch_stats["halting_stats"][self.epoch] = np.zeros(5)
 
     def init_val_stats(self, eval_time_steps=None):
         if eval_time_steps is None:
@@ -68,18 +71,20 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [], "halting_step": {}, "kl_term": [], "duration": []}
+                          "loss_funcs": [] if self.args.learner != "act_sb" else {},
+                          "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
 
     def add_halting_steps(self, halting_steps, is_train=True):
         # expect opt_steps to be an autograd.Variable
-        np_array = halting_steps.data.cpu().squeeze().numpy()
-        idx_sort = np.argsort(np_array)
-        np_array = np_array[idx_sort]
+        halt_steps_funcs = halting_steps.data.cpu().squeeze().numpy()
+        idx_sort = np.argsort(halt_steps_funcs)
+        np_array = halt_steps_funcs[idx_sort]
         vals, _, count = np.unique(np_array, return_counts=True, return_index=True)
         if is_train:
             self.epoch_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
         else:
             self.val_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
+            self.val_stats["halt_step_funcs"][self.epoch] = halt_steps_funcs
 
     def add_opt_steps(self, step, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
@@ -136,11 +141,17 @@ class Experiment(object):
         else:
             self.val_stats["qt_hist"][self.epoch][start:end] += qt_values
 
-    def generate_cost_annealing(self):
-        step_size = 1./self.args.max_epoch
-        self.annealing_schedule = np.arange(0., 1, step_size)
+    def generate_cost_annealing(self, until_epoch=0):
+        r_min = -5
+        r_max = 5
+        step_size = (r_max - r_min) / float(until_epoch)
+        t = np.arange(r_min, r_max, step_size)
+        sigmoid = 1. / (1 + np.exp(-t))
+        until_epoch = sigmoid.shape[0]
+        self.annealing_schedule[0:until_epoch] = sigmoid
+        self.meta_logger.info("Generated KL cost annealing schedule for first {} epochs".format(until_epoch))
 
-    def scale_step_losses(self, is_train=True):
+    def scale_step_statistics(self, is_train=True):
         if is_train:
             opt_step_array = self.epoch_stats["opt_step_hist"][self.epoch]
         else:
@@ -158,7 +169,7 @@ class Experiment(object):
             # see explanation above
             self.val_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
 
-    def start(self):
+    def start(self, meta_logger=None):
         # Model specific things to initialize
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
@@ -178,9 +189,6 @@ class Experiment(object):
                 # disable BPTT by setting truncated bptt steps to optimizer steps
                 self.args.truncated_bptt_step = self.args.optimizer_steps
 
-        if self.args.learner == "act_sb" and self.args.kl_annealing:
-            self.generate_cost_annealing()
-
         # Problem specific initialization things
         if self.args.problem == "rosenbrock":
             assert self.args.learner == "meta", "Rosenbrock problem is only suited for MetaLearner"
@@ -188,7 +196,13 @@ class Experiment(object):
 
         # unfortunately need self.avg_num_opt_steps before we can make the path
         self._set_pathes()
-        self.meta_logger = create_logger(self, file_handler=True)
+        if meta_logger is None:
+            self.meta_logger = create_logger(self, file_handler=True)
+        else:
+            self.meta_logger = meta_logger
+        # if applicable, generate KL cost annealing schedule
+        if self.args.learner == "act_sb" and self.args.kl_annealing:
+            self.generate_cost_annealing(int(self.args.max_epoch * 0.9))
         self.meta_logger.info("Initializing experiment - may take a while to load validation set")
         self.fixed_weights = generate_fixed_weights(self)
 
@@ -208,6 +222,7 @@ class Experiment(object):
             else:
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    "nu{:.3}".format(self.config.ptT_shape_param)
+        self.model_name = self.args.model
         if not self.args.learner == 'manual' and self.args.model is not None:
             self.model_path = os.path.join(self.output_dir, self.args.model + config.save_ext)
 
@@ -276,6 +291,8 @@ class Experiment(object):
             # ja not consistent but .kl_term is already a numpy float whereas .loss_sum is not
             self.val_stats["kl_term"].append(test_batch.kl_term)
             self.add_duration(duration, is_train=False)
+            # save the initial distance of each optimizee from its global minimum
+            self.val_stats["loss_funcs"][self.epoch] = functions.distance_to_min
             del test_batch
 
         else:
@@ -345,7 +362,10 @@ class Experiment(object):
             plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
             plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
             plot_actsb_qts(self, data_set="train", save=True)
+            plot_halting_step_stats_with_loss(self, do_show=False, do_save=True, add_info=True)
+
             if self.run_validation:
+                plot_loss_versus_halting_step(self, do_show=False, do_save=True)
                 plot_dist_optimization_steps(self, data_set="eval", save=True)
                 plot_actsb_qts(self, data_set="eval", save=True)
                 plot_image_map_data(self, data_set="eval", data="qt_value", do_save=True, do_show=False)
@@ -355,10 +375,11 @@ class Experiment(object):
             # plot_dist_optimization_steps(self.exper, data_set="train", save=True)
             # plot_dist_optimization_steps(experiment, data_set="val", save=True)
             plot_qt_probs(self, data_set="train", save=True)
+            plot_loss_versus_halting_step(self, do_show=False, do_save=True)
             # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
 
     @staticmethod
-    def load(path_to_exp, full_path=False, do_log=False):
+    def load(path_to_exp, full_path=False, do_log=False, meta_logger=None):
 
         if not full_path:
             path_to_exp = os.path.join(config.log_root_path, os.path.join(path_to_exp, config.exp_file_name))
@@ -368,6 +389,7 @@ class Experiment(object):
         try:
             with open(path_to_exp, 'rb') as f:
                 experiment = dill.load(f)
+
         except IOError as e:
             print "I/O error({0}): {1}".format(e.errno, e.strerror)
             print("Can't open file {}".format(path_to_exp))
@@ -384,8 +406,11 @@ class Experiment(object):
             experiment.config = new_config
         # we save experiments without their associated logger (because that's seeking trouble when loading the
         # experiment from file. Therefore we need to create a logger in case we need it.
-        if experiment.meta_logger is None and do_log:
-            experiment.meta_logger = create_logger(experiment)
+        if experiment.meta_logger is None and do_log and meta_logger:
+            if meta_logger is None:
+                experiment.meta_logger = create_logger(experiment)
+            else:
+                experiment.meta_logger = meta_logger
             experiment.meta_logger.info("created local logger for experiment with model {}".format(experiment.model_name))
 
         return experiment

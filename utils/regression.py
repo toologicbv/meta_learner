@@ -57,7 +57,7 @@ def nll_with_t_dist(true_y, est_y, N, shape_p=1, scale_p=1., avg_batch=False):
     # source of NLL is http://web.itu.edu.tr/etaner/wseasJ05.pdf eq(7)
     C = (-1) * N * (gammaln((shape_p + 1)/2.) - gammaln(shape_p/2.) - 0.5 * np.log(np.pi * shape_p) -\
                     np.log(scale_p))
-    nll = (shape_p + 1)/2. * torch.sum(torch.log(1. + ((true_y - est_y) * 1./(scale_p * np.sqrt(shape_p)))**2), 1)
+    nll = (shape_p + 1)/2. * torch.sum(torch.log(1. + ((true_y - est_y)**2 * 1./(scale_p * np.sqrt(shape_p)))**2), 1)
     nll += C
     if avg_batch:
         nll = torch.mean(nll, 0).squeeze()
@@ -428,6 +428,9 @@ class RegressionWithStudentT(object):
 
         self.param_hist = {}
         self._add_param_values(self.initial_params)
+        self.nll_init = nll_with_t_dist(self.y, self.y_t(self.initial_params), N=self.n_samples, avg_batch=False)
+        self.nll_min = nll_with_t_dist(self.y_no_noise, self.y_t(self.true_params), N=self.n_samples, avg_batch=False)
+        self.distance_to_min = (self.nll_init - self.nll_min).data.cpu().squeeze().numpy()
 
     def set_parameters(self, parameters):
         self._add_param_values(parameters)

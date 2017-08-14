@@ -7,6 +7,8 @@ class MetaConfig(object):
         self.logger_filename = "run.log"
         # directory for models
         self.model_path = "models"
+        # error directory...e.g. collect KL div error matrices
+        self.error_dir = "spam"
         # file extension for model files
         self.save_ext = '.pkl'
         # directory for figures
@@ -52,8 +54,8 @@ class MetaConfig(object):
         self.continue_prob = 0.
         # probability of continue computation
 
-        self.pT_shape_param = 0.955
-        self.ptT_shape_param = 0.1
+        self.pT_shape_param = 0.945
+        self.ptT_shape_param = 0.7
         self.T = 100 # avg = 80 with 0.98
         self.max_val_opt_steps = 50
 

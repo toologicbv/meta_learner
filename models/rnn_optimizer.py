@@ -59,7 +59,8 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
             vals_to_save = {"qt_values": qts}
             dt_dttm = str.replace(datetime.now(timezone('Europe/Berlin')).strftime(
                 '%Y-%m-%d %H:%M:%S.%f')[:-7], ' ', '_')
-            file_name = os.path.join(os.getcwd(), "qt_value_kl_"+dt_dttm)
+            file_name = os.path.join(os.getcwd(), config.error_dir)
+            file_name = os.path.join(file_name, "qt_value_kl_"+dt_dttm)
             np.savez(file_name, **vals_to_save)
             print("************* Negative KL-divergence *****************")
             print("NOTE: saved qt_values object to {}".format(file_name))

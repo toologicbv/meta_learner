@@ -10,7 +10,7 @@ def halting_step_stats(halting_steps):
     num_of_funcs = np.sum(halting_steps)
     values = np.arange(0, num_of_steps)
     total_steps = np.sum(values * halting_steps)
-    avg_opt_steps = int(np.sum(1. / num_of_funcs * values * halting_steps))
+    avg_opt_steps = np.sum(1. / num_of_funcs * values * halting_steps)
     E_x_2 = np.sum(1. / num_of_funcs * values ** 2 * halting_steps)
     stddev = np.sqrt(E_x_2 - avg_opt_steps ** 2)
     cum_sum = np.cumsum(halting_steps)
@@ -26,7 +26,7 @@ class Epoch(object):
 
     epoch_id = 0
 
-    def __init__(self, exper):
+    def __init__(self):
         # want to start at 1
         self.epoch_id = 0
         self.start_time = time.time()
@@ -39,14 +39,12 @@ class Epoch(object):
         self.diff_min = 0.
         self.duration = 0.
         self.avg_opt_steps = []
-        self.num_of_batches = exper.args.functions_per_epoch // exper.args.batch_size
-        self.prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
-                                                 exper.args.batch_size, exper.args.cuda)
-        self.backward_ones = torch.ones(exper.args.batch_size)
+        self.num_of_batches = 0
+        self.prior_probs = None
         self.train_max_time_steps_taken = 0
         self.test_max_time_steps_taken = 0
-        if exper.args.cuda:
-            self.backward_ones = self.backward_ones.cuda()
+        self.kl_weight = 0
+        self.backward_ones = None
 
     def add_step_loss(self, avg_loss, last_time_step=False):
         if not isinstance(avg_loss, (np.float, np.float32, np.float64)):
@@ -66,7 +64,7 @@ class Epoch(object):
             raise ValueError("loss must be a numpy.float but is type {}".format(type(kl_term)))
         self.kl_term += kl_term
 
-    def start(self):
+    def start(self, exper):
         Epoch.epoch_id += 1
         self.epoch_id = Epoch.epoch_id
         self.start_time = time.time()
@@ -77,7 +75,16 @@ class Epoch(object):
         self.loss_optimizer = 0
         self.diff_min = 0.
         self.duration = 0.
+        self.num_of_batches = exper.args.functions_per_epoch // exper.args.batch_size
+        self.prior_probs = construct_prior_p_t_T(exper.args.optimizer_steps, exper.config.ptT_shape_param,
+                                                 exper.args.batch_size, exper.args.cuda)
+        self.backward_ones = torch.ones(exper.args.batch_size)
+        if exper.args.cuda:
+            self.backward_ones = self.backward_ones.cuda()
+
         self.avg_opt_steps = []
+        if exper.annealing_schedule is not None:
+            self.kl_weight = float(exper.annealing_schedule[self.epoch_id-1])
         # prepare epoch variables
 
     def end(self, exper):
@@ -87,6 +94,7 @@ class Epoch(object):
         self.total_loss_steps *= 1. / float(self.num_of_batches)
         self.loss_optimizer *= 1. / float(self.num_of_batches)
         self.kl_term *= 1. / float(self.num_of_batches)
+        exper.set_kl_term(self.kl_term, self.kl_weight)
 
         self.duration = time.time() - self.start_time
 
@@ -110,7 +118,12 @@ class Epoch(object):
                                                                                                avg_opt_steps))
         if exper.args.learner == 'act_sb':
             np_array = exper.epoch_stats["halting_step"][self.epoch_id]
+            step_indices = np.nonzero(np_array)
+            min_steps = np.min(step_indices)
+            max_steps = np.max(step_indices)
             avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_array)
+
+            exper.epoch_stats["halting_stats"][self.epoch_id] = np.array([min_steps, max_steps, avg_opt_steps, stddev, median])
             e_losses = exper.epoch_stats["step_losses"][self.epoch_id][0:self.train_max_time_steps_taken+1]
             exper.meta_logger.info("time step losses")
             exper.meta_logger.info(np.array_str(e_losses,  precision=3))
@@ -120,17 +133,18 @@ class Epoch(object):
             exper.meta_logger.info("halting step frequencies")
             exper.meta_logger.info(np.array_str(np_array[0:self.train_max_time_steps_taken+1]))
 
-            exper.meta_logger.info("Epoch: {}, Average number of optimization steps {} "
+            exper.meta_logger.info("Epoch: {}, Average number of optimization steps {:.3f} "
                                    "stddev {:.3f} median {} sum-steps {}".format(self.epoch_id,
                                                                                  avg_opt_steps,
                                                                                  stddev, median,
                                                                                  int(total_steps)))
-            exper.meta_logger.info("Epoch: {}, ACT-SB - optimizer-loss/kl-term {:.4f}"
-                                   "/{:.4f}".format(self.epoch_id, self.loss_optimizer, self.kl_term))
+            exper.meta_logger.info("Epoch: {}, ACT-SB(klw={:.5f}) - optimizer-loss/kl-term {:.4f}"
+                                   "/{:.4f}".format(self.epoch_id, self.kl_weight, self.loss_optimizer, self.kl_term))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
         exper.epoch_stats["param_error"].append(self.param_loss)
         exper.add_duration(self.duration, is_train=True)
+
         if exper.args.learner[0:3] == 'act':
             exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':

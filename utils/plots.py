@@ -462,7 +462,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             y_max_value = np.max(mean_plus_std)
 
         else:
-            mean_losses = expers[e].val_stats["step_losses"][val_run]
+            mean_losses = expers[e].val_stats["step_losses"][val_run][min_step:max_step]
             y_min_value = np.min(mean_losses)
             y_max_value = np.max(mean_losses)
         y_min_value -= y_min_value * 0.1
@@ -490,11 +490,16 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             if with_stddev:
                 plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
 
-        plt.xlim([0, len(index) + 1])
+        if min_step == 0:
+            start = 1
+        else:
+            start = min_step
+
         if len(index) > 150:
-            index = np.arange(1, len(index) + 1, 50)
+            index = np.arange(start, start+len(index) + 1, 50)
         elif len(index) > 41:
-            index = np.arange(1, len(index)+1, 10)
+            index = np.arange(start, start+len(index)+1, 10)
+        plt.xlim([start-1, start+len(index) ])
         plt.ylim([y_min_value, y_max_value])
         plt.xticks(index)
         plt.xlabel("Number of optimization steps")
@@ -901,7 +906,7 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
 
 
 def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, height=15, do_save=False, do_show=False,
-                          cmap=cmocean.cm.haline, scale=[13, 40]):
+                          cmap=cmocean.cm.haline, scale=[11, 60]):
 
     if data_set not in ["train", "eval"]:
         raise ValueError("For parameter -data_set- you can only choose 1)train or 2)eval")
@@ -977,6 +982,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     plt.title(plot_title, **config.title_font)
     index = np.arange(1, qt_hist.shape[0] + 1).astype(int)
+
     plt.bar(index, qt_hist, bar_width, color='b', align='center',
             label=r"$q(t)$")
     if plot_prior:
@@ -990,7 +996,6 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
     plt.legend(loc="best")
     plt.xlabel("time step")
     plt.ylabel("qt probabilities")
-    plt.xlim([0, 21])
 
     if add_info:
         # determine max mode step. Add "1" because the argmax determines index and not step
@@ -1093,6 +1098,129 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
     if do_save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
+    if do_show:
+        plt.show()
+
+    plt.close()
+
+
+def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, do_save=False,
+                                      fig_name=None, add_info=True):
+
+    if exper.args.problem == "regression_T":
+        opt_loss_lim = [25., 60.]
+        kl_lim = [0, 3.]
+        avg_step_lim = [0., 50.]
+    else:
+        opt_loss_lim = None
+        kl_lim = None
+        avg_step_lim = None
+
+    fig, ax = plt.subplots()
+    fig.set_figheight(height)
+    fig.set_figwidth(width)
+    suffix = " (KL cost annealing)" if exper.args.kl_annealing else ""
+    plt.title("Halting step statistics versus loss components during training " +
+              r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param) + suffix, **config.title_font)
+    opt_hist = exper.epoch_stats["opt_step_hist"]
+    epochs = len(opt_hist)
+
+    halting_stats = np.vstack(exper.epoch_stats["halting_stats"].values())
+    halt_min = halting_stats[:, 0]
+    halt_max = halting_stats[:, 1]
+    halt_avg = halting_stats[:, 2]
+    halt_median = halting_stats[:, 4]
+    halt_stddev = halting_stats[:, 3]
+    halt_avg_plus_stddev = halt_avg + halt_stddev
+    halt_avg_min_stddev = halt_avg - halt_stddev
+    kl_terms = exper.epoch_stats["kl_term"]
+    # duration = exper.epoch_stats["duration"]
+    opt_loss = exper.epoch_stats["opt_loss"]
+
+    x = np.arange(1, epochs + 1)
+    l1, = ax.plot(x, opt_loss, marker="D", label="optimizer loss", c='r')
+    ax.set_ylabel("optimizer loss")
+    if opt_loss_lim is not None:
+        ax.set_ylim(opt_loss_lim)
+    # second y-axis
+    ax2 = ax.twinx()
+    l2, = ax2.plot(x, kl_terms, marker='o', label="kl-divergence", c='g')
+    ax2.set_ylabel("kl-divergence")
+    if kl_lim is not None:
+        ax2.set_ylim(kl_lim)
+
+    ax3 = ax.twinx()
+    l3, = ax3.plot(x, halt_avg, marker='*', label="average halting step", c='silver')
+    ax3.fill_between(x, halt_avg_min_stddev, halt_avg_plus_stddev, color='silver', alpha='0.2')
+    ax3.spines["right"].set_position(("axes", 1.2))
+    ax3.set_ylabel("average halting step")
+    lines = [l1, l2, l3]
+    ax3.legend(lines, [l.get_label() for l in lines], loc="best")
+    if avg_step_lim is not None:
+        ax3.set_ylim(avg_step_lim)
+
+    ax.set_xlabel("Epochs")
+
+    if add_info:
+        idx = exper.args.max_epoch - 1
+        stats = r"Halting step statistics final epoch: Range({}, {}) / mean={:.1f} / stddev={:.1f} / " \
+                r"median={:.1f}".format(int(halt_min[idx]), int(halt_max[idx]), halt_avg[idx], halt_stddev[idx],
+                                        halt_median[idx])
+        plt.annotate(stats,
+                     xy=(0.5, 0), xytext=(0, 0),
+                     xycoords=('axes fraction', 'figure fraction'),
+                     textcoords='offset points',
+                     size=12, ha='center', va='bottom')
+
+    if do_save:
+        if fig_name is None:
+            fig_name = "halting_step_stats"
+        fig_name = os.path.join(exper.output_dir, fig_name + config.dflt_plot_ext)
+
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    if do_show:
+        plt.show()
+
+    plt.close()
+
+
+def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_save=False,
+                                  fig_name=None, add_info=True, epoch=None):
+    if epoch is None:
+        epoch = exper.args.max_epoch
+
+    halting_steps = exper.val_stats["halt_step_funcs"][epoch]
+    nll_distance = exper.val_stats["loss_funcs"][epoch]
+    min_x = np.min(halting_steps)
+    max_x = np.max(halting_steps)
+    min_y = np.min(nll_distance)
+    max_y = np.max(nll_distance)
+    fig, ax = plt.subplots()
+    fig.set_figheight(height)
+    fig.set_figwidth(width)
+
+    ax.set_title("Halting step versus NLL distance at step 0 (N={}) during evaluation "
+                 "(epoch={})".format(nll_distance.shape[0], epoch),
+                 **config.title_font)
+    _ = ax.scatter(halting_steps, nll_distance, s=5, alpha=0.2, color="r",
+                   label=r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param))
+    ax.set_xlim([min_x - 1, max_x + 1])
+
+    ax.set_xlabel("Halting step")
+    ax.set_ylim([0, max_y])
+    ax.set_ylabel("Distance NLL(start)-NLL(min)")
+    ax.legend(loc="best")
+
+    if do_save:
+        if fig_name is None:
+            fig_name = "halting_step_versus_nll_distance"
+        fig_name = os.path.join(exper.output_dir, fig_name + config.dflt_plot_ext)
+
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
     if do_show:
         plt.show()
 
