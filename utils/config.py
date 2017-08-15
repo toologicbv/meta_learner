@@ -52,10 +52,12 @@ class MetaConfig(object):
         """
         # please note that self.continue_prob is only there for backward compatibility (old runs)
         self.continue_prob = 0.
+        # only used for negative binomial prior
+        self.num_of_successes = 50
         # probability of continue computation
 
         self.pT_shape_param = 0.945
-        self.ptT_shape_param = 0.9
+        self.ptT_shape_param = 0.7
         self.T = 100 # avg = 80 with 0.98
         self.max_val_opt_steps = 50
 
@@ -66,5 +68,10 @@ class MetaConfig(object):
             Stop threshold
         """
         self.qt_threshold = 0.95
+
+        """
+            Percentage of training epochs that use KL cost annealing
+        """
+        self.kl_anneal_perc = 0.8
 
 config = MetaConfig()

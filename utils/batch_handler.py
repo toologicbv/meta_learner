@@ -1,6 +1,6 @@
 import abc
 import numpy as np
-from scipy.stats import geom
+from scipy.stats import geom, nbinom
 import torch
 from torch.autograd import Variable
 
@@ -36,6 +36,9 @@ class ACTBatchHandler(BatchHandler):
     def __init__(self, exper, is_train, optimizees=None):
 
         self.is_train = is_train
+        self.type_prior = exper.type_prior
+        self.prior_shape_param1 = exper.config.ptT_shape_param
+        self.prior_shape_param2 = exper.config.num_of_successes
         if self.is_train:
             self.functions = get_batch_functions(exper)
             self.horizon = exper.config.T
@@ -68,7 +71,7 @@ class ACTBatchHandler(BatchHandler):
         self.kl_term = 0
         self.batch_step_losses = []
         self.tensor_one = Variable(torch.ones(1))
-        self.geom_shape_param = exper.config.ptT_shape_param
+
         self.backward_ones = torch.ones(self.batch_size)
         # only used during evaluation to capture the last time step when at least one optimizee still needed processing
         self.eval_last_step_taken = 0.
@@ -311,7 +314,14 @@ class ACTBatchHandler(BatchHandler):
         # passed to the geometric PMF function of scipy
         R = np.array([np.arange(1, i+1) for i in self.halting_steps.data.cpu().numpy()])
         R = np.vstack([np.lib.pad(a, (0, (self.step - len(a))), 'constant', constant_values=0) for a in R])
-        g_priors = geom.pmf(R, p=(1-self.geom_shape_param))
+        if self.type_prior == "geometric":
+            g_priors = geom.pmf(R, p=(1-self.prior_shape_param1))
+        elif self.type_prior == "neg-binomial":
+            g_priors = nbinom.pmf(R, self.prior_shape_param2, p=(1-self.prior_shape_param1))
+        else:
+            raise ValueError("Unknown prior distribution {}. Only 1) geometric and 2) neg-binomial "
+                             "are supported".format(self.type_prior))
+
         # create truncated priors
         g_priors *= 1./np.sum(g_priors, 1).reshape((self.batch_size, 1))
         g_priors = Variable(torch.from_numpy(g_priors).double())

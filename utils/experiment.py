@@ -48,6 +48,7 @@ class Experiment(object):
         self.pt_dist = TimeStepsDist(T=self.config.T, q_prob=self.config.pT_shape_param)
         self.meta_logger = None
         self.fixed_weights = None
+        self.type_prior = None
         self.annealing_schedule = np.ones(self.args.max_epoch)
 
     def init_epoch_stats(self):
@@ -149,7 +150,7 @@ class Experiment(object):
         sigmoid = 1. / (1 + np.exp(-t))
         until_epoch = sigmoid.shape[0]
         self.annealing_schedule[0:until_epoch] = sigmoid
-        self.meta_logger.info("Generated KL cost annealing schedule for first {} epochs".format(until_epoch))
+        self.meta_logger.info(">>> NOTE: Generated KL cost annealing schedule for first {} epochs <<<".format(until_epoch))
 
     def scale_step_statistics(self, is_train=True):
         if is_train:
@@ -171,6 +172,16 @@ class Experiment(object):
 
     def start(self, meta_logger=None):
         # Model specific things to initialize
+
+        # set prior distribution type
+        if self.args.learner == "act_sb":
+            if self.args.version == "V3":
+                self.type_prior = "neg-binomial"
+            else:
+                self.type_prior = "geometric"
+        else:
+            self.type_prior = "geometric"
+
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
                 raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(self.args.version))
@@ -202,7 +213,7 @@ class Experiment(object):
             self.meta_logger = meta_logger
         # if applicable, generate KL cost annealing schedule
         if self.args.learner == "act_sb" and self.args.version == "V2":
-            self.generate_cost_annealing(int(self.args.max_epoch * 0.7))
+            self.generate_cost_annealing(int(self.args.max_epoch * self.config.kl_anneal_perc))
         self.meta_logger.info("Initializing experiment - may take a while to load validation set")
         self.fixed_weights = generate_fixed_weights(self)
 

@@ -115,9 +115,13 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
             plt.plot(x_vals[offset:].astype(int), val_loss[offset:], 'b', label="valid-loss")
 
     plt.legend(loc="best")
-    p_title = "Train/validation loss {}-epochs/{}-opt-steps".format(exper.epoch, num_opt_steps)
+    p_title = "Train/validation loss for model {} (epochs {})".format(exper.args.learner+exper.args.version,
+                                                                      exper.args.max_epoch)
+    if exper.args.learner != "act_sb":
+        p_title += " ({}-opt-steps)".format(num_opt_steps)
     if (exper.args.learner == "meta" and exper.args.version == "V3.1") or \
-            (exper.args.learner == "act" and exper.args.version == "V2"):
+            (exper.args.learner == "act" and exper.args.version == "V2") or \
+            (exper.args.learner == "act_sb"):
         p_title += r' ($\nu = {:.2}$)'.format(exper.config.ptT_shape_param)
     plt.title(p_title, **title_font)
 
@@ -375,7 +379,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
 def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
                          loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
-                         with_stddev=True, runID=None):
+                         with_stddev=True, runID=None, y_lim=[13, 60]):
     # extra_labels = ["", ""]
     num_of_expers = len(expers)
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
@@ -500,7 +504,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             index = np.arange(min_step, max_step +1, 10)
 
         plt.xlim([min_step, max_step+1])
-        plt.ylim([y_min_value, y_max_value])
+        plt.ylim([y_lim[0], y_lim[1]])
         plt.xticks(index)
         plt.xlabel("Number of optimization steps")
         plt.ylabel(y_label)
@@ -929,8 +933,10 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
         stochastic = r" (stochastic horizon E[T]={} $\nu={:.3f}$)".format(int(exper.avg_num_opt_steps),
                                                                           exper.config.ptT_shape_param)
     else:
-        stochastic = ""
-    plt.title("Loss per time step during " + run_type + stochastic, **config.title_font)
+        stochastic = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+
+    ptitle = "Model {} - ".format(exper.args.learner+exper.args.version)
+    plt.title(ptitle + "loss per time step during " + run_type + stochastic, **config.title_font)
     # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
     # color
     cmap.set_under(color='darkgray')
@@ -1048,7 +1054,7 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
             run_type = "evaluation (each {} epoch)".format(int(exper.args.eval_freq))
             X = np.vstack(exper.val_stats["qt_hist"].values())
 
-        title_prefix = "qt probabilities during " + run_type
+        title_prefix = "Model {} - qt probabilities during ".format(exper.args.learner+exper.args.version) + run_type
         save_suffix = "qts"
         scale[0] = 0.
         scale[1] = 1.
@@ -1063,7 +1069,7 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
             run_type = "evaluation (each {} epoch)".format(int(exper.args.eval_freq))
             X = np.vstack(exper.val_stats["halting_step"].values())
 
-        title_prefix = "Halting step during " + run_type
+        title_prefix = "Model {} - halting step during ".format(exper.args.learner+exper.args.version) + run_type
         save_suffix = "halting"
         scale[0] = np.min(X[X>0])
         # print("min {}".format(scale[0]))
@@ -1110,9 +1116,9 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
                                       fig_name=None, add_info=True):
 
     if exper.args.problem == "regression_T":
-        opt_loss_lim = [25., 60.]
-        kl_lim = [0, 3.]
-        avg_step_lim = [0., 50.]
+        opt_loss_lim = [20., 60.]
+        kl_lim = None
+        avg_step_lim = [0., 65.]
     else:
         opt_loss_lim = None
         kl_lim = None
@@ -1122,7 +1128,8 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     fig.set_figheight(height)
     fig.set_figwidth(width)
     suffix = " (KL cost annealing)" if (exper.args.learner == "act_sb" and exper.args.version == "V2") else ""
-    plt.title("Halting step statistics versus loss components during training " +
+    ptitle = "Model {} - ".format(exper.args.learner+exper.args.version)
+    plt.title(ptitle + "halting step statistics versus loss components during training " +
               r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param) + suffix, **config.title_font)
     opt_hist = exper.epoch_stats["opt_step_hist"]
     epochs = len(opt_hist)
@@ -1197,15 +1204,15 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     nll_distance = exper.val_stats["loss_funcs"][epoch]
     min_x = np.min(halting_steps)
     max_x = np.max(halting_steps)
-    min_y = np.min(nll_distance)
+    # min_y = np.min(nll_distance)
     max_y = np.max(nll_distance)
     fig, ax = plt.subplots()
     fig.set_figheight(height)
     fig.set_figwidth(width)
-
-    ax.set_title("Halting step versus NLL distance at step 0 (N={}) during evaluation "
-                 "(epoch={})".format(nll_distance.shape[0], epoch),
-                 **config.title_font)
+    p_title = "Model {} - halting step versus NLL distance at step 0 (N={}) during evaluation ".format(
+        exper.args.learner + exper.args.version, nll_distance.shape[0]
+    )
+    ax.set_title(p_title + "(epoch={})".format(epoch), **config.title_font)
     _ = ax.scatter(halting_steps, nll_distance, s=5, alpha=0.2, color="r",
                    label=r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param))
     ax.set_xlim([min_x - 1, max_x + 1])
