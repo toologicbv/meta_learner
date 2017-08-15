@@ -490,16 +490,16 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             if with_stddev:
                 plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
 
-        if min_step == 0:
-            start = 1
-        else:
-            start = min_step
-
+        # if min_step == 0:
+        #     start = 1
+        # else:
+        #    start = min_step
         if len(index) > 150:
-            index = np.arange(start, start+len(index) + 1, 50)
+            index = np.arange(min_step, max_step + 1, 50)
         elif len(index) > 41:
-            index = np.arange(start, start+len(index)+1, 10)
-        plt.xlim([start-1, start+len(index) ])
+            index = np.arange(min_step, max_step +1, 10)
+
+        plt.xlim([min_step, max_step+1])
         plt.ylim([y_min_value, y_max_value])
         plt.xticks(index)
         plt.xlabel("Number of optimization steps")
@@ -1020,6 +1020,8 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
     if fig_name is None:
         fig_name = "_" + data_set + "_" + create_exper_label(exper)
         fig_name = os.path.join(exper.output_dir, "qt_values" + fig_name + ".png")
+    else:
+        fig_name = os.path.join(exper.output_dir, fig_name + ".png")
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
@@ -1074,7 +1076,7 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
     X[X == 0] = -1
     plt.figure(figsize=(width, height))
     if exper.args.learner[0:3] == "act":
-        p_title = title_prefix + " per time step during training epochs" + \
+        p_title = title_prefix + " per time step" + \
                      r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
     else:
         p_title = ""
@@ -1119,7 +1121,7 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     fig, ax = plt.subplots()
     fig.set_figheight(height)
     fig.set_figwidth(width)
-    suffix = " (KL cost annealing)" if exper.args.kl_annealing else ""
+    suffix = " (KL cost annealing)" if (exper.args.learner == "act_sb" and exper.args.version == "V2") else ""
     plt.title("Halting step statistics versus loss components during training " +
               r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param) + suffix, **config.title_font)
     opt_hist = exper.epoch_stats["opt_step_hist"]

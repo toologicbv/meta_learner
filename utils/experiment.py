@@ -201,8 +201,8 @@ class Experiment(object):
         else:
             self.meta_logger = meta_logger
         # if applicable, generate KL cost annealing schedule
-        if self.args.learner == "act_sb" and self.args.kl_annealing:
-            self.generate_cost_annealing(int(self.args.max_epoch * 0.9))
+        if self.args.learner == "act_sb" and self.args.version == "V2":
+            self.generate_cost_annealing(int(self.args.max_epoch * 0.7))
         self.meta_logger.info("Initializing experiment - may take a while to load validation set")
         self.fixed_weights = generate_fixed_weights(self)
 

@@ -36,6 +36,7 @@ from utils.batch_handler import ACTBatchHandler
                                                                                             separate LSTMS
     act                 V2                      regression(_T)                              act learner with 1 LSTM
     act_sb              V1                      regression(_T)                              act with stick-breaking approach
+    act_sb              V2                      regression(_T)                              act with SB and KL cost annealing
 """
 
 # for standard optimizer which we compare to
@@ -98,7 +99,6 @@ parser.add_argument('--problem', type=str, default="regression_T", help="kind of
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
-parser.add_argument('--kl_annealing', action='store_true', default=False, help="using KL cost annealing during training")
 
 
 parser.add_argument("--output_bias")
