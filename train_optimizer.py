@@ -37,6 +37,8 @@ from utils.batch_handler import ACTBatchHandler
     act                 V2                      regression(_T)                              act learner with 1 LSTM
     act_sb              V1                      regression(_T)                              act with stick-breaking approach
     act_sb              V2                      regression(_T)                              act with SB and KL cost annealing
+    act_sb              V3                      regression(_T)                              act with neg-binomial prior
+    act_sb              V4                      regression(_T)                              act with VI + meta loss
 """
 
 # for standard optimizer which we compare to

@@ -146,6 +146,7 @@ def get_model(exper, num_params_optimizee, retrain=False):
             or (exper.args.version[0:2] == 'V5' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V6' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'act_sb') \
+            or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'act_sb') \
             or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
@@ -358,11 +359,8 @@ def generate_fixed_weights(exper, steps=None):
             fixed_weights = prior_probs.squeeze()
 
         elif exper.args.version == "V3.2":
-            # fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
-            # fixed_weights[:] = 1. / float(steps)
-            fixed_weights = Variable(torch.zeros(steps), requires_grad=False)
-            fixed_weights[0] = 1.
-            fixed_weights[steps-1] = 1.
+            fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)
+            fixed_weights[:] = 1. / float(steps)
             exper.meta_logger.info("Model with fixed uniform weights that sum to {:.1f}".format(
                 torch.sum(fixed_weights).data.cpu().squeeze()[0]))
         elif exper.args.version[0:2] == "V5":

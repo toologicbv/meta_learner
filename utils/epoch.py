@@ -130,7 +130,8 @@ class Epoch(object):
             exper.meta_logger.debug("qt values")
             exper.meta_logger.debug(np.array_str(exper.epoch_stats["qt_hist"][self.epoch_id]
                                                 [0:self.train_max_time_steps_taken + 1],  precision=4))
-            exper.meta_logger.info("halting step frequencies")
+            exper.meta_logger.info("halting step frequencies - "
+                                   "NOTE max steps taken {}".format(self.train_max_time_steps_taken))
             exper.meta_logger.info(np.array_str(np_array[0:self.train_max_time_steps_taken+1]))
 
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {:.3f} "

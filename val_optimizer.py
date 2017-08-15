@@ -263,10 +263,13 @@ def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps
         exper.meta_logger.debug(
             "{} Epoch/Validation: CDF q(t) {}".format(exper.epoch, np.array_str(np.cumsum(np.mean(q_probs, 0)),
                                                                                 precision=4)))
+    if exper.val_stats["step_losses"][exper.epoch].shape[0] > 210:
+        step_results = exper.val_stats["step_losses"][exper.epoch][-100:]
+        exper.meta_logger.info(">>> NOTE: only showing last 100 steps <<<")
+    else:
+        step_results = exper.val_stats["step_losses"][exper.epoch]
     exper.meta_logger.info("INFO - Epoch {}: Final step losses: {}".format(exper.epoch,
-                                                                           np.array_str(
-                                                                               exper.val_stats["step_losses"][
-                                                                                   exper.epoch], precision=4)))
+                                                                           np.array_str(step_results, precision=4)))
 
     exper.meta_logger.info("--------------------------- End of validation --------------------------------------------")
     if exper.args.learner != "manual" and save_model:

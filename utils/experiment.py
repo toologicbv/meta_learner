@@ -148,8 +148,10 @@ class Experiment(object):
         step_size = (r_max - r_min) / float(until_epoch)
         t = np.arange(r_min, r_max, step_size)
         sigmoid = 1. / (1 + np.exp(-t))
-        until_epoch = sigmoid.shape[0]
-        self.annealing_schedule[0:until_epoch] = sigmoid
+        until_epoch = sigmoid.shape[0] // 2
+        self.annealing_schedule[0:until_epoch] = sigmoid[0:until_epoch]
+        self.annealing_schedule[until_epoch:] = sigmoid[until_epoch]
+        self.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(self.annealing_schedule)))
         self.meta_logger.info(">>> NOTE: Generated KL cost annealing schedule for first {} epochs <<<".format(until_epoch))
 
     def scale_step_statistics(self, is_train=True):
@@ -192,6 +194,8 @@ class Experiment(object):
                 self.max_time_steps = self.config.T
         else:
             self.avg_num_opt_steps = self.args.optimizer_steps
+            if self.args.learner == "act_sb":
+                self.max_time_steps = self.config.T
             if self.args.learner == 'meta' and self.args.version[0:2] == 'V2':
                 # Note, we choose here an absolute limit of the horizon, set in the config-file
                 self.max_time_steps = self.config.T
@@ -376,7 +380,8 @@ class Experiment(object):
             plot_halting_step_stats_with_loss(self, do_show=False, do_save=True, add_info=True)
 
             if self.run_validation:
-                plot_loss_versus_halting_step(self, do_show=False, do_save=True)
+                if hasattr(self.val_stats, 'halt_step_funcs'):
+                    plot_loss_versus_halting_step(self, do_show=False, do_save=True)
                 plot_dist_optimization_steps(self, data_set="eval", save=True)
                 plot_actsb_qts(self, data_set="eval", save=True)
                 plot_image_map_data(self, data_set="eval", data="qt_value", do_save=True, do_show=False)
