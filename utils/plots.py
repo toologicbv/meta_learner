@@ -234,9 +234,11 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
                                 exper.config.dflt_plot_ext)
     else:
         fig_name = os.path.join(exper.output_dir, fig_name + exper.config.dflt_plot_ext)
+
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
+
     if show:
         plt.show()
     plt.close()
