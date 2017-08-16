@@ -54,8 +54,14 @@ class ACTBatchHandler(BatchHandler):
         self.bool_mask = Variable(torch.ones(self.batch_size, 1).type(torch.ByteTensor))
         self.float_mask = Variable(torch.ones(self.batch_size, 1))
         self.max_T = Variable(torch.FloatTensor([self.horizon-1]).expand_as(self.float_mask))
-        self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0., 1.)
-        self.one_minus_eps = Variable(1. - self.one_minus_eps)
+        if self.is_train:
+            self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0., 1.)
+            self.one_minus_eps = Variable(1. - self.one_minus_eps)
+        else:
+            # during evaluation we fix the threshold
+            self.one_minus_eps = Variable(torch.zeros(self.max_T.size()))
+            self.one_minus_eps[:] = exper.config.qt_threshold
+
         # IMPORTANT, this tensor needs to have the same size as exper.epoch_stats["opt_step_hist"][exper.epoch] which
         # is set in train_optimizer.py in the beginning of the epoch
         self.halting_steps = Variable(torch.zeros(self.max_T.size()))

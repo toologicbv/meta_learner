@@ -166,7 +166,7 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
     plt.close()
 
 
-def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=8, width=6, save=False, show=False,
+def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=8, width=10, save=False, show=False,
                                  epoch=None):
     if epoch is None:
         epoch = exper.epoch
@@ -204,20 +204,21 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     index = range(1, len(opt_step_hist) + 1)
     norms = 1. / np.sum(opt_step_hist) * opt_step_hist
     o_mean = int(round(np.sum(index * norms)))
+    model = "Model {} - ".format(exper.args.learner + exper.args.version)
     if exper.args.learner != "act_sb":
-        p_title = "Distribution of number of optimization steps (E[T|{}]={})".format(T, o_mean)
+        p_title = model + " Distribution of number of optimization steps (E[T|{}]={})".format(T, o_mean)
         p_label = "with p(T|nu)={:.3f})".format(config.pT_shape_param)
         y_label = "Proportion"
     else:
-        p_title = r"Histogram of halting step (" + data_set + \
+        p_title = model + r" Histogram of halting step (" + data_set + \
                   r" in epoch {}) with prior $p(t|\nu={:.3f}$)".format(epoch, exper.config.ptT_shape_param)
         p_label = ""
         y_label = "Frequencies"
-        maxT = np.max(opt_step_hist.nonzero())
+        maxT = np.max(opt_step_hist[0:498].nonzero())
         index = range(1, maxT + 1)
         norms = opt_step_hist[:maxT]
 
-    plt.figure(figsize=(height, width))
+    plt.figure(figsize=(width, height))
     plt.bar(index, norms, bar_width, color='b', align='center',
             label=p_label)
     # plot mean value again...in red
@@ -231,6 +232,8 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, exper.config.T_dist_fig_name + "_" + data_set +
                                 exper.config.dflt_plot_ext)
+    else:
+        fig_name = os.path.join(exper.output_dir, fig_name + exper.config.dflt_plot_ext)
     if save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
@@ -972,17 +975,18 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         epoch = exper.epoch
 
     bar_width = 0.3
+    model_info = "Model {} - ".format(exper.args.learner + exper.args.version)
     if data_set == "train":
         T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero()) + 1
         qt_hist = exper.epoch_stats["qt_hist"][epoch][:T]
         # print(np.array_str(exper.epoch_stats["qt_hist"][epoch][:T+2], precision=4))
-        plot_title = "q(t) probabilities during TRAINING for epoch {} (".format(epoch) + exper.args.problem + \
-                     r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+        plot_title = model_info + "q(t) probabilities during TRAINING for epoch {} (".format(epoch) + exper.args.problem + \
+                                  r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
     else:
         T = np.max(exper.val_stats["qt_hist"][epoch].nonzero()) + 1
         qt_hist = exper.val_stats["qt_hist"][epoch][:T]
-        plot_title = "q(t) probabilities during EVALUATION for epoch {} (".format(epoch) + exper.args.problem + \
-                     r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+        plot_title = model_info + "q(t) probabilities during EVALUATION for epoch {} (".format(epoch) + exper.args.problem + \
+                                  r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
 
     ax = plt.figure(figsize=(height, width)).gca()
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1216,7 +1220,7 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     _ = ax.scatter(halting_steps, nll_distance, s=5, alpha=0.2, color="r",
                    label=r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param))
     ax.set_xlim([min_x - 1, max_x + 1])
-
+    # ax.set_xlim(0, 100)
     ax.set_xlabel("Halting step")
     ax.set_ylim([0, max_y])
     ax.set_ylabel("Distance NLL(start)-NLL(min)")
