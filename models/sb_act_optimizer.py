@@ -28,6 +28,8 @@ class StickBreakingACTBaseModel(nn.Module):
 
         self.theta_linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
         self.rho_linear_out = nn.Linear(num_hidden, 1, bias=True)
+        # lower the initial bias value of the linear output layer that generates the rho_t values, this helps the model
+        # to explore longer time sequences
         self.rho_linear_out.bias.data = torch.FloatTensor([-1.])
         self.losses = []
         self.qt = []
@@ -89,3 +91,14 @@ class StickBreakingACTBaseModel(nn.Module):
                 self.cx.append(Variable(torch.zeros(1, self.hidden_size)))
                 if self.use_cuda:
                     self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
+
+    @property
+    def sum_grads(self):
+        sum_grads = 0
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                sum_grads += torch.sum(param.grad.data)
+            else:
+                print("WARNING - No gradients!!!!")
+
+        return sum_grads

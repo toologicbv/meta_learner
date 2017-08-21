@@ -37,8 +37,7 @@ from utils.batch_handler import ACTBatchHandler
     act                 V2                      regression(_T)                              act learner with 1 LSTM
     act_sb              V1                      regression(_T)                              act with stick-breaking approach
     act_sb              V2                      regression(_T)                              act with SB and KL cost annealing
-    act_sb              V3                      regression(_T)                              act with neg-binomial prior
-    act_sb              V4                      regression(_T)                              act with VI + meta loss
+    act_sb_base         V1                      regression(_T)                              Graves ACT with ponder-cost
 """
 
 # for standard optimizer which we compare to
@@ -144,7 +143,7 @@ def main():
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
                 execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
-            elif exper.args.learner in ['act_sb']:
+            elif exper.args.learner[0:6] in ['act_sb']:
                 batch = ACTBatchHandler(exper, is_train=True)
                 ACTBatchHandler.id += 1
                 batch(exper, epoch_obj, meta_optimizer)

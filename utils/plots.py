@@ -17,7 +17,7 @@ from regression import neg_log_likelihood_loss, nll_with_t_dist
 def create_exper_label(exper):
 
     retrain = "_retrain" if exper.args.retrain else ""
-    if exper.args.learner != "act_sb":
+    if exper.args.learner[0:6] != "act_sb":
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
             str(int(exper.avg_num_opt_steps)) + "ops" + retrain
     else:
@@ -117,11 +117,11 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     plt.legend(loc="best")
     p_title = "Train/validation loss for model {} (epochs {})".format(exper.args.learner+exper.args.version,
                                                                       exper.args.max_epoch)
-    if exper.args.learner != "act_sb":
+    if exper.args.learner[0:6] != "act_sb":
         p_title += " ({}-opt-steps)".format(num_opt_steps)
     if (exper.args.learner == "meta" and exper.args.version == "V3.1") or \
             (exper.args.learner == "act" and exper.args.version == "V2") or \
-            (exper.args.learner == "act_sb"):
+            (exper.args.learner[0:6] == "act_sb"):
         p_title += r' ($\nu = {:.2}$)'.format(exper.config.ptT_shape_param)
     plt.title(p_title, **title_font)
 
@@ -177,12 +177,12 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     if data_set == "train":
         epoch_keys = exper.epoch_stats["opt_step_hist"].keys()
         stats_dict = exper.epoch_stats["opt_step_hist"]
-        if exper.args.learner == "act_sb":
+        if exper.args.learner[0:6] == "act_sb":
             epoch_keys = exper.epoch_stats["halting_step"].keys()
             opt_step_hist = exper.epoch_stats["halting_step"][epoch]
         T = exper.config.T
     else:
-        if exper.args.learner == "act_sb":
+        if exper.args.learner[0:6] == "act_sb":
             epoch_keys = exper.val_stats["halting_step"].keys()
             opt_step_hist = exper.val_stats["halting_step"][epoch]
         else:
@@ -190,7 +190,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
             stats_dict = exper.val_stats["opt_step_hist"]
         T = exper.config.max_val_opt_steps
 
-    if exper.args.learner != "act_sb":
+    if exper.args.learner[0:6] != "act_sb":
         for e, epoch_key in enumerate(epoch_keys):
 
             if e == 0:
@@ -205,7 +205,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     norms = 1. / np.sum(opt_step_hist) * opt_step_hist
     o_mean = int(round(np.sum(index * norms)))
     model = "Model {} - ".format(exper.args.learner + exper.args.version)
-    if exper.args.learner != "act_sb":
+    if exper.args.learner[0:6] != "act_sb":
         p_title = model + " Distribution of number of optimization steps (E[T|{}]={})".format(T, o_mean)
         p_label = "with p(T|nu)={:.3f})".format(config.pT_shape_param)
         y_label = "Proportion"
@@ -222,12 +222,12 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     plt.bar(index, norms, bar_width, color='b', align='center',
             label=p_label)
     # plot mean value again...in red
-    if exper.args.learner != "act_sb":
+    if exper.args.learner[0:6] != "act_sb":
         plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("Number of optimization steps")
     plt.ylabel(y_label)
     plt.title(p_title, **title_font)
-    if exper.args.learner != "act_sb":
+    if exper.args.learner[0:6] != "act_sb":
         plt.legend(loc="best")
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, exper.config.T_dist_fig_name + "_" + data_set +
@@ -1133,7 +1133,7 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     fig, ax = plt.subplots()
     fig.set_figheight(height)
     fig.set_figwidth(width)
-    suffix = " (KL cost annealing)" if (exper.args.learner == "act_sb" and exper.args.version == "V2") else ""
+    suffix = " (KL cost annealing)" if (exper.args.learner[0:6] == "act_sb" and exper.args.version == "V2") else ""
     ptitle = "Model {} - ".format(exper.args.learner+exper.args.version)
     plt.title(ptitle + "halting step statistics versus loss components during training " +
               r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param) + suffix, **config.title_font)

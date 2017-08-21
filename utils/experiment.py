@@ -31,7 +31,7 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [] if run_args.learner != "act_sb" else {},
+                          "loss_funcs": [] if run_args.learner[0:6] != "act_sb" else {},
                           "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
         self.epoch = 0
         self.output_dir = None
@@ -48,7 +48,7 @@ class Experiment(object):
         self.pt_dist = TimeStepsDist(T=self.config.T, q_prob=self.config.pT_shape_param)
         self.meta_logger = None
         self.fixed_weights = None
-        self.type_prior = None
+        self.type_prior = "geometric"
         self.annealing_schedule = np.ones(self.args.max_epoch)
 
     def init_epoch_stats(self):
@@ -72,7 +72,7 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [] if self.args.learner != "act_sb" else {},
+                          "loss_funcs": [] if self.args.learner[0:6] != "act_sb" else {},
                           "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
 
     def add_halting_steps(self, halting_steps, is_train=True):
@@ -148,9 +148,12 @@ class Experiment(object):
         step_size = (r_max - r_min) / float(until_epoch)
         t = np.arange(r_min, r_max, step_size)
         sigmoid = 1. / (1 + np.exp(-t))
+        # use this if you want annealing schedule until 0.5 value of the sigmoid function
         until_epoch = sigmoid.shape[0] // 2
         self.annealing_schedule[0:until_epoch] = sigmoid[0:until_epoch]
+        # set the rest of the epochs to 0.5 values
         self.annealing_schedule[until_epoch:] = sigmoid[until_epoch]
+        # self.annealing_schedule = np.zeros(self.args.max_epoch)
         self.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(self.annealing_schedule)))
         self.meta_logger.info(">>> NOTE: Generated KL cost annealing schedule for first {} epochs <<<".format(until_epoch))
 
@@ -175,15 +178,6 @@ class Experiment(object):
     def start(self, meta_logger=None):
         # Model specific things to initialize
 
-        # set prior distribution type
-        if self.args.learner == "act_sb":
-            if self.args.version == "V3":
-                self.type_prior = "neg-binomial"
-            else:
-                self.type_prior = "geometric"
-        else:
-            self.type_prior = "geometric"
-
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
                 raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(self.args.version))
@@ -194,7 +188,7 @@ class Experiment(object):
                 self.max_time_steps = self.config.T
         else:
             self.avg_num_opt_steps = self.args.optimizer_steps
-            if self.args.learner == "act_sb":
+            if self.args.learner[0:6] == "act_sb":
                 self.max_time_steps = self.config.T
             if self.args.learner == 'meta' and self.args.version[0:2] == 'V2':
                 # Note, we choose here an absolute limit of the horizon, set in the config-file
@@ -216,7 +210,7 @@ class Experiment(object):
         else:
             self.meta_logger = meta_logger
         # if applicable, generate KL cost annealing schedule
-        if self.args.learner == "act_sb" and self.args.version == "V2":
+        if self.args.learner[0:6] == "act_sb" and self.args.version == "V2":
             self.generate_cost_annealing(int(self.args.max_epoch * self.config.kl_anneal_perc))
         self.meta_logger.info("Initializing experiment - may take a while to load validation set")
         self.fixed_weights = generate_fixed_weights(self)
@@ -231,7 +225,7 @@ class Experiment(object):
 
         # construct the name of the model. Will be used to save model to disk
         if self.args.model == "default":
-            if self.args.learner != "act_sb":
+            if self.args.learner[0:6] != "act_sb":
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    str(int(self.avg_num_opt_steps)) + "ops"
             else:
@@ -270,7 +264,7 @@ class Experiment(object):
 
     def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
-        if self.args.learner == 'act_sb':
+        if self.args.learner[0:6] == 'act_sb':
             self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
                                                                                     functions.num_of_funcs))
             if eval_time_steps is None:
@@ -280,7 +274,10 @@ class Experiment(object):
             functions.reset()
             test_batch = ACTBatchHandler(self, is_train=False, optimizees=functions)
             test_batch(self, epoch_obj, meta_optimizer)
-            test_batch.compute_batch_loss()
+            if self.args.learner == "act_sb_base":
+                test_batch.compute_batch_loss_act()
+            else:
+                test_batch.compute_batch_loss()
             meta_optimizer.reset_final_loss()
             meta_optimizer.zero_grad()
             eval_loss = test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
@@ -329,7 +326,7 @@ class Experiment(object):
         if save_run is not None:
             self.save(file_name="exp_stats_run_" + save_run + ".dll")
 
-        if save_model and self.args.learner == 'act_sb':
+        if save_model and self.args.learner[0:6] == 'act_sb':
             model_path = os.path.join(self.output_dir, meta_optimizer.name + "_eval_run" + str(self.epoch) +
                                       self.config.save_ext)
             meta_optimizer.save_params(model_path)
@@ -373,7 +370,7 @@ class Experiment(object):
         if self.run_validation:
             plot_image_map_losses(self, data_set="eval", do_save=True)
 
-        if self.args.learner == "act_sb":
+        if self.args.learner[0:6] == "act_sb":
             plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
             plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
             plot_actsb_qts(self, data_set="train", save=True)

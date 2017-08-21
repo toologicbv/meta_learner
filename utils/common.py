@@ -65,7 +65,7 @@ def print_flags(exper):
 
     if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V3'):
         exper.meta_logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
-    if exper.args.learner == 'act_sb':
+    if exper.args.learner[0:6] == 'act_sb':
         exper.meta_logger.info("shape parameter of prior p(t|nu={:.3f})".format(exper.config.ptT_shape_param))
         if exper.args.version == "V2":
             exper.meta_logger.info(" ! NOTE: using KL cost annealing")
@@ -145,8 +145,6 @@ def get_model(exper, num_params_optimizee, retrain=False):
             or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V5' and exper.args.learner == 'meta') \
             or (exper.args.version[0:2] == 'V6' and exper.args.learner == 'meta') \
-            or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'act_sb') \
-            or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'act_sb') \
             or exper.args.version == '':
         if hasattr(exper.args, 'output_bias'):
             if exper.args.output_bias:
@@ -171,7 +169,7 @@ def get_model(exper, num_params_optimizee, retrain=False):
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
                                    output_bias=output_bias)
-    elif exper.args.learner == "act_sb":
+    elif exper.args.learner[0:6] == "act_sb":
         str_classname = "StickBreakingACTBaseModel"
         act_class = getattr(models.sb_act_optimizer, str_classname)
         meta_optimizer = act_class(num_layers=exper.args.num_layers,
