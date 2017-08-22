@@ -54,14 +54,13 @@ class ACTBatchHandler(BatchHandler):
         self.bool_mask = Variable(torch.ones(self.batch_size, 1).type(torch.ByteTensor))
         self.float_mask = Variable(torch.ones(self.batch_size, 1))
         self.max_T = Variable(torch.FloatTensor([self.horizon-1]).expand_as(self.float_mask))
-        if self.is_train and exper.args.learner != "act_sb_base":
+        if self.is_train:
             self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0., 1.)
             self.one_minus_eps = Variable(1. - self.one_minus_eps)
         else:
             # during evaluation we fix the threshold
             self.one_minus_eps = Variable(torch.zeros(self.max_T.size()))
             self.one_minus_eps[:] = exper.config.qt_threshold
-
         # IMPORTANT, this tensor needs to have the same size as exper.epoch_stats["opt_step_hist"][exper.epoch] which
         # is set in train_optimizer.py in the beginning of the epoch
         self.halting_steps = Variable(torch.zeros(self.max_T.size()))
@@ -237,18 +236,18 @@ class ACTBatchHandler(BatchHandler):
 
         return probs
 
-    def backward(self, epoch_obj, meta_optimizer, optimizer):
+    def backward(self, epoch_obj, meta_optimizer, optimizer, loss_sum=None):
         if len(self.batch_step_losses) == 0:
             raise RuntimeError("No batch losses accumulated. Can't execute backward() on object")
-        if self.learner == "act_sb_base":
-            # the Graves model...in construction...at this moment kind of testing how the non-probabilistic model behaves
-            self.compute_batch_loss_act(kl_weight=epoch_obj.kl_weight)
-        else:
+        if loss_sum is None:
             self.compute_batch_loss(kl_weight=epoch_obj.kl_weight)
+        else:
+            self.loss_sum = loss_sum
         epoch_obj.add_kl_term(self.kl_term)
         self.loss_sum.backward()
         optimizer.step()
         # print("Sum grads {:.4f}".format(meta_optimizer.sum_grads))
+        epoch_obj.model_grads.append(meta_optimizer.sum_grads)
         meta_optimizer.reset_final_loss()
         meta_optimizer.zero_grad()
         return self.loss_sum.data.cpu().squeeze().numpy()[0]
@@ -276,8 +275,8 @@ class ACTBatchHandler(BatchHandler):
         idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
         if g_priors.cuda:
             idx_last_step = idx_last_step.cuda()
-        q_T_values = torch.gather(self.q_t, 1, idx_last_step)
-        # q_T_values = self.compute_last_qt(idx_last_step)
+        # q_T_values = torch.gather(self.q_t, 1, idx_last_step)
+        q_T_values = self.compute_last_qt(idx_last_step)
         # compute KL divergence term, take the mean over the mini-batch dimension 0
         kl_term = kl_weight * torch.mean(self.approximate_kl_div(q_T_values, g_priors), 0)
         # get the loss value for each optimizee for the halting step
@@ -285,16 +284,8 @@ class ACTBatchHandler(BatchHandler):
         losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
         # compute final loss, in which we multiply each loss by the qt time step values
         self.loss_sum = (losses + kl_term).squeeze()
+        # self.loss_sum = kl_term.squeeze()
         self.kl_term = kl_term.data.cpu().squeeze().numpy()[0]
-
-    def compute_batch_loss_act(self, kl_weight=1.):
-
-        ponder_cost = kl_weight * self.compute_ponder_cost()
-        loss_matrix = torch.cat(self.batch_step_losses, 1)
-        qts = self.q_t[:, 0:loss_matrix.size(1)]
-        losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0)
-        self.loss_sum = (losses + ponder_cost).squeeze()
-        self.kl_term = ponder_cost.data.cpu().squeeze().numpy()[0]
 
     def compute_last_qt(self, halting_idx):
         qt = Variable(torch.zeros(self.rho_t.size(0)))
@@ -378,16 +369,6 @@ class ACTBatchHandler(BatchHandler):
             g_priors = g_priors.cuda()
         return g_priors
 
-    def compute_ponder_cost(self):
-        R = np.array([np.arange(1, i + 1) for i in self.halting_steps.data.cpu().numpy()])
-        R = np.vstack([np.lib.pad(a, (0, (self.horizon - len(a))), 'constant', constant_values=0) for a in R])
-        R = Variable(torch.from_numpy(R).float())
-        if self.q_t.is_cuda:
-            R = R.cuda()
-
-        C = torch.mul(R, self.q_t)
-        return torch.mean(torch.sum(C, 1), 0)
-
     def process_step0(self, exper, loss):
         baseline_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0]
         exper.add_step_loss(baseline_loss, self.step, is_train=self.is_train)
@@ -404,6 +385,33 @@ class ACTBatchHandler(BatchHandler):
             raise RuntimeError("Running away from here...")
 
         return kl_div
+
+
+class ACTGravesBatchHandler(ACTBatchHandler):
+
+    def __init__(self, exper, is_train, optimizees=None):
+        super(ACTGravesBatchHandler, self).__init__(exper, is_train, optimizees)
+
+        self.one_minus_eps[:] = exper.config.qt_threshold
+
+    def compute_batch_loss(self, kl_weight=1.):
+        ponder_cost = kl_weight * self.compute_ponder_cost()
+        loss_matrix = torch.cat(self.batch_step_losses, 1)
+        qts = self.q_t[:, 0:loss_matrix.size(1)]
+        losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0)
+        self.loss_sum = (losses + ponder_cost).squeeze()
+        self.kl_term = ponder_cost.data.cpu().squeeze().numpy()[0]
+
+    def compute_ponder_cost(self):
+        R = np.array([np.arange(1, i + 1) for i in self.halting_steps.data.cpu().numpy()])
+        R = np.vstack([np.lib.pad(a, (0, (self.horizon - len(a))), 'constant', constant_values=0) for a in R])
+        R = Variable(torch.from_numpy(R).float())
+        if self.q_t.is_cuda:
+            R = R.cuda()
+
+        C = torch.mul(R, self.q_t)
+        return torch.mean(torch.sum(C, 1), 0)
+
 
 
 

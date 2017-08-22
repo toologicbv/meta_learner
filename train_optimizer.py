@@ -3,6 +3,7 @@ import sys
 
 import numpy as np
 import torch
+from torch.autograd import Variable
 
 if "/home/jogi/.local/lib/python2.7/site-packages" in sys.path:
     sys.path.remove("/home/jogi/.local/lib/python2.7/site-packages")
@@ -14,7 +15,7 @@ from utils.common import get_model, print_flags
 from utils.common import get_batch_functions
 from utils.common import OPTIMIZER_DICT
 from train_batch_meta_act import execute_batch
-from utils.batch_handler import ACTBatchHandler
+import utils.batch_handler
 
 
 
@@ -100,6 +101,7 @@ parser.add_argument('--problem', type=str, default="regression_T", help="kind of
 parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
+parser.add_argument('--samples_per_batch', type=int, default=1, metavar='N', help='number of samples per batch (default: 1)')
 
 
 parser.add_argument("--output_bias")
@@ -132,10 +134,10 @@ def main():
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
         optimizer = None
-
+    batch_handler_class = getattr(utils.batch_handler, exper.batch_handler_class)
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
-        ACTBatchHandler.id = 0
+        batch_handler_class.id = 0
         exper.init_epoch_stats()
         epoch_obj = Epoch()
         epoch_obj.start(exper)
@@ -143,11 +145,20 @@ def main():
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
                 execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
+
             elif exper.args.learner[0:6] in ['act_sb']:
-                batch = ACTBatchHandler(exper, is_train=True)
-                ACTBatchHandler.id += 1
-                batch(exper, epoch_obj, meta_optimizer)
-                act_loss = batch.backward(epoch_obj, meta_optimizer, optimizer)
+                loss_sum = Variable(torch.FloatTensor([0.]))
+                if exper.args.cuda:
+                    loss_sum = loss_sum.cuda()
+                for _ in np.arange(exper.args.samples_per_batch):
+                    batch = batch_handler_class(exper, is_train=True)
+                    batch_handler_class.id += 1
+                    batch(exper, epoch_obj, meta_optimizer)
+                    batch.compute_batch_loss(epoch_obj.kl_weight)
+                    loss_sum += batch.loss_sum
+                loss_sum = loss_sum * 1./float(samples_per_batch)
+                act_loss = batch.backward(epoch_obj, meta_optimizer, optimizer, loss_sum=loss_sum)
+
                 epoch_obj.add_act_loss(act_loss)
             else:
                 raise ValueError("args.learner {} not supported by this implementation".format(exper.args.learner))

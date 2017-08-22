@@ -1240,3 +1240,37 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
         plt.show()
 
     plt.close()
+
+
+def plot_gradient_stats(exper, height=8, width=12, do_show=False, do_save=False, fig_name=None, offset=1):
+
+    fig, ax = plt.subplots()
+    fig.set_figheight(height)
+    fig.set_figwidth(width)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    model_name = exper.args.learner + exper.args.version
+    grad_means = exper.epoch_stats["grad_stats"][:, 0]
+    grad_std = exper.epoch_stats["grad_stats"][:, 1]
+    grad_max = grad_means + grad_std
+    grad_min = grad_means - grad_std
+    x = np.arange(1, grad_means.shape[0] + 1)
+    # ax.errorbar(x, grad_means, yerr=grad_std, fmt='-o')
+    ax.fill_between(x[offset:], grad_min[offset:], grad_max[offset:], color='silver', alpha='0.2')
+    ax.plot(x[offset:], grad_means[offset:], 'o-', color="black")
+    ax.set_title("Model {} - gradient statistics during training (batch-size={})".format(model_name, exper.args.batch_size),
+                 **config.title_font)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("mean value gradients")
+    if do_save:
+        if fig_name is None:
+            fig_name = "gradient_statistics"
+        fig_name = os.path.join(exper.output_dir, fig_name + config.dflt_plot_ext)
+
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    if do_show:
+        plt.show()
+
+    plt.close()

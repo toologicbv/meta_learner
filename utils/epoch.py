@@ -45,6 +45,7 @@ class Epoch(object):
         self.test_max_time_steps_taken = 0
         self.kl_weight = 0
         self.backward_ones = None
+        self.model_grads = []
 
     def add_step_loss(self, avg_loss, last_time_step=False):
         if not isinstance(avg_loss, (np.float, np.float32, np.float64)):
@@ -88,11 +89,11 @@ class Epoch(object):
         # prepare epoch variables
 
     def end(self, exper):
-        self.loss_last_time_step *= 1. / float(self.num_of_batches)
-        self.param_loss *= 1. / float(self.num_of_batches)
-        self.final_act_loss *= 1. / float(self.num_of_batches)
-        self.total_loss_steps *= 1. / float(self.num_of_batches)
-        self.loss_optimizer *= 1. / float(self.num_of_batches)
+        self.loss_last_time_step *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
+        self.param_loss *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
+        self.final_act_loss *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
+        self.total_loss_steps *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
+        self.loss_optimizer *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
         self.kl_term *= 1. / float(self.num_of_batches)
         exper.set_kl_term(self.kl_term, self.kl_weight)
 
@@ -106,6 +107,13 @@ class Epoch(object):
                                                                                             self.total_loss_steps,
                                                                                             self.loss_last_time_step,
                                                                                             self.diff_min))
+        model_grads = np.array(self.model_grads)
+        model_grads_mean = np.mean(model_grads)
+        model_grads_stddev = np.std(model_grads)
+        exper.add_grad_stats(model_grads_mean, model_grads_stddev)
+        exper.meta_logger.info("Epoch: {}, gradient statistics - mean={:.3f} / stddev={:.3f}".format(self.epoch_id,
+                                                                                                     model_grads_mean,
+                                                                                                     model_grads_stddev))
         if exper.args.learner == 'act':
             exper.meta_logger.info("Epoch: {}, ACT - average final act_loss {:.4f}".format(self.epoch_id,
                                                                                            self.final_act_loss))

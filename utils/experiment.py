@@ -11,10 +11,11 @@ import time
 
 from config import config, MetaConfig
 from probs import TimeStepsDist
-from common import load_val_data, create_logger, generate_fixed_weights, create_exper_label
-from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps
+from common import load_val_data, create_logger, generate_fixed_weights
+from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps, plot_gradient_stats
 from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats_with_loss, plot_loss_versus_halting_step
-from batch_handler import ACTBatchHandler
+from plots import create_exper_label
+import utils.batch_handler
 from val_optimizer import validate_optimizer
 
 
@@ -26,6 +27,7 @@ class Experiment(object):
                             "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}, "halting_stats": {},
                             "kl_term": np.zeros(run_args.max_epoch),
                             "kl_weight": np.zeros(run_args.max_epoch),
+                            "grad_stats": np.zeros((run_args.max_epoch, 2)),  # store mean and stddev of gradients model
                             "duration": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(), "opt_loss": [],
@@ -50,6 +52,7 @@ class Experiment(object):
         self.fixed_weights = None
         self.type_prior = "geometric"
         self.annealing_schedule = np.ones(self.args.max_epoch)
+        self.batch_handler_class = None
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)
@@ -86,6 +89,10 @@ class Experiment(object):
         else:
             self.val_stats["halting_step"][self.epoch][vals.astype(int)] += count.astype(int)
             self.val_stats["halt_step_funcs"][self.epoch] = halt_steps_funcs
+
+    def add_grad_stats(self, mean, stddev):
+        self.epoch_stats["grad_stats"][self.epoch-1, 0] = mean
+        self.epoch_stats["grad_stats"][self.epoch - 1, 1] = stddev
 
     def add_opt_steps(self, step, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
@@ -187,6 +194,13 @@ class Experiment(object):
                 self.avg_num_opt_steps = self.pt_dist.mean
                 self.max_time_steps = self.config.T
         else:
+            if self.args.learner == "act_sb":
+                self.batch_handler_class = "ACTBatchHandler"
+            elif self.args.learner == "act_sb_base":
+                self.batch_handler_class = "ACTGravesBatchHandler"
+            else:
+                self.batch_handler_class = None
+
             self.avg_num_opt_steps = self.args.optimizer_steps
             if self.args.learner[0:6] == "act_sb":
                 self.max_time_steps = self.config.T
@@ -267,17 +281,15 @@ class Experiment(object):
         if self.args.learner[0:6] == 'act_sb':
             self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
                                                                                     functions.num_of_funcs))
+            batch_handler_class = getattr(utils.batch_handler, self.batch_handler_class)
             if eval_time_steps is None:
                 self.init_val_stats()
             else:
                 self.init_val_stats(eval_time_steps)
             functions.reset()
-            test_batch = ACTBatchHandler(self, is_train=False, optimizees=functions)
+            test_batch = batch_handler_class(self, is_train=False, optimizees=functions)
             test_batch(self, epoch_obj, meta_optimizer)
-            if self.args.learner == "act_sb_base":
-                test_batch.compute_batch_loss_act()
-            else:
-                test_batch.compute_batch_loss()
+            test_batch.compute_batch_loss()
             meta_optimizer.reset_final_loss()
             meta_optimizer.zero_grad()
             eval_loss = test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
@@ -367,6 +379,7 @@ class Experiment(object):
         loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
         plot_image_map_losses(self, data_set="train", do_save=True)
         plot_dist_optimization_steps(self, data_set="train", save=True)
+        plot_gradient_stats(self, do_show=False, do_save=True)
         if self.run_validation:
             plot_image_map_losses(self, data_set="eval", do_save=True)
 

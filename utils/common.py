@@ -12,8 +12,8 @@ import numpy as np
 from torch.autograd import Variable
 import models.rnn_optimizer
 import models.sb_act_optimizer
-from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
-from plots import plot_image_map_losses, plot_image_map_data, plot_actsb_qts
+# from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
+# from plots import plot_image_map_losses, plot_image_map_data, plot_actsb_qts
 from probs import ConditionalTimeStepDist, TimeStepsDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
 
@@ -103,23 +103,6 @@ def preprocess_gradients(x):
     x2 = x.sign() * indicator + math.exp(p) * x * (1 - indicator)
 
     return torch.cat((x1, x2), 1)
-
-
-def prepare_retrain(exper_path, new_args):
-
-    exper = get_experiment(exper_path)
-    exper.past_epochs = exper.args.max_epoch
-    exper.args.max_epoch += new_args.max_epoch
-    exper.args.lr = new_args.lr
-    exper.args.eval_freq = new_args.eval_freq
-    exper.args.retrain = new_args.retrain
-    exper.args.log_dir = new_args.log_dir
-    exper.avg_num_opt_steps = new_args.avg_num_opt_steps
-
-    # get our logger (one to std-out and one to file)
-    meta_logger = create_logger(exper, file_handler=True)
-
-    return exper, meta_logger
 
 
 def create_def_argparser(**kwargs):
