@@ -91,9 +91,9 @@ class Epoch(object):
     def end(self, exper):
         self.loss_last_time_step *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
         self.param_loss *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
-        self.final_act_loss *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
         self.total_loss_steps *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
-        self.loss_optimizer *= 1. / float(self.num_of_batches) * 1./float(exper.args.samples_per_batch)
+        self.loss_optimizer *= 1. / float(self.num_of_batches)
+        self.final_act_loss *= 1. / float(self.num_of_batches)
         self.kl_term *= 1. / float(self.num_of_batches)
         exper.set_kl_term(self.kl_term, self.kl_weight)
 

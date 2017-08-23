@@ -92,7 +92,6 @@ class StickBreakingACTBaseModel(nn.Module):
                 if self.use_cuda:
                     self.hx[i], self.cx[i] = self.hx[i].cuda(), self.cx[i].cuda()
 
-    @property
     def sum_grads(self, verbose=False):
         sum_grads = 0
         for name, param in self.named_parameters():

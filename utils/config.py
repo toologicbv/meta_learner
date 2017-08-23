@@ -55,15 +55,15 @@ class MetaConfig(object):
         # probability of continue computation
 
         self.pT_shape_param = 0.945
-        self.ptT_shape_param = 0.9
-        self.T = 30 # avg = 80 with 0.98
+        self.ptT_shape_param = 0.1
+        self.T = 100 # avg = 80 with 0.98
         self.max_val_opt_steps = 50
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
         """
-            Stop threshold
+            Stopping threshold
         """
         # used in ACT and ACT-SB models
         self.qt_threshold = 0.99

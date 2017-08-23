@@ -196,6 +196,8 @@ class Experiment(object):
         else:
             if self.args.learner == "act_sb":
                 self.batch_handler_class = "ACTBatchHandler"
+            elif self.args.learner == "act_sb_eff":
+                self.batch_handler_class = "ACTEfficientBatchHandler"
             elif self.args.learner == "act_sb_base":
                 self.batch_handler_class = "ACTGravesBatchHandler"
             else:
@@ -226,11 +228,12 @@ class Experiment(object):
         # if applicable, generate KL cost annealing schedule
         if self.args.learner[0:6] == "act_sb" and self.args.version == "V2":
             self.generate_cost_annealing(int(self.args.max_epoch * self.config.kl_anneal_perc))
-        self.meta_logger.info("Initializing experiment - may take a while to load validation set")
+
         self.fixed_weights = generate_fixed_weights(self)
 
         # in case we need to evaluate the model, get the test data
         if self.args.eval_freq != 0:
+            self.meta_logger.info("Initializing experiment - may take a while to load validation set")
             val_funcs = load_val_data(num_of_funcs=self.config.num_val_funcs, n_samples=self.args.x_samples,
                                       stddev=self.config.stddev, dim=self.args.x_dim, logger=self.meta_logger,
                                       exper=self)
@@ -245,6 +248,7 @@ class Experiment(object):
             else:
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    "nu{:.3}".format(self.config.ptT_shape_param)
+                self.meta_logger.info("NOTE: >>> Using batch handler class {} <<<".format(self.batch_handler_class))
         self.model_name = self.args.model
         if not self.args.learner == 'manual' and self.args.model is not None:
             self.model_path = os.path.join(self.output_dir, self.args.model + config.save_ext)
