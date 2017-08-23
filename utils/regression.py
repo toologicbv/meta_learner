@@ -576,6 +576,11 @@ class RegressionFunction(object):
 
         self.param_hist = {}
         self._add_param_values(self.initial_params)
+        self.nll_init = neg_log_likelihood_loss(self.y, self.y_t(self.initial_params), self.stddev, N=self.n_samples,
+                                                avg_batch=False, size_average=False)
+        self.nll_min = neg_log_likelihood_loss(self.y_no_noise, self.y_t(self.true_params), self.stddev, N=self.n_samples,
+                                               avg_batch=False, size_average=False)
+        self.distance_to_min = (self.nll_init - self.nll_min).data.cpu().squeeze().numpy()
 
     def set_parameters(self, parameters):
         self._add_param_values(parameters)

@@ -96,7 +96,7 @@ class StickBreakingACTBaseModel(nn.Module):
         sum_grads = 0
         for name, param in self.named_parameters():
             if param.grad is not None:
-                sum_grads += torch.sum(param.grad.data)
+                sum_grads += torch.sum(torch.abs(param.grad.data))
             else:
                 if verbose:
                     print("WARNING - No gradients for parameter >>> {} <<<".format(name))
