@@ -106,6 +106,7 @@ parser.add_argument('--samples_per_batch', type=int, default=1, metavar='N', hel
 
 parser.add_argument("--output_bias")
 args = parser.parse_args()
+# Important - we don't use an output bias on the LSTM linear output layer. Experiencing "drifting" behavior if we do
 args.output_bias = False
 args.cuda = args.use_cuda and torch.cuda.is_available()
 
@@ -134,7 +135,8 @@ def main():
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
         optimizer = None
-    batch_handler_class = getattr(utils.batch_handler, exper.batch_handler_class)
+    batch_handler_class = None if exper.batch_handler_class is None else \
+        getattr(utils.batch_handler, exper.batch_handler_class)
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
         batch_handler_class.id = 0
@@ -144,9 +146,10 @@ def main():
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
+                exper.args.optimizer_steps = int(5 * exper.epoch)
                 execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
 
-            elif exper.args.learner[0:6] in ['act_sb']:
+            elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":
                 loss_sum = Variable(torch.DoubleTensor([0.]))
                 kl_sum = 0.
                 if exper.args.cuda:
@@ -155,7 +158,7 @@ def main():
                     batch = batch_handler_class(exper, is_train=True)
                     batch_handler_class.id += 1
                     batch(exper, epoch_obj, meta_optimizer)
-                    batch.compute_batch_loss(epoch_obj.kl_weight)
+                    batch.compute_batch_loss(epoch_obj.weight_regularizer)
                     loss_sum += batch.loss_sum
                     kl_sum += batch.kl_term
                 loss_sum = loss_sum * 1./float(exper.args.samples_per_batch)

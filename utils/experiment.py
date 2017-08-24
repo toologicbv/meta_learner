@@ -26,14 +26,14 @@ class Experiment(object):
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                             "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}, "halting_stats": {},
                             "kl_term": np.zeros(run_args.max_epoch),
-                            "kl_weight": np.zeros(run_args.max_epoch),
+                            "weight_regularizer": np.zeros(run_args.max_epoch),
                             "grad_stats": np.zeros((run_args.max_epoch, 2)),  # store mean and stddev of gradients model
                             "duration": []}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [] if run_args.learner[0:6] != "act_sb" else {},
+                          "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "act_graves") else {},
                           "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
         self.epoch = 0
         self.output_dir = None
@@ -51,7 +51,11 @@ class Experiment(object):
         self.meta_logger = None
         self.fixed_weights = None
         self.type_prior = "geometric"
-        self.annealing_schedule = np.ones(self.args.max_epoch)
+        if run_args.learner == "act_graves":
+            self.annealing_schedule = np.empty(self.args.max_epoch)
+            self.annealing_schedule.fill(self.config.tau)
+        else:
+            self.annealing_schedule = np.ones(self.args.max_epoch)
         self.batch_handler_class = None
 
     def init_epoch_stats(self):
@@ -75,7 +79,7 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [] if self.args.learner[0:6] != "act_sb" else {},
+                          "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "act_graves") else {},
                           "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
 
     def add_halting_steps(self, halting_steps, is_train=True):
@@ -118,12 +122,12 @@ class Experiment(object):
         else:
             self.val_stats["duration"].append(epoch_time)
 
-    def set_kl_term(self, kl_term, kl_weight):
-        if not isinstance(kl_term, (np.float, np.float32, np.float64)):
-            raise ValueError("kl_term must be a numpy.float but is type {}".format(type(kl_term)))
+    def set_regularizer_term(self, reg_term, weight_regularizer):
+        if not isinstance(reg_term, (np.float, np.float32, np.float64)):
+            raise ValueError("kl_term must be a numpy.float but is type {}".format(type(reg_term)))
         # index minus 1...because epoch counter starts as 1 and we're dealing with np.ndarray
-        self.epoch_stats["kl_term"][self.epoch-1] = kl_term
-        self.epoch_stats["kl_weight"][self.epoch-1] = kl_weight
+        self.epoch_stats["kl_term"][self.epoch-1] = reg_term
+        self.epoch_stats["weight_regularizer"][self.epoch-1] = weight_regularizer
 
     def add_step_qts(self, qt_values, step=None, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
@@ -198,13 +202,13 @@ class Experiment(object):
                 self.batch_handler_class = "ACTBatchHandler"
             elif self.args.learner == "act_sb_eff":
                 self.batch_handler_class = "ACTEfficientBatchHandler"
-            elif self.args.learner == "act_sb_base":
+            elif self.args.learner == "act_graves":
                 self.batch_handler_class = "ACTGravesBatchHandler"
             else:
-                self.batch_handler_class = None
+                self.batch_handler_class = "BatchHandler"
 
             self.avg_num_opt_steps = self.args.optimizer_steps
-            if self.args.learner[0:6] == "act_sb":
+            if self.args.learner[0:6] == "act_sb" or self.args.learner == "act_graves":
                 self.max_time_steps = self.config.T
             if self.args.learner == 'meta' and self.args.version[0:2] == 'V2':
                 # Note, we choose here an absolute limit of the horizon, set in the config-file
@@ -242,9 +246,12 @@ class Experiment(object):
 
         # construct the name of the model. Will be used to save model to disk
         if self.args.model == "default":
-            if self.args.learner[0:6] != "act_sb":
+            if self.args.learner == "meta" or self.args.learner == "act":
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    str(int(self.avg_num_opt_steps)) + "ops"
+            elif self.args.learner == "act_graves":
+                self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
+                                  "tau{:.3}".format(self.config.tau)
             else:
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    "nu{:.3}".format(self.config.ptT_shape_param)
@@ -282,7 +289,7 @@ class Experiment(object):
 
     def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
-        if self.args.learner[0:6] == 'act_sb':
+        if self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
             self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
                                                                                     functions.num_of_funcs))
             batch_handler_class = getattr(utils.batch_handler, self.batch_handler_class)
@@ -301,7 +308,7 @@ class Experiment(object):
             if self.config.max_val_opt_steps > 200:
                 start = self.config.max_val_opt_steps - 100
                 end = self.config.max_val_opt_steps + 1
-                self.meta_logger.info("Epoch: {} - showing only last {} time steps".format(self.epoch, 100))
+                self.meta_logger.info("Epoch: {} - evaluation - showing only last {} time steps".format(self.epoch, 100))
             else:
                 start = 0
                 end = self.config.max_val_opt_steps + 1
@@ -342,7 +349,7 @@ class Experiment(object):
         if save_run is not None:
             self.save(file_name="exp_stats_run_" + save_run + ".dll")
 
-        if save_model and self.args.learner[0:6] == 'act_sb':
+        if save_model and self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
             model_path = os.path.join(self.output_dir, meta_optimizer.name + "_eval_run" + str(self.epoch) +
                                       self.config.save_ext)
             meta_optimizer.save_params(model_path)
@@ -387,7 +394,7 @@ class Experiment(object):
         if self.run_validation:
             plot_image_map_losses(self, data_set="eval", do_save=True)
 
-        if self.args.learner[0:6] == "act_sb":
+        if self.args.learner[0:6] == "act_sb" or self.args.learner == "act_graves":
             plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
             plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
             plot_actsb_qts(self, data_set="train", save=True)

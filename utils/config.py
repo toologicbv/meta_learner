@@ -55,7 +55,7 @@ class MetaConfig(object):
         # probability of continue computation
 
         self.pT_shape_param = 0.945
-        self.ptT_shape_param = 0.9
+        self.ptT_shape_param = 0.3
         self.T = 100 # avg = 80 with 0.98
         self.max_val_opt_steps = 50
 
@@ -72,5 +72,10 @@ class MetaConfig(object):
             Percentage of training epochs that use KL cost annealing
         """
         self.kl_anneal_perc = 0.8
+
+        """
+            hyperparameter for the Graves AcT model, scaling the ponder cost
+        """
+        self.tau = 6e-3
 
 config = MetaConfig()

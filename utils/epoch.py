@@ -43,7 +43,7 @@ class Epoch(object):
         self.prior_probs = None
         self.train_max_time_steps_taken = 0
         self.test_max_time_steps_taken = 0
-        self.kl_weight = 0
+        self.weight_regularizer = 0
         self.backward_ones = None
         self.model_grads = []
 
@@ -85,7 +85,7 @@ class Epoch(object):
 
         self.avg_opt_steps = []
         if exper.annealing_schedule is not None:
-            self.kl_weight = float(exper.annealing_schedule[self.epoch_id-1])
+            self.weight_regularizer = float(exper.annealing_schedule[self.epoch_id-1])
         # prepare epoch variables
 
     def end(self, exper):
@@ -95,7 +95,7 @@ class Epoch(object):
         self.loss_optimizer *= 1. / float(self.num_of_batches)
         self.final_act_loss *= 1. / float(self.num_of_batches)
         self.kl_term *= 1. / float(self.num_of_batches)
-        exper.set_kl_term(self.kl_term, self.kl_weight)
+        exper.set_regularizer_term(self.kl_term, self.weight_regularizer)
 
         self.duration = time.time() - self.start_time
 
@@ -124,7 +124,7 @@ class Epoch(object):
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id,
                                                                                                avg_opt_steps))
-        if exper.args.learner[0:6] == 'act_sb':
+        if exper.args.learner[0:6] == 'act_sb' or exper.args.learner == "act_graves":
             np_array = exper.epoch_stats["halting_step"][self.epoch_id]
             step_indices = np.nonzero(np_array)
             min_steps = np.min(step_indices)
@@ -148,7 +148,8 @@ class Epoch(object):
                                                                                  stddev, median,
                                                                                  int(total_steps)))
             exper.meta_logger.info("Epoch: {}, ACT-SB(klw={:.5f}) - optimizer-loss/kl-term {:.4f}"
-                                   "/{:.4f}".format(self.epoch_id, self.kl_weight, self.loss_optimizer, self.kl_term))
+                                   "/{:.4f}".format(self.epoch_id, self.weight_regularizer, self.loss_optimizer,
+                                                    self.kl_term))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
         exper.epoch_stats["param_error"].append(self.param_loss)

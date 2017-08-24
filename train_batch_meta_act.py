@@ -167,7 +167,7 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
                 if k == optimizer_steps - 1:
                     epoch_obj.model_grads.append(sum_grads * 1./float(num_of_backwards))
                 else:
-                    sum_grads += meta_optimizer.sum_grads
+                    sum_grads += meta_optimizer.sum_grads()
                 meta_optimizer.zero_grad()
                 # Slightly sloppy. Actually for the ACTV1 model we only register the ACT loss as the
                 # so called optimizer-loss. But actually ACTV1 is using both losses
@@ -192,7 +192,7 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
         optimizer.step()
         epoch_obj.final_act_loss += act_loss.data.cpu().squeeze().numpy()[0]
         # set grads of meta_optimizer to zero after update parameters
-        epoch_obj.model_grads.append(meta_optimizer.sum_grads)
+        epoch_obj.model_grads.append(meta_optimizer.sum_grads())
         meta_optimizer.zero_grad()
         epoch_obj.loss_optimizer += act_loss.data.cpu().squeeze().numpy()[0]
 

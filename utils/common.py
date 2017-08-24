@@ -69,10 +69,12 @@ def print_flags(exper):
         exper.meta_logger.info("shape parameter of prior p(t|nu={:.3f})".format(exper.config.ptT_shape_param))
         if exper.args.version == "V2":
             exper.meta_logger.info(" ! NOTE: using KL cost annealing")
-    if exper.args.learner == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
+    if exper.args.learner == "act_graves":
+        exper.meta_logger.info("Hyperparameter for ACT Graves model: tau={:.3f})".format(exper.config.tau))
+    if exper.args.learner[0:3] == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
         if not exper.args.fixed_horizon:
-            exper.meta_logger.info("horizon limit for p(T|nu={:.3f}) due to memory "
-                                   "shortage {}".format(exper.config.pT_shape_param, exper.config.T))
+            exper.meta_logger.info(">>> Maximum horizon constraint to {} due to memory "
+                                   "shortage".format(exper.config.T))
 
 
 def softmax(x, dim=1):
@@ -123,23 +125,6 @@ def create_def_argparser(**kwargs):
 
 def get_model(exper, num_params_optimizee, retrain=False):
 
-    if exper.args.version == 'V1' or exper.args.version == 'V2' \
-        or (exper.args.version[0:2] == 'V3' and exper.args.learner == 'meta') \
-            or (exper.args.version[0:2] == 'V4' and exper.args.learner == 'meta') \
-            or (exper.args.version[0:2] == 'V5' and exper.args.learner == 'meta') \
-            or (exper.args.version[0:2] == 'V6' and exper.args.learner == 'meta') \
-            or exper.args.version == '':
-        if hasattr(exper.args, 'output_bias'):
-            if exper.args.output_bias:
-                output_bias = True
-            else:
-                output_bias = False
-        else:
-            output_bias = True
-
-    else:
-        raise ValueError("{} version is currently not supported".format(exper.args.version))
-
     if exper.args.learner == "act":
         # currently two versions of AML in use. V1 is now the preferred, which has the 2nd LSTM for the
         # q(t|T, theta) approximation incorporated into the first LSTM (basically one loop, where V2 has
@@ -151,14 +136,14 @@ def get_model(exper, num_params_optimizee, retrain=False):
                                    num_layers=exper.args.num_layers,
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
-                                   output_bias=output_bias)
-    elif exper.args.learner[0:6] == "act_sb":
+                                   output_bias=exper.args.output_bias)
+    elif exper.args.learner[0:6] == "act_sb" or exper.args.learner == "act_graves":
         str_classname = "StickBreakingACTBaseModel"
         act_class = getattr(models.sb_act_optimizer, str_classname)
         meta_optimizer = act_class(num_layers=exper.args.num_layers,
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
-                                   output_bias=output_bias)
+                                   output_bias=exper.args.output_bias)
     elif exper.args.learner == "meta":
         # the alternative model is our MetaLearner in different favours
         if exper.args.version[0:2] == "V4":
@@ -175,7 +160,7 @@ def get_model(exper, num_params_optimizee, retrain=False):
                                      num_layers=exper.args.num_layers,
                                      num_hidden=exper.args.hidden_size,
                                      use_cuda=exper.args.cuda,
-                                     output_bias=output_bias)
+                                     output_bias=exper.args.output_bias)
 
     if retrain:
         loaded = False
