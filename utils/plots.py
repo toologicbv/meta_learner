@@ -1185,7 +1185,11 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
         ax.set_ylim(opt_loss_lim)
     # second y-axis
     ax2 = ax.twinx()
-    l2, = ax2.plot(x, kl_terms, marker='o', label="kl-divergence", c='g')
+    if exper.args.learner == "act_graves":
+        graph_label = "penalty-term"
+    else:
+        graph_label = "kl-divergence"
+    l2, = ax2.plot(x, kl_terms, marker='o', label=graph_label, c='g')
     ax2.set_ylabel("kl-divergence")
     if kl_lim is not None:
         ax2.set_ylim(kl_lim)

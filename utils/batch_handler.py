@@ -141,7 +141,13 @@ class ACTBatchHandler(BatchHandler):
         # rho_new = torch.mul(rho_probs, self.float_mask)
         # compute new probability values, based on the cumulative probs construct new batch mask
         # note that we also save the new rho_t values in the array self.rho_t (in the method compute_probs)
-        new_probs = self.compute_probs(rho_probs)
+        if self.learner == "act_graves":
+            # in Graves ACT model, the qt values are probabilities already : sigmoid(W^T h_t + bias) values
+            # so we don't use any stick-breaking here (meaning the rho_t values that we transfer in the act_sb
+            new_probs = torch.mul(rho_probs.double(), self.float_mask.double())
+        else:
+            # stick-breaking approach: transform RNN output rho_t values to probabilities
+            new_probs = self.compute_probs(rho_probs)
         # we need to determine the indices of the functions that "stop" in this time step (new_funcs_mask)
         funcs_that_stop = torch.le(self.compare_probs + new_probs, self.one_minus_eps)
         less_or_equal = LessOrEqual()
@@ -482,7 +488,6 @@ class ACTBatchHandler(BatchHandler):
             raise RuntimeError("Running away from here...")
 
         return kl_div
-
 
 
 class ACTGravesBatchHandler(ACTBatchHandler):
