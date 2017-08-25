@@ -131,11 +131,11 @@ def main():
 
     if not exper.args.learner == 'manual':
         meta_optimizer = get_model(exper, exper.args.x_dim, retrain=exper.args.retrain)
-        optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=exper.args.lr)
+        exper.optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=exper.args.lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
-        optimizer = None
+        exper.optimizer = None
     batch_handler_class = None if exper.batch_handler_class is None else \
         getattr(utils.batch_handler, exper.batch_handler_class)
 
@@ -148,7 +148,7 @@ def main():
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
-                execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
+                execute_batch(exper, reg_funcs, meta_optimizer, exper.optimizer, epoch_obj)
 
             elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":
                 loss_sum = Variable(torch.DoubleTensor([0.]))
@@ -163,7 +163,7 @@ def main():
                     loss_sum += batch.loss_sum
                     kl_sum += batch.kl_term
                 loss_sum = loss_sum * 1./float(exper.args.samples_per_batch)
-                act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, optimizer, loss_sum=loss_sum)
+                act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, exper.optimizer, loss_sum=loss_sum)
                 epoch_obj.model_grads.append(sum_grads)
                 epoch_obj.add_kl_term(kl_sum * 1./float(exper.args.samples_per_batch))
                 epoch_obj.add_act_loss(act_loss)
@@ -179,7 +179,7 @@ def main():
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
             exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None) # "{}".format(exper.epoch)
-        # per epoch collect the statistics w.r.t q(t|T) distribution for training and validation
+        # per epoch collect the statistics w.r.t q(t|x, T) distribution for training and validation
         if exper.args.learner == 'act':
 
             exper.epoch_stats['qt_hist'][exper.epoch] = meta_optimizer.qt_hist

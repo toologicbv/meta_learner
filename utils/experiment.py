@@ -11,7 +11,7 @@ import time
 
 from config import config, MetaConfig
 from probs import TimeStepsDist
-from common import load_val_data, create_logger, generate_fixed_weights
+from common import load_val_data, create_logger, generate_fixed_weights, halting_step_stats
 from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps, plot_gradient_stats
 from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats_with_loss, plot_loss_versus_halting_step
 from plots import create_exper_label
@@ -62,6 +62,7 @@ class Experiment(object):
         else:
             self.inc_learning_schedule = None
         self.batch_handler_class = None
+        self.optimizer = None
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)
@@ -336,6 +337,16 @@ class Experiment(object):
             e_losses = self.val_stats["step_losses"][self.epoch][start:end]
             self.meta_logger.info("Epoch: {} - evaluation result - time step losses".format(self.epoch))
             self.meta_logger.info(np.array_str(e_losses, precision=3))
+            # --------------- halting step for this evaluation run --------
+            np_halting_step = self.val_stats["halting_step"][self.epoch]
+            avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_halting_step)
+            self.meta_logger.info("Epoch: {}, evaluation - halting step distribution".format(self.epoch))
+            self.meta_logger.info(np.array_str(np_halting_step[1:epoch_obj.test_max_time_steps_taken + 1]))
+            self.meta_logger.info("Epoch: {}, evaluation - Average number of optimization steps {:.3f} "
+                                  "stddev {:.3f} median {} sum-steps {}".format(self.epoch, avg_opt_steps,
+                                                                                stddev, median,
+                                                                                int(total_steps)))
+
             self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl "
                                   "{:.3f}/{:.4f}".format(self.epoch, duration, eval_loss, test_batch.kl_term))
             # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
@@ -382,12 +393,15 @@ class Experiment(object):
 
         outfile = os.path.join(self.output_dir, file_name)
         logger = self.meta_logger
+        optimizer = self.optimizer
         # we set meta_logger temporary to None, because encountering problems when loading the experiment later
         # from file, if the experiment ran on a different machine "can't find .../run.log bla bla
         self.meta_logger = None
+        self.optimizer = None
         with open(outfile, 'wb') as f:
             dill.dump(self, f)
         self.meta_logger = logger
+        self.optimizer = optimizer
         if self.meta_logger is not None:
             self.meta_logger.info("Epoch {} - Saving experimental details to {}".format(self.epoch, outfile))
 

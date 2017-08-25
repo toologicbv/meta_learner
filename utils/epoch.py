@@ -2,24 +2,7 @@ import torch
 import numpy as np
 import time
 
-from common import construct_prior_p_t_T
-
-
-def halting_step_stats(halting_steps):
-    num_of_steps = halting_steps.shape[0]
-    num_of_funcs = np.sum(halting_steps)
-    values = np.arange(0, num_of_steps)
-    total_steps = np.sum(values * halting_steps)
-    avg_opt_steps = np.sum(1. / num_of_funcs * values * halting_steps)
-    E_x_2 = np.sum(1. / num_of_funcs * values ** 2 * halting_steps)
-    stddev = np.sqrt(E_x_2 - avg_opt_steps ** 2)
-    cum_sum = np.cumsum(halting_steps)
-    if cum_sum[np.nonzero(cum_sum)[0][0]] > num_of_funcs / 2.:
-        median = np.nonzero(cum_sum)[0][0]
-    else:
-        median = np.argmax(cum_sum[cum_sum < num_of_funcs / 2.]) + 1
-
-    return avg_opt_steps, stddev, median, total_steps
+from common import construct_prior_p_t_T, halting_step_stats
 
 
 class Epoch(object):
