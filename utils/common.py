@@ -70,11 +70,13 @@ def print_flags(exper):
         if exper.args.version == "V2":
             exper.meta_logger.info(" ! NOTE: using KL cost annealing")
     if exper.args.learner == "act_graves":
-        exper.meta_logger.info("Hyperparameter for ACT Graves model: tau={:.3f})".format(exper.config.tau))
+        exper.meta_logger.info("Hyperparameter for ACT Graves model: tau={:.6f}".format(exper.config.tau))
     if exper.args.learner[0:3] == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
         if not exper.args.fixed_horizon:
-            exper.meta_logger.info(">>> Maximum horizon constraint to {} due to memory "
+            exper.meta_logger.info("Maximum horizon constraint to {} due to memory "
                                    "shortage".format(exper.config.T))
+    if exper.args.learner == 'meta' and exper.args.version == 'V7':
+        exper.meta_logger.info("Please note that MetaLearner is trained incrementally")
 
 
 def softmax(x, dim=1):

@@ -125,22 +125,26 @@ class Epoch(object):
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id,
                                                                                                avg_opt_steps))
         if exper.args.learner[0:6] == 'act_sb' or exper.args.learner == "act_graves":
-            np_array = exper.epoch_stats["halting_step"][self.epoch_id]
-            step_indices = np.nonzero(np_array)
+            np_halting_step = exper.epoch_stats["halting_step"][self.epoch_id]
+            step_indices = np.nonzero(np_halting_step)
             min_steps = np.min(step_indices)
             max_steps = np.max(step_indices)
-            avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_array)
+            avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_halting_step)
 
             exper.epoch_stats["halting_stats"][self.epoch_id] = np.array([min_steps, max_steps, avg_opt_steps, stddev, median])
+            # here we need to add 1 to max_time_steps_taken because the step_losses starts with the step 0,
+            # the first value of the optimizees before we start optimizing them
             e_losses = exper.epoch_stats["step_losses"][self.epoch_id][0:self.train_max_time_steps_taken+1]
             exper.meta_logger.info("time step losses")
             exper.meta_logger.info(np.array_str(e_losses,  precision=3))
             exper.meta_logger.debug("qt values")
+
             exper.meta_logger.debug(np.array_str(exper.epoch_stats["qt_hist"][self.epoch_id]
-                                                [0:self.train_max_time_steps_taken + 1],  precision=4))
+                                                [0:self.train_max_time_steps_taken],  precision=4))
             exper.meta_logger.info("halting step frequencies - "
                                    "NOTE max steps taken {}".format(self.train_max_time_steps_taken))
-            exper.meta_logger.info(np.array_str(np_array[0:self.train_max_time_steps_taken+1]))
+
+            exper.meta_logger.info(np.array_str(np_halting_step[1:self.train_max_time_steps_taken+1]))
 
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {:.3f} "
                                    "stddev {:.3f} median {} sum-steps {}".format(self.epoch_id,

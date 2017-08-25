@@ -33,12 +33,13 @@ import utils.batch_handler
     meta                V5                      same as V1                                  baseline + ValueFunction
     meta                V6                      only regression(_T)                         baseline with improvement
                                                                                             instead of func-loss
+    meta                V7                      regression(_T)                              baseline + incremental learning
     act                 V1                      regression(_T)                              act learner with 2
                                                                                             separate LSTMS
     act                 V2                      regression(_T)                              act learner with 1 LSTM
     act_sb              V1                      regression(_T)                              act with stick-breaking approach
     act_sb              V2                      regression(_T)                              act with SB and KL cost annealing
-    act_sb_base         V1                      regression(_T)                              Graves ACT with ponder-cost
+    act_graves          V1                      regression(_T)                              Graves ACT with ponder-cost
 """
 
 # for standard optimizer which we compare to
@@ -137,6 +138,7 @@ def main():
         optimizer = None
     batch_handler_class = None if exper.batch_handler_class is None else \
         getattr(utils.batch_handler, exper.batch_handler_class)
+
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
         batch_handler_class.id = 0
@@ -146,7 +148,6 @@ def main():
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 reg_funcs = get_batch_functions(exper)
-                exper.args.optimizer_steps = int(5 * exper.epoch)
                 execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj)
 
             elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":

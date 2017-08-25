@@ -76,6 +76,6 @@ class MetaConfig(object):
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost
         """
-        self.tau = 6e-3
+        self.tau = 3e-3
 
 config = MetaConfig()

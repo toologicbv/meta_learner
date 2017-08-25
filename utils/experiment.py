@@ -56,6 +56,11 @@ class Experiment(object):
             self.annealing_schedule.fill(self.config.tau)
         else:
             self.annealing_schedule = np.ones(self.args.max_epoch)
+        if run_args.learner == "meta" and run_args.version == "V7":
+            # metaV7 uses incremental learning schedule
+            self.generate_incremental_lr_scheme()
+        else:
+            self.inc_learning_schedule = None
         self.batch_handler_class = None
 
     def init_epoch_stats(self):
@@ -167,6 +172,22 @@ class Experiment(object):
         # self.annealing_schedule = np.zeros(self.args.max_epoch)
         self.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(self.annealing_schedule)))
         self.meta_logger.info(">>> NOTE: Generated KL cost annealing schedule for first {} epochs <<<".format(until_epoch))
+
+    def generate_incremental_lr_scheme(self, type='linear'):
+        if type == 'linear':
+            self.inc_learning_schedule = np.zeros(self.args.max_epoch).astype(int)
+            off_set = 0  # we always start with 10 steps
+            step_size = 2
+            steps = self.args.max_epoch // step_size
+            max_opt_steps = self.args.optimizer_steps - off_set
+            slope = max_opt_steps // steps
+            for i, idx in enumerate(np.arange(0, self.args.max_epoch, step_size)):
+                self.inc_learning_schedule[idx:idx+step_size] = off_set + (slope * (i + 1))
+
+            self.inc_learning_schedule[self.inc_learning_schedule == 0] = self.args.optimizer_steps
+
+        else:
+            raise ValueError("Incremental learning scheme is not supported {}".format(type))
 
     def scale_step_statistics(self, is_train=True):
         if is_train:

@@ -1,4 +1,5 @@
 import torch
+from config import config
 
 
 class LessOrEqual(torch.autograd.Function):
@@ -13,6 +14,12 @@ class LessOrEqual(torch.autograd.Function):
         In the forward pass we receive a Tensor containing the input and return a
         Tensor containing the output. You can cache arbitrary Tensors for use in the
         backward pass using the save_for_backward method.
+        input1: the new cumulative probabilities [batch_size, 1]
+        input2: 1-epsilon, the threshold.
+        Note:
+            so we are generating a ByteTensor mask here.
+            0 = the sum of the probs (for this optimizee) reached the threshold, t = N(t) in Graves paper
+            1 = cumulative probs are still less than 1-epsilon continue optimizing
         """
         mask = torch.le(input1, input2).float()
         self.save_for_backward(mask)
@@ -25,11 +32,12 @@ class LessOrEqual(torch.autograd.Function):
         with respect to the input.
         """
         mask, = self.saved_tensors
-        grad_input = grad_output.clone()
-        grad_input = torch.mul(grad_input, mask).double()
-        grad_output = torch.mul(grad_output, mask).double()
+        grad_input2 = None
+        grad_input1 = grad_output.clone()
+        grad_input1[:] = config.tau
+        grad_input1 = torch.mul(grad_input1, -mask).double()
 
-        return grad_input, grad_output
+        return grad_input1, grad_input2
 
 
 def normalize(v):

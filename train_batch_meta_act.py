@@ -21,6 +21,9 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
     # determine the number of optimization steps for this batch
     if exper.args.learner == 'meta' and exper.args.version[0:2] == 'V2':
         optimizer_steps = exper.pt_dist.rvs(n=1)[0]
+    elif exper.args.learner == 'meta' and exper.args.version[0:2] == 'V7':
+        # Incremtnal learning
+        optimizer_steps = exper.inc_learning_schedule[exper.epoch-1]
 
     elif exper.args.learner == 'act' and not exper.args.fixed_horizon:
         # sample T - the number of timesteps - from our PMF (note prob to continue is set in config object)
@@ -165,6 +168,7 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
                 optimizer.step()
                 # save gradients if this is the last step, otherwise add to sum gradients
                 if k == optimizer_steps - 1:
+                    sum_grads += meta_optimizer.sum_grads()
                     epoch_obj.model_grads.append(sum_grads * 1./float(num_of_backwards))
                 else:
                     sum_grads += meta_optimizer.sum_grads()

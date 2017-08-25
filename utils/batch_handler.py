@@ -416,7 +416,7 @@ class ACTGravesBatchHandler(ACTBatchHandler):
     def cuda(self):
         super(ACTGravesBatchHandler, self).cuda()
 
-    def compute_batch_loss(self, weight_regularizer=1., mean_field=False):
+    def compute_batch_loss(self, weight_regularizer=1., mean_field=True):
         ponder_cost = self.compute_ponder_cost(tau=weight_regularizer)
         if mean_field:
             loss_matrix = torch.cat(self.batch_step_losses, 1).double()

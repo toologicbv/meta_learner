@@ -22,7 +22,7 @@ def create_exper_label(exper):
             str(int(exper.avg_num_opt_steps)) + "ops" + retrain
     elif exper.args.learner == "act_graves":
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
-                 "tau{:.3}".format(exper.config.tau) + retrain
+                 "tau{:.5}".format(exper.config.tau) + retrain
     else:
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
                  "nu{:.3}".format(exper.config.ptT_shape_param) + retrain
@@ -127,7 +127,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
             (exper.args.learner[0:6] == "act_sb"):
         p_title += r' ($\nu = {:.2}$)'.format(exper.config.ptT_shape_param)
     elif exper.args.learner == "act_graves":
-        p_title += r' ($\tau = {:.2}$)'.format(exper.config.tau)
+        p_title += r' ($\tau = {:.5}$)'.format(exper.config.tau)
     plt.title(p_title, **title_font)
 
     if save:
@@ -220,7 +220,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
                       r" in epoch {}) with prior $p(t|\nu={:.3f}$)".format(epoch, exper.config.ptT_shape_param)
         if exper.args.learner == "act_graves":
             p_title = model + r" Histogram of halting step (" + data_set + \
-                      r" in epoch {}) with $\tau={:.3f}$)".format(epoch, exper.config.tau)
+                      r" in epoch {}) with $\tau={:.5f}$)".format(epoch, exper.config.tau)
         p_label = ""
         y_label = "Frequencies"
         maxT = np.max(opt_step_hist.nonzero())
@@ -952,7 +952,7 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
     elif exper.args.learner[0:6] == "act_sb":
         stochastic = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
     elif exper.args.learner == "act_graves":
-        stochastic = r" ($\tau={:.3f}$)".format(exper.config.tau)
+        stochastic = r" ($\tau={:.5f}$)".format(exper.config.tau)
     else:
         stochastic = ""
 
@@ -1002,7 +1002,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         if exper.args.learner[0:6] == "act_sb":
             plot_title += r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
         elif exper.args.learner == "act_graves":
-            plot_title += r") - $\tau={:.2f}$".format(exper.config.tau)
+            plot_title += r") - $\tau={:.5f}$".format(exper.config.tau)
     else:
         T = np.max(exper.val_stats["qt_hist"][epoch].nonzero()) + 1
         qt_hist = exper.val_stats["qt_hist"][epoch][:T]
@@ -1010,7 +1010,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         if exper.args.learner[0:6] == "act_sb":
             plot_title += r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
         elif exper.args.learner == "act_graves":
-            plot_title += r") - $\tau={:.2f}$".format(exper.config.tau)
+            plot_title += r") - $\tau={:.5f}$".format(exper.config.tau)
 
     ax = plt.figure(figsize=(height, width)).gca()
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1116,7 +1116,7 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
         p_title = ""
     if exper.args.learner == "act_graves":
         p_title = title_prefix + " per time step" + \
-                  r" ($\tau={:.3f}$)".format(exper.config.tau)
+                  r" ($\tau={:.5f}$)".format(exper.config.tau)
 
     plt.title(p_title, **config.title_font)
     # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
