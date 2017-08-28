@@ -153,6 +153,7 @@ def main():
             elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":
                 loss_sum = Variable(torch.DoubleTensor([0.]))
                 kl_sum = 0.
+                penalty_sum = 0.
                 if exper.args.cuda:
                     loss_sum = loss_sum.cuda()
                 for _ in np.arange(exper.args.samples_per_batch):
@@ -162,10 +163,12 @@ def main():
                     batch.compute_batch_loss(epoch_obj.weight_regularizer)
                     loss_sum += batch.loss_sum
                     kl_sum += batch.kl_term
+                    penalty_sum += batch.penalty_term
                 loss_sum = loss_sum * 1./float(exper.args.samples_per_batch)
                 act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, exper.optimizer, loss_sum=loss_sum)
                 epoch_obj.model_grads.append(sum_grads)
-                epoch_obj.add_kl_term(kl_sum * 1./float(exper.args.samples_per_batch))
+                epoch_obj.add_kl_term(kl_sum * 1./float(exper.args.samples_per_batch),
+                                      penalty_sum* 1./float(exper.args.samples_per_batch))
                 epoch_obj.add_act_loss(act_loss)
             else:
                 raise ValueError("args.learner {} not supported by this implementation".format(exper.args.learner))

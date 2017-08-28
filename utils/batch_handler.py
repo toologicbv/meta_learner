@@ -40,6 +40,8 @@ class ACTBatchHandler(BatchHandler):
         self.type_prior = exper.type_prior
         self.prior_shape_param1 = exper.config.ptT_shape_param
         self.learner = exper.args.learner
+        # TODO temporary added self.version for test puposes different batch loss computation
+        self.version = exper.args.version
 
         if self.is_train:
             self.functions = get_batch_functions(exper)
@@ -86,7 +88,8 @@ class ACTBatchHandler(BatchHandler):
         self.eps = 1e-320
         self.verbose = False
         self.iterations = Variable(torch.zeros(self.batch_size, 1))
-
+        self.qt_remainders = Variable(torch.zeros(self.batch_size, 1).double())
+        self.penalty_term = 0.
         if exper.args.cuda:
             self.cuda()
 
@@ -105,6 +108,7 @@ class ACTBatchHandler(BatchHandler):
         self.backward_ones = self.backward_ones.cuda()
         self.qt_last_step = self.qt_last_step.cuda()
         self.iterations = self.iterations.cuda()
+        self.qt_remainders = self.qt_remainders.cuda()
 
     def act_step(self, exper, meta_optimizer):
         """
@@ -312,6 +316,8 @@ class ACTBatchHandler(BatchHandler):
 
         # get the q_t value for all optimizees for their halting step. NOTE: halting step has to be decreased with
         # ONE because the index of the self.q_t array starts with 0 right
+        if self.version == 'V3.2':
+            original_kl = False
         idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
         if self.q_t.cuda:
             idx_last_step = idx_last_step.cuda()
@@ -343,8 +349,13 @@ class ACTBatchHandler(BatchHandler):
             loss_matrix = torch.cat(self.batch_step_losses, 1)
             losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
         # compute final loss, in which we multiply each loss by the qt time step values
-        remainder = torch.mean(self.iterations).double()
-        self.loss_sum = (losses.double() + kl_term + remainder).squeeze()
+        # remainder = torch.mean(self.iterations).double()
+        if self.learner == "act_sb" and (self.version == "V3.1"):
+            remainder = 10. * torch.mean(self.qt_remainders)
+            self.penalty_term = remainder.data.cpu().squeeze().numpy()[0]
+            self.loss_sum = (losses.double() + kl_term + remainder).squeeze()
+        else:
+            self.loss_sum = (losses.double() + kl_term).squeeze()
         # self.loss_sum = kl_term.squeeze()
         self.kl_term = kl_term.data.cpu().squeeze().numpy()[0]
 
@@ -365,27 +376,39 @@ class ACTBatchHandler(BatchHandler):
         qt = Variable(torch.zeros(new_probs.size(0)).double())
         if new_probs.is_cuda:
             qt = qt.cuda()
-        final_due_to_fixed_horizon = torch.eq(self.counter_compare, self.max_T)
+        all_finals = torch.sum(final_func_mask).data.cpu().squeeze().numpy()[0]
+        if self.version == "V3.2":
+            final_due_to_fixed_horizon = final_func_mask
+        else:
+            final_due_to_fixed_horizon = torch.eq(self.counter_compare, self.max_T)
+
         num_of_finals = torch.sum(final_due_to_fixed_horizon).data.cpu().squeeze().numpy()[0]
         final_idx_due_to_fixed_horizon = final_due_to_fixed_horizon.data.squeeze().nonzero().squeeze()
         qt[:] = new_probs
         # Note: we only add the remainder of the probability mass for those optimizees that reached the MAX number of
         # time steps condition. In this case we reached the theoretical INFINITE horizon and therefore we make sure the
         # prob-mass adds up to one
+        self.qt_remainders = Variable(torch.zeros(self.batch_size, 1).double())
+        if new_probs.is_cuda:
+            self.qt_remainders = self.qt_remainders.cuda()
         if num_of_finals > 0:
             # subtlety here: we compute \prod_{i=1}^{t-1} (1 - rho_i) = remainder.
             #                indexing starts at 0 = first step. self.step starts counting at 0
             #                so when self.step=1 (we're actually in step 2 then) we only compute (1-rho_1)
             #                which should be correct in step 2 (because step 1 = rho_1)
-            qt_remainder = self.tensor_one.expand_as(self.compare_probs) - self.compare_probs
+            self.qt_remainders[final_idx_due_to_fixed_horizon] = (self.tensor_one.expand_as(self.compare_probs) -
+                                                                  self.compare_probs)[final_idx_due_to_fixed_horizon]
+            # self.qt_remainders = (self.tensor_one.expand_as(self.compare_probs) - self.compare_probs)
             # qt_remainder = torch.prod(self.tensor_one.expand_as(qt) - self.rho_t[:, 0:self.step], 1, keepdim=True)
-            qt[final_idx_due_to_fixed_horizon] = (new_probs + qt_remainder)[final_idx_due_to_fixed_horizon]
+            qt[final_idx_due_to_fixed_horizon] = (new_probs + self.qt_remainders)[final_idx_due_to_fixed_horizon]
 
             if self.verbose:
                 idx = final_idx_due_to_fixed_horizon[0]
                 print("new_prob ", new_probs[idx].data.cpu().squeeze().numpy()[0])
-                print("Remainder ", qt_remainder[idx].data.cpu().squeeze().numpy()[0])
+                print("Remainder ", self.qt_remainders[idx].data.cpu().squeeze().numpy()[0])
                 print("qt-values")
+        if all_finals > 0 and self.version == "V3.1":
+            self.qt_remainders = (self.tensor_one.expand_as(self.compare_probs) - self.compare_probs)
 
         self.q_t[:, self.step] = qt
         if self.verbose and num_of_finals > 0:

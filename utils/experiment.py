@@ -25,7 +25,7 @@ class Experiment(object):
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                             "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}, "halting_stats": {},
-                            "kl_term": np.zeros(run_args.max_epoch),
+                            "kl_term": np.zeros(run_args.max_epoch), "penalty_term": np.zeros(run_args.max_epoch),
                             "weight_regularizer": np.zeros(run_args.max_epoch),
                             "grad_stats": np.zeros((run_args.max_epoch, 2)),  # store mean and stddev of gradients model
                             "duration": []}
@@ -34,7 +34,8 @@ class Experiment(object):
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "act_graves") else {},
-                          "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
+                          "halting_step": {}, "kl_term": [], "penalty_term": [],
+                          "duration": [], "halt_step_funcs": {}}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -86,7 +87,7 @@ class Experiment(object):
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "act_graves") else {},
-                          "halting_step": {}, "kl_term": [], "duration": [], "halt_step_funcs": {}}
+                          "halting_step": {}, "kl_term": [], "penalty_term": [], "duration": [], "halt_step_funcs": {}}
 
     def add_halting_steps(self, halting_steps, is_train=True):
         # expect opt_steps to be an autograd.Variable
@@ -128,12 +129,14 @@ class Experiment(object):
         else:
             self.val_stats["duration"].append(epoch_time)
 
-    def set_regularizer_term(self, reg_term, weight_regularizer):
+    def set_regularizer_term(self, reg_term, penalty_term, weight_regularizer):
         if not isinstance(reg_term, (np.float, np.float32, np.float64)):
             raise ValueError("kl_term must be a numpy.float but is type {}".format(type(reg_term)))
         # index minus 1...because epoch counter starts as 1 and we're dealing with np.ndarray
         self.epoch_stats["kl_term"][self.epoch-1] = reg_term
         self.epoch_stats["weight_regularizer"][self.epoch-1] = weight_regularizer
+        if penalty_term is not None:
+            self.epoch_stats["penalty_term"][self.epoch - 1] = penalty_term
 
     def add_step_qts(self, qt_values, step=None, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
@@ -347,8 +350,9 @@ class Experiment(object):
                                                                                 stddev, median,
                                                                                 int(total_steps)))
 
-            self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl "
-                                  "{:.3f}/{:.4f}".format(self.epoch, duration, eval_loss, test_batch.kl_term))
+            self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl-term/penalty "
+                                  "{:.3f}/{:.4f}/{:.4f}".format(self.epoch, duration, eval_loss, test_batch.kl_term,
+                                                                test_batch.penalty_term))
             # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
             # once, which is different during training because we process multiple batches in ONE EPOCH
             # for the validation "loss" (not opt_loss) we can just sum the step_losses we collected earlier
@@ -357,6 +361,7 @@ class Experiment(object):
             self.val_stats["opt_loss"].append(eval_loss)
             # ja not consistent but .kl_term is already a numpy float whereas .loss_sum is not
             self.val_stats["kl_term"].append(test_batch.kl_term)
+            self.val_stats["penalty_term"].append(test_batch.penalty_term)
             self.add_duration(duration, is_train=False)
             # save the initial distance of each optimizee from its global minimum
             self.val_stats["loss_funcs"][self.epoch] = functions.distance_to_min

@@ -19,6 +19,7 @@ class Epoch(object):
         self.total_loss_steps = 0.
         self.loss_optimizer = 0.
         self.kl_term = 0.
+        self.penalty_term = 0.
         self.diff_min = 0.
         self.duration = 0.
         self.avg_opt_steps = []
@@ -43,10 +44,12 @@ class Epoch(object):
         self.final_act_loss += loss
         self.loss_optimizer += loss
 
-    def add_kl_term(self, kl_term):
+    def add_kl_term(self, kl_term, penalty_term=None):
         if not isinstance(kl_term, (np.float, np.float32, np.float64)):
             raise ValueError("loss must be a numpy.float but is type {}".format(type(kl_term)))
         self.kl_term += kl_term
+        if penalty_term is not None:
+            self.penalty_term += penalty_term
 
     def start(self, exper):
         Epoch.epoch_id += 1
@@ -78,7 +81,8 @@ class Epoch(object):
         self.loss_optimizer *= 1. / float(self.num_of_batches)
         self.final_act_loss *= 1. / float(self.num_of_batches)
         self.kl_term *= 1. / float(self.num_of_batches)
-        exper.set_regularizer_term(self.kl_term, self.weight_regularizer)
+        self.penalty_term *= 1. / float(self.num_of_batches)
+        exper.set_regularizer_term(self.kl_term, self.penalty_term, self.weight_regularizer)
 
         self.duration = time.time() - self.start_time
 
@@ -134,9 +138,9 @@ class Epoch(object):
                                                                                  avg_opt_steps,
                                                                                  stddev, median,
                                                                                  int(total_steps)))
-            exper.meta_logger.info("Epoch: {}, ACT-SB(klw={:.5f}) - optimizer-loss/kl-term {:.4f}"
-                                   "/{:.4f}".format(self.epoch_id, self.weight_regularizer, self.loss_optimizer,
-                                                    self.kl_term))
+            exper.meta_logger.info("Epoch: {}, ACT-SB(klw={:.5f}) - optimizer-loss/kl-term/penalty-term {:.4f}"
+                                   "/{:.4f}/{:.4f}".format(self.epoch_id, self.weight_regularizer, self.loss_optimizer,
+                                                           self.kl_term, self.penalty_term))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
         exper.epoch_stats["param_error"].append(self.param_loss)
