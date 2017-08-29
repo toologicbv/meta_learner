@@ -174,18 +174,18 @@ class Experiment(object):
         # set the rest of the epochs to 0.5 values
         self.annealing_schedule[until_epoch:] = sigmoid[until_epoch]
         # self.annealing_schedule = np.zeros(self.args.max_epoch)
-        self.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(self.annealing_schedule)))
-        self.meta_logger.info(">>> NOTE: Generated KL cost annealing schedule for first {} epochs <<<".format(until_epoch))
 
     def generate_incremental_lr_scheme(self, type='linear'):
         if type == 'linear':
             self.inc_learning_schedule = np.zeros(self.args.max_epoch).astype(int)
-            off_set = 0  # we always start with 10 steps
+            # we save 1/3 of the epochs to train for args.optimizer_steps e.g. 50
+            last_steps = self.args.max_epoch // 3
+            off_set = 0
             step_size = 2
-            steps = self.args.max_epoch // step_size
+            steps = (self.args.max_epoch - last_steps) // step_size
             max_opt_steps = self.args.optimizer_steps - off_set
             slope = max_opt_steps // steps
-            for i, idx in enumerate(np.arange(0, self.args.max_epoch, step_size)):
+            for i, idx in enumerate(np.arange(0, (self.args.max_epoch - last_steps), step_size)):
                 self.inc_learning_schedule[idx:idx+step_size] = off_set + (slope * (i + 1))
 
             self.inc_learning_schedule[self.inc_learning_schedule == 0] = self.args.optimizer_steps

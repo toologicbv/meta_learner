@@ -1160,9 +1160,14 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     fig.set_figheight(height)
     fig.set_figwidth(width)
     suffix = " (KL cost annealing)" if (exper.args.learner[0:6] == "act_sb" and exper.args.version == "V2") else ""
-    ptitle = "Model {} - ".format(exper.args.learner+exper.args.version)
-    plt.title(ptitle + "halting step statistics versus loss components during training " +
-              r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param) + suffix, **config.title_font)
+    ptitle = "Model {} - ".format(exper.args.learner+exper.args.version) + \
+             "halting step statistics versus loss components during training "
+    if exper.args.learner == "act_graves":
+        ptitle += r" ($\tau={:.5f}$)".format(exper.config.tau)
+    else:
+        ptitle += r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+
+    plt.title(ptitle + suffix, **config.title_font)
     opt_hist = exper.epoch_stats["opt_step_hist"]
     epochs = len(opt_hist)
 
@@ -1190,7 +1195,10 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     else:
         graph_label = "kl-divergence"
     l2, = ax2.plot(x, kl_terms, marker='o', label=graph_label, c='g')
-    ax2.set_ylabel("kl-divergence")
+    if exper.args.learner == "act_graves":
+        ax2.set_ylabel("penalty-term")
+    else:
+        ax2.set_ylabel("kl-divergence")
     if kl_lim is not None:
         ax2.set_ylim(kl_lim)
 

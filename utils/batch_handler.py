@@ -316,8 +316,15 @@ class ACTBatchHandler(BatchHandler):
 
         # get the q_t value for all optimizees for their halting step. NOTE: halting step has to be decreased with
         # ONE because the index of the self.q_t array starts with 0 right
-        if self.version == 'V3.2':
+        if self.version == "V3.1" or self.version == 'V3.2':
             original_kl = False
+            variational = True
+            mean_field = True
+        elif self.version == "V1":
+            variational = True
+            original_kl = True
+            mean_field = False
+
         idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
         if self.q_t.cuda:
             idx_last_step = idx_last_step.cuda()
@@ -350,6 +357,9 @@ class ACTBatchHandler(BatchHandler):
             losses = torch.mean(torch.sum(torch.mul(self.q_t[:, 0:self.step], loss_matrix), 1), 0)  # q_T_values
         else:
             loss_matrix = torch.cat(self.batch_step_losses, 1)
+            # REMEMBER THIS IS act_sbV2 where we multiply q_t with the log-likelihood
+            # losses = torch.mean(torch.sum(torch.mul(q_T_values, loss_matrix.double()), 1), 0)
+            # and this is act_sbV1
             losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
         # compute final loss, in which we multiply each loss by the qt time step values
         # remainder = torch.mean(self.iterations).double()

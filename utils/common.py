@@ -69,6 +69,8 @@ def print_flags(exper):
         exper.meta_logger.info("shape parameter of prior p(t|nu={:.3f})".format(exper.config.ptT_shape_param))
         if exper.args.version == "V2":
             exper.meta_logger.info(" ! NOTE: using KL cost annealing")
+            exper.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(exper.annealing_schedule)))
+
     if exper.args.learner == "act_graves":
         exper.meta_logger.info("Hyperparameter for ACT Graves model: tau={:.6f}".format(exper.config.tau))
     if exper.args.learner[0:3] == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
@@ -77,6 +79,7 @@ def print_flags(exper):
                                    "shortage".format(exper.config.T))
     if exper.args.learner == 'meta' and exper.args.version == 'V7':
         exper.meta_logger.info("Please note that MetaLearner is trained incrementally")
+        exper.meta_logger.info(np.array_str(exper.inc_learning_schedule))
 
 
 def halting_step_stats(halting_steps):
