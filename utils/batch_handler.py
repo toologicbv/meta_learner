@@ -331,7 +331,10 @@ class ACTBatchHandler(BatchHandler):
                 kl_term = weight_regularizer * torch.mean(self.approximate_kl_div(q_T_values, g_priors), 0)
             else:
                 # construct the individual priors for each batch function, return DoubleTensor[batch_size, self.steps]
-                g_priors = self.construct_priors_v1()
+                if self.version == 'V3.2':
+                    g_priors = self.construct_priors_v1(truncate=True)
+                else:
+                    g_priors = self.construct_priors_v1()
                 qts = self.q_t[:, 0:self.step].double()
                 # compute KL divergence term, take the mean over the mini-batch dimension 0
                 kl_term = weight_regularizer * torch.mean(torch.sum(torch.mul(qts,
@@ -351,9 +354,18 @@ class ACTBatchHandler(BatchHandler):
         # compute final loss, in which we multiply each loss by the qt time step values
         # remainder = torch.mean(self.iterations).double()
         if self.learner == "act_sb" and (self.version == "V3.1"):
-            remainder = 10. * torch.mean(self.qt_remainders)
-            self.penalty_term = remainder.data.cpu().squeeze().numpy()[0]
-            self.loss_sum = (losses.double() + kl_term + remainder).squeeze()
+            penalty_condition = torch.lt(self.counter_compare, self.max_T)
+            penalty_condition_idx = penalty_condition.data.squeeze().nonzero().squeeze()
+            num_of_penalties = torch.sum(penalty_condition).data.cpu().squeeze().numpy()[0]
+            if num_of_penalties > 0:
+                last_step_priors = (self.construct_priors_v2())[penalty_condition_idx]
+                last_step_qts = q_T_values[penalty_condition_idx] + self.qt_remainders[penalty_condition_idx]
+                remainder = 3.0 * torch.mean(self.approximate_kl_div_with_sum(last_step_qts, last_step_priors))
+                self.penalty_term = remainder.data.cpu().squeeze().numpy()[0]
+                self.loss_sum = (losses.double() + kl_term + remainder).squeeze()
+            else:
+                self.loss_sum = (losses.double() + kl_term).squeeze()
+
         else:
             self.loss_sum = (losses.double() + kl_term).squeeze()
         # self.loss_sum = kl_term.squeeze()
@@ -434,7 +446,7 @@ class ACTBatchHandler(BatchHandler):
             g_priors = g_priors.cuda()
         return g_priors
 
-    def construct_priors_v1(self):
+    def construct_priors_v1(self, truncate=False):
         # construct array of arrays with different length of ranges, we need this to construct a 2D matrix that will be
         # passed to the geometric PMF function of scipy
         R = np.array([np.arange(1, i+1) for i in self.halting_steps.data.cpu().numpy()])
@@ -442,11 +454,13 @@ class ACTBatchHandler(BatchHandler):
             R = np.vstack([np.lib.pad(a, (0, (self.step - len(a))), 'constant', constant_values=0) for a in R])
         if self.type_prior == "geometric":
             g_priors = geom.pmf(R, p=(1-self.prior_shape_param1))
-            # g_priors = poisson.pmf(R, mu=25)
+
         else:
             raise ValueError("Unknown prior distribution {}. Only 1) geometric and 2) neg-binomial "
                              "are supported".format(self.type_prior))
 
+        if truncate:
+            g_priors = 1./np.sum(g_priors) * g_priors
         g_priors = Variable(torch.from_numpy(g_priors).double())
         if self.q_t.is_cuda:
             g_priors = g_priors.cuda()
