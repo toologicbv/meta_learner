@@ -139,7 +139,7 @@ class Epoch(object):
                                                                                  stddev, median,
                                                                                  int(total_steps)))
             exper.meta_logger.info("Epoch: {}, ACT-SB(klw={:.5f}) - optimizer-loss/kl-term/penalty-term {:.4f}"
-                                   "/{:.4f}/{:.4f}".format(self.epoch_id, self.weight_regularizer, self.loss_optimizer,
+                                   "/{:.4f}/{:.7f}".format(self.epoch_id, self.weight_regularizer, self.loss_optimizer,
                                                            self.kl_term, self.penalty_term))
 
         exper.epoch_stats["loss"].append(self.total_loss_steps)
