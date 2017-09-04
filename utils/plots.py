@@ -1240,7 +1240,7 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
 
 
 def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_save=False,
-                                  fig_name=None, add_info=True, epoch=None):
+                                  fig_name=None, epoch=None, x_max=None):
     if epoch is None:
         epoch = exper.args.max_epoch
 
@@ -1259,8 +1259,10 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     ax.set_title(p_title + "(epoch={})".format(epoch), **config.title_font)
     _ = ax.scatter(halting_steps, nll_distance, s=5, alpha=0.2, color="r",
                    label=r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param))
-    ax.set_xlim([min_x - 1, max_x + 1])
-    # ax.set_xlim(0, 100)
+    if x_max is None:
+        ax.set_xlim([min_x - 1, max_x + 1])
+    else:
+        ax.set_xlim([min_x - 1, x_max])
     ax.set_xlabel("Halting step")
     ax.set_ylim([0, max_y])
     ax.set_ylabel("Distance NLL(start)-NLL(min)")
