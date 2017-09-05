@@ -118,7 +118,7 @@ def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj):
                     # metaV4, meta_update returns tuple (delta_param, qt-value)
                     par_new = optimizees.get_flat_params() + delta_param[0]
                     loss_step = torch.mean(delta_param[1] * optimizees.evaluate(parameters=par_new,
-                                                                               average=False), 0).squeeze()
+                                                                                average=False), 0).squeeze()
                 else:
                     par_new = optimizees.get_flat_params() + delta_param
                     loss_step = optimizees.evaluate(parameters=par_new, average=True)

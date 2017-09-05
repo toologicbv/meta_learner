@@ -16,6 +16,7 @@ from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optim
 from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats_with_loss, plot_loss_versus_halting_step
 from plots import create_exper_label
 import utils.batch_handler
+import utils.validation_handler
 from val_optimizer import validate_optimizer
 from mnist_data_obj import MNISTDataSet
 
@@ -66,6 +67,7 @@ class Experiment(object):
         self.batch_handler_class = None
         self.optimizer = None
         # when optimizing MLP we need the MNIST data set
+        self.validation_handler_class = None
         if run_args.problem == "mlp":
             self.dta_set = MNISTDataSet(run_args.batch_size, run_args.cuda)
         else:
@@ -241,6 +243,9 @@ class Experiment(object):
             self.avg_num_opt_steps = self.args.optimizer_steps
             if self.args.learner[0:6] == "act_sb" or self.args.learner == "act_graves":
                 self.max_time_steps = self.config.T
+            if self.args.learner == 'meta' and self.args.problem == "mlp":
+                self.validation_handler_class = "ValidateMLPOnMetaLearner"
+
             if self.args.learner == 'meta' and self.args.version[0:2] == 'V2':
                 # Note, we choose here an absolute limit of the horizon, set in the config-file
                 self.max_time_steps = self.config.T
@@ -320,7 +325,21 @@ class Experiment(object):
 
     def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
-        if self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
+        if self.args.problem == "mlp":
+            self.meta_logger.info("Epoch: {} - Evaluating {} test MLPs".format(self.epoch,
+                                                                               len(functions)))
+            if self.args.learner == "meta":
+                validation_class = getattr(utils.validation_handler, self.validation_handler_class)
+                if eval_time_steps is None:
+                    self.init_val_stats()
+                else:
+                    self.init_val_stats(eval_time_steps)
+                validation_handler = validation_class(self, save_model=save_model)
+                validation_handler(self, meta_optimizer, functions)
+
+                del validation_handler
+
+        elif self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
             self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
                                                                                     functions.num_of_funcs))
             batch_handler_class = getattr(utils.batch_handler, self.batch_handler_class)
@@ -381,7 +400,7 @@ class Experiment(object):
             else:
                 opt_steps = self.config.max_val_opt_steps
 
-            validate_optimizer(meta_optimizer, self, val_set=functions, meta_logger=self.meta_logger,
+            validate_optimizer(meta_optimizer, self, val_set=functions,
                                verbose=False,
                                plot_func=False,
                                max_steps=opt_steps,

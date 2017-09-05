@@ -129,6 +129,14 @@ def stop_computing(q_probs, threshold=0.8):
 
 
 def preprocess_gradients(x):
+    """
+    Taken from another pytorch implementation of the L2L model.
+    This is the pre-processing as mentioned in appendix A of the L2L paper.
+    Should solve the problem that the gradients of the different parameters of the MLP have VERY different magnitudes.
+
+    :param x: gradients of all MLP parameters size=[num of parameters, 1]
+    :return: FloatTensor size=[number of parameters, 2]
+    """
     p = 10
     eps = 1e-6
     indicator = (x.abs() > math.exp(-p)).float()
@@ -281,10 +289,14 @@ def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1.,
     if exper.args.problem == "rosenbrock":
         logger.info("Note CANONICAL set to {}".format(CANONICAL))
     if file_name is None:
-        file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + "_" + \
-                    str(n_samples) + "_" + \
-                    str(stddev) + "_" + \
-                    str(dim) + ".dll"
+        if exper.args.problem == "mlp":
+            num_of_funcs = 5
+            file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + ".dll"
+        else:
+            file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + "_" + \
+                        str(n_samples) + "_" + \
+                        str(stddev) + "_" + \
+                        str(dim) + ".dll"
 
     if path_specs is not None:
         load_file = os.path.join(path_specs, file_name)
@@ -311,6 +323,12 @@ def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1.,
             elif exper.args.problem == "rosenbrock":
                 val_funcs = RosenBrock(batch_size=num_of_funcs, stddev=stddev, num_dims=exper.args.x_dim,
                                        use_cuda=exper.args.cuda, canonical=CANONICAL)
+
+            elif exper.args.problem == "mlp":
+                val_funcs = []
+                num_of_funcs = 5
+                for _ in np.arange(num_of_funcs):
+                    val_funcs.append(MLP(default_mlp_architecture))
             else:
                 raise ValueError("Problem type {} is not supported".format(exper.args.problem))
             logger.info("Creating validation set of size {} for problem {}".format(num_of_funcs, exper.args.problem))

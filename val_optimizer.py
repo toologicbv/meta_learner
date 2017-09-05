@@ -12,7 +12,7 @@ from utils.common import softmax, stop_computing, construct_prior_p_t_T, generat
                         get_func_loss
 
 
-def validate_optimizer(meta_learner, exper, meta_logger, val_set=None, max_steps=6, verbose=True, plot_func=False,
+def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=True, plot_func=False,
                        num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False,
                        save_run=None):
 

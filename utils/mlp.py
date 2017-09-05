@@ -17,8 +17,6 @@ class MLP(nn.Module):
         self.initial_params = self.get_flat_params().clone()
         if make_copy_obj:
             self.eval_copy = self._make_sequential_module()
-            # for name, module in self.named_children():
-            #    print(name, type(module))
 
         else:
             self.eval_copy = None
@@ -127,7 +125,7 @@ class MLP(nn.Module):
         reset_params = self.initial_params.data.clone()
         self.set_parameters(Variable(reset_params))
         if self.eval_copy is not None:
-            self.set_parameters(Variable(reset_params), use_copy_obj=True)
+            self.set_eval_obj_parameters(Variable(reset_params))
 
     def reset_params(self):
         # break the backward chain by declaring param Variable again with same Tensor values
