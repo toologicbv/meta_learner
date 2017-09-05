@@ -7,12 +7,12 @@ from utils.common import OPTIMIZER_DICT, construct_prior_p_t_T, get_func_loss
 STD_OPT_LR = 4e-1
 
 
-def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
+def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj):
 
-    func_is_nn_module = nn.Module in reg_funcs.__class__.__bases__
+    func_is_nn_module = nn.Module in optimizees.__class__.__bases__
     # if we're using a standard optimizer
     if exper.args.learner == 'manual':
-        meta_optimizer = OPTIMIZER_DICT[exper.args.optimizer]([reg_funcs.params], lr=STD_OPT_LR)
+        meta_optimizer = OPTIMIZER_DICT[exper.args.optimizer]([optimizees.params], lr=STD_OPT_LR)
 
     # counter that we keep in order to enable BPTT
     forward_steps = 0
@@ -59,7 +59,7 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
                 # kind of fake reset, the actual value of the function parameters are NOT changed, only
                 # the pytorch Variable, in order to prevent the .backward() function to go beyond the truncated
                 # BPTT steps
-                reg_funcs.reset_params()
+                optimizees.reset_params()
                 loss_sum = 0
             else:
                 forward_steps += 1
@@ -69,12 +69,19 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
             forward_steps = 1
             # initialize LSTM
             meta_optimizer.reset_lstm(keep_states=False)
-            reg_funcs.reset_params()
+            optimizees.reset_params()
             loss_sum = 0
-        loss = get_func_loss(exper, reg_funcs, average=False)
-        # compute gradients of optimizee which will need for the meta-learner
-        loss.backward(epoch_obj.backward_ones)
-        avg_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+        # compute loss and generate gradients of optimizee
+        loss = get_func_loss(exper, optimizees, average=False)
+        if exper.args.problem == "mlp":
+            loss.backward()
+            # print("Loss {} & Grads {}".format(loss.data[0], torch.sum(optimizees.get_flat_grads()).data[0]))
+            avg_loss = loss.data.cpu().squeeze().numpy()[0].astype(float)
+        else:
+            # compute gradients of optimizee which will need for the meta-learner
+            loss.backward(epoch_obj.backward_ones)
+            avg_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0].astype(float)
+
         exper.epoch_stats["step_losses"][exper.epoch][k] += avg_loss
         exper.epoch_stats["opt_step_hist"][exper.epoch][k] += 1
         epoch_obj.total_loss_steps += avg_loss
@@ -85,18 +92,18 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
             meta_optimizer.losses.append(Variable(torch.mean(loss, 0).data.squeeze()))
 
         # meta_logger.info("{}/{} Sum optimizee gradients {:.3f}".format(
-        #    i, k, torch.sum(reg_funcs.params.grad.data)))
+        #    i, k, torch.sum(optimizees.params.grad.data)))
         # feed the RNN with the gradient of the error surface function
         if exper.args.learner == 'meta':
-            delta_param = meta_optimizer.meta_update(reg_funcs)
+            delta_param = meta_optimizer.meta_update(optimizees)
             if exper.args.problem == "quadratic":
-                par_new = reg_funcs.params - delta_param
-                loss_step = reg_funcs.compute_loss(average=True, params=par_new)
+                par_new = optimizees.params - delta_param
+                loss_step = optimizees.compute_loss(average=True, params=par_new)
                 meta_optimizer.losses.append(Variable(loss_step.data))
             elif exper.args.problem[0:10] == "regression":
                 # Regression
-                par_new = reg_funcs.params - delta_param
-                loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
+                par_new = optimizees.params - delta_param
+                loss_step = meta_optimizer.step_loss(optimizees, par_new, average_batch=True)
 
                 if exper.args.learner == "meta" and exper.args.version == "V6":
                     # V6 observed improvement
@@ -109,15 +116,22 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
             elif exper.args.problem == "rosenbrock":
                 if exper.args.version[0:2] == "V4":
                     # metaV4, meta_update returns tuple (delta_param, qt-value)
-                    par_new = reg_funcs.get_flat_params() + delta_param[0]
-                    loss_step = torch.mean(delta_param[1] * reg_funcs.evaluate(parameters=par_new,
+                    par_new = optimizees.get_flat_params() + delta_param[0]
+                    loss_step = torch.mean(delta_param[1] * optimizees.evaluate(parameters=par_new,
                                                                                average=False), 0).squeeze()
                 else:
-                    par_new = reg_funcs.get_flat_params() + delta_param
-                    loss_step = reg_funcs.evaluate(parameters=par_new, average=True)
+                    par_new = optimizees.get_flat_params() + delta_param
+                    loss_step = optimizees.evaluate(parameters=par_new, average=True)
                 meta_optimizer.losses.append(Variable(loss_step.data.unsqueeze(1)))
 
-            reg_funcs.set_parameters(par_new)
+            elif exper.args.problem == "mlp":
+                par_new = optimizees.get_flat_params() + delta_param.unsqueeze(1)
+                optimizees.set_eval_obj_parameters(par_new)
+                image, y_true = exper.dta_set.next_batch(is_train=True)
+                loss_step = optimizees.evaluate(image , use_copy_obj=True, compute_loss=True, y_true=y_true)
+                meta_optimizer.losses.append(Variable(loss_step.data.unsqueeze(1)))
+
+            optimizees.set_parameters(par_new)
             if exper.args.version[0:2] == "V3":
                 loss_sum = loss_sum + torch.mul(exper.fixed_weights[k], loss_step)
 
@@ -125,32 +139,33 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
                 loss_sum = loss_sum + observed_imp
             else:
                 loss_sum = loss_sum + loss_step
-        # ACT model processing
+        # ACT model processing. NOTE: we only end up here if learner != "meta" !!!
         elif exper.args.learner == 'act':
-            delta_param, delta_qt = meta_optimizer.meta_update(reg_funcs)
-            par_new = reg_funcs.params - delta_param
+            delta_param, delta_qt = meta_optimizer.meta_update(optimizees)
+            par_new = optimizees.params - delta_param
             qt_param = qt_param + delta_qt
             if exper.args.problem == "quadratic":
-                loss_step = reg_funcs.compute_loss(average=False, params=par_new)
+                loss_step = optimizees.compute_loss(average=False, params=par_new)
                 meta_optimizer.losses.append(loss_step)
-                loss_step = 1 / float(reg_funcs.num_of_funcs) * torch.sum(loss_step)
+                loss_step = 1 / float(optimizees.num_of_funcs) * torch.sum(loss_step)
             else:
                 # Regression
-                loss_step = meta_optimizer.step_loss(reg_funcs, par_new, average_batch=True)
+                loss_step = meta_optimizer.step_loss(optimizees, par_new, average_batch=True)
             meta_optimizer.q_t.append(qt_param)
             loss_sum = loss_sum + loss_step
-            reg_funcs.set_parameters(par_new)
+            optimizees.set_parameters(par_new)
         else:
+            # NOTE: we only end up here if learer != "meta" and != "act"
             # we're just using one of the pre-delivered optimizers, update function parameters
             meta_optimizer.step()
             # compute loss after update
-            loss_step = reg_funcs.compute_neg_ll(average_over_funcs=False, size_average=False)
+            loss_step = optimizees.compute_neg_ll(average_over_funcs=False, size_average=False)
 
         # set gradients of optimizee to zero again
         if func_is_nn_module:
-            reg_funcs.zero_grad()
+            optimizees.zero_grad()
         else:
-            reg_funcs.params.grad.data.zero_()
+            optimizees.params.grad.data.zero_()
         # Check whether we need to execute BPTT
         if forward_steps == exper.args.truncated_bptt_step or k == optimizer_steps - 1:
             # meta_logger.info("BPTT at {}".format(k + 1))
@@ -181,9 +196,10 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
     # END of iterative function optimization. Compute final losses and probabilities
     # compute the final loss error for this function between last loss calculated and function min-value
     error = loss_step.data.cpu().squeeze().numpy()[0]
-    epoch_obj.diff_min += (loss_step -
-                           reg_funcs.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(
-        float)
+    if hasattr(optimizees, "true_minimum_nll"):
+        epoch_obj.diff_min += (loss_step -
+                               optimizees.true_minimum_nll.expand_as(loss_step)).data.cpu().squeeze().numpy()[0].astype(
+            float)
     avg_loss = loss_step.data.cpu().squeeze().numpy()[0]
     exper.epoch_stats["step_losses"][exper.epoch][k + 1] += avg_loss
     exper.epoch_stats["opt_step_hist"][exper.epoch][k + 1] += 1
@@ -206,6 +222,12 @@ def execute_batch(exper, reg_funcs, meta_optimizer, optimizer, epoch_obj):
         meta_optimizer.reset_losses()
     # END OF BATCH: FUNCTION OPTIMIZATION
     epoch_obj.loss_last_time_step += error
-    epoch_obj.param_loss += reg_funcs.param_error(average=True).data.cpu().squeeze().numpy()[0]
+    if hasattr(optimizees, "param_error"):
+        epoch_obj.param_loss += optimizees.param_error(average=True).data.cpu().squeeze().numpy()[0]
+
+    if exper.args.problem == "mlp":
+        # evaluate the last MLP that we optimized
+        accuracy = optimizees.test_model(exper.dta_set, exper.args.cuda)
+        exper.meta_logger.info("Note: End of batch - Accuracy of last MLP {:.4f}".format(accuracy))
 
 

@@ -12,10 +12,10 @@ import numpy as np
 from torch.autograd import Variable
 import models.rnn_optimizer
 import models.sb_act_optimizer
-# from plots import loss_plot, param_error_plot, plot_dist_optimization_steps, plot_qt_probs, create_exper_label
-# from plots import plot_image_map_losses, plot_image_map_data, plot_actsb_qts
 from probs import ConditionalTimeStepDist, TimeStepsDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
+from mlp import MLP
+
 
 CANONICAL = False
 
@@ -25,6 +25,15 @@ OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adam': torch.optim.Adam, # Adam
                   'rmsprop': torch.optim.RMSprop # RMSprop
                   }
+
+
+default_mlp_architecture = \
+    dict(loss_function="CrossEntropyLoss",  # Loss function
+         n_input=784,                       # MNIST data input (img shape: 28*28)
+         n_hidden_layer1=20,                # number of hidden units first hidden layer
+         act_func_output="Sigmoid",         # activation function
+         n_output=10                        # MNIST number of output tokens
+         )
 
 
 def create_logger(exper=None, file_handler=False, output_dir=None):
@@ -145,7 +154,7 @@ def create_def_argparser(**kwargs):
     return args
 
 
-def get_model(exper, num_params_optimizee, retrain=False):
+def get_model(exper, num_inputs, retrain=False):
 
     if exper.args.learner == "act":
         # currently two versions of AML in use. V1 is now the preferred, which has the 2nd LSTM for the
@@ -154,7 +163,7 @@ def get_model(exper, num_params_optimizee, retrain=False):
         # only use first 2 characters of args.version e.g. V1 instead of V1.1
         str_classname = "AdaptiveMetaLearner" + exper.args.version[0:2]
         act_class = getattr(models.rnn_optimizer, str_classname)
-        meta_optimizer = act_class(num_params_optimizee,
+        meta_optimizer = act_class(num_inputs=num_inputs,
                                    num_layers=exper.args.num_layers,
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
@@ -162,7 +171,8 @@ def get_model(exper, num_params_optimizee, retrain=False):
     elif exper.args.learner[0:6] == "act_sb" or exper.args.learner == "act_graves":
         str_classname = "StickBreakingACTBaseModel"
         act_class = getattr(models.sb_act_optimizer, str_classname)
-        meta_optimizer = act_class(num_layers=exper.args.num_layers,
+        meta_optimizer = act_class(num_inputs=num_inputs,
+                                   num_layers=exper.args.num_layers,
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
                                    output_bias=exper.args.output_bias)
@@ -178,11 +188,11 @@ def get_model(exper, num_params_optimizee, retrain=False):
             str_classname = "MetaLearner"
             meta_class = getattr(models.rnn_optimizer, str_classname)
 
-        meta_optimizer = meta_class(num_params_optimizee,
-                                     num_layers=exper.args.num_layers,
-                                     num_hidden=exper.args.hidden_size,
-                                     use_cuda=exper.args.cuda,
-                                     output_bias=exper.args.output_bias)
+        meta_optimizer = meta_class(num_inputs=num_inputs,
+                                    num_layers=exper.args.num_layers,
+                                    num_hidden=exper.args.hidden_size,
+                                    use_cuda=exper.args.cuda,
+                                    output_bias=exper.args.output_bias)
 
     if retrain:
         loaded = False
@@ -241,11 +251,15 @@ def get_batch_functions(exper):
     elif exper.args.problem == "rosenbrock":
         funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=exper.config.stddev, num_dims=2,
                            use_cuda=exper.args.cuda, canonical=CANONICAL)
+    elif exper.args.problem == "mlp":
+        funcs = MLP(default_mlp_architecture)
+        if exper.args.cuda:
+            funcs = funcs.cuda()
 
     return funcs
 
 
-def get_func_loss(exper, funcs, average=False):
+def get_func_loss(exper, funcs, average=False, is_train=True):
     if exper.args.problem == "quadratic":
         loss = funcs.compute_loss(average=average)
     elif exper.args.problem == "regression":
@@ -254,6 +268,9 @@ def get_func_loss(exper, funcs, average=False):
         loss = funcs.compute_neg_ll(average_over_funcs=average)
     elif exper.args.problem == "rosenbrock":
         loss = funcs(average_over_funcs=average)
+    elif exper.args.problem == "mlp":
+        image, y_true = exper.dta_set.next_batch(is_train=is_train)
+        loss = funcs.evaluate(image, compute_loss=True, y_true=y_true)
 
     return loss
 
@@ -364,4 +381,6 @@ def generate_fixed_weights(exper, steps=None):
         fixed_weights = fixed_weights.cuda()
 
     return fixed_weights
+
+
 

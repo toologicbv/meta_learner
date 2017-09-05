@@ -130,7 +130,11 @@ def main():
     print_flags(exper)
 
     if not exper.args.learner == 'manual':
-        meta_optimizer = get_model(exper, exper.args.x_dim, retrain=exper.args.retrain)
+        if exper.args.problem == "mlp":
+            num_of_inputs = 3
+        else:
+            num_of_inputs = 1
+        meta_optimizer = get_model(exper, num_of_inputs, retrain=exper.args.retrain)
         exper.optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=exper.args.lr)
     else:
         # we're using one of the standard optimizers, initialized per function below
@@ -145,10 +149,12 @@ def main():
         exper.init_epoch_stats()
         epoch_obj = Epoch()
         epoch_obj.start(exper)
+        exper.meta_logger.info("Epoch {}: Num of batches {}".format(exper.epoch, epoch_obj.num_of_batches))
         for i in range(epoch_obj.num_of_batches):
+            exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i+1))
             if exper.args.learner in ['meta', 'act']:
-                reg_funcs = get_batch_functions(exper)
-                execute_batch(exper, reg_funcs, meta_optimizer, exper.optimizer, epoch_obj)
+                optimizees = get_batch_functions(exper)
+                execute_batch(exper, optimizees, meta_optimizer, exper.optimizer, epoch_obj)
 
             elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":
                 loss_sum = Variable(torch.DoubleTensor([0.]))

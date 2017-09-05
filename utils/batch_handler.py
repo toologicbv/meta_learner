@@ -155,7 +155,9 @@ class ACTBatchHandler(BatchHandler):
         # we need to determine the indices of the functions that "stop" in this time step (new_funcs_mask)
         funcs_that_stop = torch.le(self.compare_probs + new_probs, self.one_minus_eps)
         less_or_equal = LessOrEqual()
-        iterations = less_or_equal(self.compare_probs + new_probs, self.one_minus_eps)
+        # NOTE: ALSO for the Graves ACT model we increase all functions that participated in THIS ITERATION and
+        #       therefore we compare with self.compare_probs BEFORE we increase them with the new probs
+        iterations = less_or_equal(self.compare_probs, self.one_minus_eps)
         if self.learner == "act_graves":
             self.halting_steps += iterations
         else:

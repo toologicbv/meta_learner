@@ -12,6 +12,7 @@ from collections import OrderedDict
 from layer_lstm import LayerLSTMCell
 from utils.config import config
 from utils.regression import neg_log_likelihood_loss, nll_with_t_dist, RegressionFunction, RegressionWithStudentT
+from utils.helper import preprocess_gradients
 
 
 def generate_reversed_cum(q_probs_in, priors_in, use_cuda=False):
@@ -113,7 +114,7 @@ def init_stat_vars(conf=None):
 
 class MetaLearner(nn.Module):
 
-    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False,
+    def __init__(self, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False,
                  output_bias=True, fg_bias=1):
         super(MetaLearner, self).__init__()
         self.name = "default"
@@ -121,7 +122,6 @@ class MetaLearner(nn.Module):
         self.use_cuda = use_cuda
         # number of parameters we need to optimize, for regression we choose the polynomial degree of the
         # regression function
-        self.num_params = num_params_optimizee
         # self.linear1 = nn.Linear(2, num_hidden)
         self.linear1 = nn.Linear(num_inputs, num_hidden)
         self.lstms = nn.ModuleList()
@@ -167,6 +167,12 @@ class MetaLearner(nn.Module):
             x_t = x_t.unsqueeze(1)
         if self.use_cuda and not x_t.is_cuda:
             x_t = x_t.cuda()
+        # the 2nd input dimension is 3 when we're optimizing the MLPs. In this case we scale the outputs as
+        # mentioned in the L2L paper by 0.1
+        if x_t.size(1) == 3:
+            do_scale = True
+        else:
+            do_scale = False
 
         x_t = self.linear1(x_t)
         for i in range(len(self.lstms)):
@@ -177,6 +183,10 @@ class MetaLearner(nn.Module):
             self.hx[i], self.cx[i] = self.lstms[i](x_t, (self.hx[i], self.cx[i]))
             x_t = self.hx[i]
         x_t = self.linear_out(x_t)
+        if do_scale:
+            # in case of MLP we scale the output as mentioned in L2L paper
+            x_t = 0.1 * x_t
+
         return x_t.squeeze()
 
     def meta_update(self, optimizee_with_grads, run_type="train"):
@@ -188,7 +198,8 @@ class MetaLearner(nn.Module):
         # first determine whether the optimizee has base class nn.Module
         is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
         if is_nn_module:
-            delta_params = self(Variable(optimizee_with_grads.get_flat_grads().data))
+            delta_params = self(Variable(torch.cat((preprocess_gradients(optimizee_with_grads.get_flat_grads().data),
+                                                    optimizee_with_grads.get_flat_params().data), 1)))
         else:
             param_size = optimizee_with_grads.params.grad.size()
             flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
@@ -358,18 +369,13 @@ class MetaStepLearner(MetaLearner):
 
 class AdaptiveMetaLearnerV2(MetaLearner):
 
-    def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False, output_bias=True):
-        super(AdaptiveMetaLearnerV2, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers, use_cuda,
+    def __init__(self, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False, output_bias=True):
+        super(AdaptiveMetaLearnerV2, self).__init__(num_inputs, num_hidden, num_layers, use_cuda,
                                                     output_bias=output_bias, fg_bias=1)
 
         # holds losses from each optimizer step
         self.losses = []
         self.q_t = []
-        # number of parameters of the function to optimize (the optimizee)
-        self.num_params = num_params_optimizee
-        # currently we're only feeding the second LSTM with one parameter, the sum of the incoming gradients
-        # of the optimizee
-        self.act_num_params = 1
         self.qt_hist, self.qt_hist_val, self.opt_step_hist, self.opt_step_hist_val, self.ll_loss, self.kl_div, \
             self.kl_entropy = init_stat_vars()
 
@@ -541,12 +547,11 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 class AdaptiveMetaLearnerV1(AdaptiveMetaLearnerV2):
     def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2,
                  use_cuda=False, output_bias=True):
-        super(AdaptiveMetaLearnerV1, self).__init__(num_params_optimizee, num_inputs, num_hidden, num_layers, use_cuda,
+        super(AdaptiveMetaLearnerV1, self).__init__(num_inputs, num_hidden, num_layers, use_cuda,
                                                     output_bias=output_bias)
 
         self.num_hidden_act = num_hidden
         # holds losses from each optimizer step
-        self.act_num_params = self.num_params
         # this is the LSTM for the ACT distribution
         self.act_linear1 = nn.Linear(num_inputs, self.num_hidden_act)
         # self.act_ln1 = LayerNorm1D(self.num_hidden_act)

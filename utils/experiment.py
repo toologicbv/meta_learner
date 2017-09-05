@@ -17,6 +17,7 @@ from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats
 from plots import create_exper_label
 import utils.batch_handler
 from val_optimizer import validate_optimizer
+from mnist_data_obj import MNISTDataSet
 
 
 class Experiment(object):
@@ -64,6 +65,11 @@ class Experiment(object):
             self.inc_learning_schedule = None
         self.batch_handler_class = None
         self.optimizer = None
+        # when optimizing MLP we need the MNIST data set
+        if run_args.problem == "mlp":
+            self.dta_set = MNISTDataSet(run_args.batch_size, run_args.cuda)
+        else:
+            self.dta_set = None
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)
@@ -399,14 +405,17 @@ class Experiment(object):
         outfile = os.path.join(self.output_dir, file_name)
         logger = self.meta_logger
         optimizer = self.optimizer
+        data_set = self.dta_set
         # we set meta_logger temporary to None, because encountering problems when loading the experiment later
         # from file, if the experiment ran on a different machine "can't find .../run.log bla bla
         self.meta_logger = None
         self.optimizer = None
+        self.dta_set = None
         with open(outfile, 'wb') as f:
             dill.dump(self, f)
         self.meta_logger = logger
         self.optimizer = optimizer
+        self.dta_set = data_set
         if self.meta_logger is not None:
             self.meta_logger.info("Epoch {} - Saving experimental details to {}".format(self.epoch, outfile))
 
