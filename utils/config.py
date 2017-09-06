@@ -56,8 +56,8 @@ class MetaConfig(object):
 
         self.pT_shape_param = 0.945
         self.ptT_shape_param = 0.6
-        self.T = 20 # avg = 80 with 0.98
-        self.max_val_opt_steps = 50
+        self.T = 25 # avg = 80 with 0.98
+        self.max_val_opt_steps = 30
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
@@ -76,7 +76,7 @@ class MetaConfig(object):
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost
         """
-        self.tau = 1e-4  # worked well for Graves model "regression" problem
+        self.tau = 3e-3  # worked well for Graves model "regression" problem
         # self.tau = 7e-4
 
 config = MetaConfig()

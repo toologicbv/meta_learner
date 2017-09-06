@@ -7,7 +7,7 @@ from utils.common import OPTIMIZER_DICT, construct_prior_p_t_T, get_func_loss
 STD_OPT_LR = 4e-1
 
 
-def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj):
+def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj, final_batch=False):
 
     func_is_nn_module = nn.Module in optimizees.__class__.__bases__
     # if we're using a standard optimizer
@@ -225,9 +225,9 @@ def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj):
     if hasattr(optimizees, "param_error"):
         epoch_obj.param_loss += optimizees.param_error(average=True).data.cpu().squeeze().numpy()[0]
 
-    if exper.args.problem == "mlp":
+    if exper.args.problem == "mlp" and final_batch:
         # evaluate the last MLP that we optimized
-        accuracy = optimizees.test_model(exper.dta_set, exper.args.cuda)
+        accuracy = optimizees.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
         exper.meta_logger.info("Note: End of batch - Accuracy of last MLP {:.4f}".format(accuracy))
 
 

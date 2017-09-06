@@ -5,9 +5,9 @@ from torch.autograd import Variable
 
 class MNISTDataSet(object):
 
-    def __init__(self, batch_size=32, use_cuda=False):
+    def __init__(self, train_batch_size=128, test_batch_size=256, use_cuda=False):
         self.use_cuda = use_cuda
-        self.batch_size = batch_size
+        self.batch_size = train_batch_size
         kwargs = {'num_workers': 1, 'pin_memory': True} if self.use_cuda else {}
         self.train_loader = torch.utils.data.DataLoader(
             datasets.MNIST('../data', train=True, download=True,
@@ -22,7 +22,7 @@ class MNISTDataSet(object):
                 transforms.ToTensor(),
                 transforms.Normalize((0.1307,), (0.3081,))
             ])),
-            batch_size=self.batch_size, shuffle=True, **kwargs)
+            batch_size=test_batch_size, shuffle=True, **kwargs)
 
         self.train_iter = iter(self.train_loader)
         self.test_iter = iter(self.test_loader)

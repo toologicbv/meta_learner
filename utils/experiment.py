@@ -30,14 +30,14 @@ class Experiment(object):
                             "kl_term": np.zeros(run_args.max_epoch), "penalty_term": np.zeros(run_args.max_epoch),
                             "weight_regularizer": np.zeros(run_args.max_epoch),
                             "grad_stats": np.zeros((run_args.max_epoch, 2)),  # store mean and stddev of gradients model
-                            "duration": []}
+                            "duration": [], "step_acc": OrderedDict()}
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "act_graves") else {},
                           "halting_step": {}, "kl_term": [], "penalty_term": [],
-                          "duration": [], "halt_step_funcs": {}}
+                          "duration": [], "halt_step_funcs": {}, "step_acc": OrderedDict()}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -69,7 +69,7 @@ class Experiment(object):
         # when optimizing MLP we need the MNIST data set
         self.validation_handler_class = None
         if run_args.problem == "mlp":
-            self.dta_set = MNISTDataSet(run_args.batch_size, run_args.cuda)
+            self.dta_set = MNISTDataSet(run_args.batch_size, use_cuda=run_args.cuda)
         else:
             self.dta_set = None
 
@@ -80,6 +80,8 @@ class Experiment(object):
         self.epoch_stats["qt_hist"][self.epoch] = np.zeros(self.max_time_steps)
         # 1) min 2) max 3) mean 4) stddev 5) median
         self.epoch_stats["halting_stats"][self.epoch] = np.zeros(5)
+        # only used in mlp experiments, accuracy of MLP on MNIST
+        self.epoch_stats["step_acc"][self.epoch] = np.zeros(self.max_time_steps + 1)
 
     def init_val_stats(self, eval_time_steps=None):
         if eval_time_steps is None:
@@ -88,6 +90,8 @@ class Experiment(object):
         self.val_stats["opt_step_hist"][self.epoch] = np.zeros(eval_time_steps + 1).astype(int)
         self.val_stats["halting_step"][self.epoch] = np.zeros(eval_time_steps + 1).astype(int)
         self.val_stats["qt_hist"][self.epoch] = np.zeros(eval_time_steps)
+        # only used in mlp experiments
+        self.val_stats["step_acc"][self.epoch] = np.zeros(eval_time_steps + 1)
 
     def reset_val_stats(self):
         self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
@@ -95,7 +99,8 @@ class Experiment(object):
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "act_graves") else {},
-                          "halting_step": {}, "kl_term": [], "penalty_term": [], "duration": [], "halt_step_funcs": {}}
+                          "halting_step": {}, "kl_term": [], "penalty_term": [], "duration": [], "halt_step_funcs": {},
+                          "step_acc": OrderedDict()}
 
     def add_halting_steps(self, halting_steps, is_train=True):
         # expect opt_steps to be an autograd.Variable
@@ -128,6 +133,15 @@ class Experiment(object):
             self.epoch_stats["step_losses"][self.epoch][step] += step_loss
         else:
             self.val_stats["step_losses"][self.epoch][step] += step_loss
+
+    def add_step_accuracy(self, step_acc, step, is_train=True):
+        # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
+        if not isinstance(step_acc, (np.float, np.float32, np.float64)):
+            raise ValueError("step_loss must be a numpy.float but is type {}".format(type(step_acc)))
+        if is_train:
+            self.epoch_stats["step_acc"][self.epoch][step] += step_acc
+        else:
+            self.val_stats["step_acc"][self.epoch][step] += step_acc
 
     def add_duration(self, epoch_time, is_train=True):
         if not isinstance(epoch_time, (np.float, np.float32, np.float64)):
@@ -325,21 +339,26 @@ class Experiment(object):
 
     def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
-        if self.args.problem == "mlp":
+
+        if self.args.problem == "mlp" and self.args.learner == "meta":
+            # >>>> Evaluation of MLP with meta model <<<
             self.meta_logger.info("Epoch: {} - Evaluating {} test MLPs".format(self.epoch,
                                                                                len(functions)))
-            if self.args.learner == "meta":
-                validation_class = getattr(utils.validation_handler, self.validation_handler_class)
-                if eval_time_steps is None:
-                    self.init_val_stats()
-                else:
-                    self.init_val_stats(eval_time_steps)
-                validation_handler = validation_class(self, save_model=save_model)
-                validation_handler(self, meta_optimizer, functions)
+            validation_class = getattr(utils.validation_handler, self.validation_handler_class)
+            if eval_time_steps is None:
+                self.init_val_stats()
+            else:
+                self.init_val_stats(eval_time_steps)
+            validation_handler = validation_class(self, save_model=save_model)
+            validation_handler(self, meta_optimizer, functions)
 
-                del validation_handler
+            del validation_handler
 
         elif self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
+            if self.args.problem == "mlp":
+                functions = functions[0]
+                if self.args.cuda:
+                    functions = functions.cuda()
             self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
                                                                                     functions.num_of_funcs))
             batch_handler_class = getattr(utils.batch_handler, self.batch_handler_class)
@@ -349,7 +368,8 @@ class Experiment(object):
                 self.init_val_stats(eval_time_steps)
             functions.reset()
             test_batch = batch_handler_class(self, is_train=False, optimizees=functions)
-            test_batch(self, epoch_obj, meta_optimizer)
+            test_batch(self, epoch_obj, meta_optimizer,
+                       final_batch=True if self.args.problem == "mlp" else False)
             test_batch.compute_batch_loss()
             meta_optimizer.reset_final_loss()
             meta_optimizer.zero_grad()
@@ -368,9 +388,9 @@ class Experiment(object):
             # --------------- halting step for this evaluation run --------
             np_halting_step = self.val_stats["halting_step"][self.epoch]
             avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_halting_step)
-            self.meta_logger.info("Epoch: {}, evaluation - halting step distribution".format(self.epoch))
+            self.meta_logger.info("Epoch: {} - evaluation - halting step distribution".format(self.epoch))
             self.meta_logger.info(np.array_str(np_halting_step[1:epoch_obj.test_max_time_steps_taken + 1]))
-            self.meta_logger.info("Epoch: {}, evaluation - Average number of optimization steps {:.3f} "
+            self.meta_logger.info("Epoch: {} - evaluation - Average number of optimization steps {:.3f} "
                                   "stddev {:.3f} median {} sum-steps {}".format(self.epoch, avg_opt_steps,
                                                                                 stddev, median,
                                                                                 int(total_steps)))
@@ -389,7 +409,8 @@ class Experiment(object):
             self.val_stats["penalty_term"].append(test_batch.penalty_term)
             self.add_duration(duration, is_train=False)
             # save the initial distance of each optimizee from its global minimum
-            self.val_stats["loss_funcs"][self.epoch] = functions.distance_to_min
+            if hasattr(functions, "distance_to_min"):
+                self.val_stats["loss_funcs"][self.epoch] = functions.distance_to_min
             del test_batch
 
         else:
@@ -436,7 +457,7 @@ class Experiment(object):
         self.optimizer = optimizer
         self.dta_set = data_set
         if self.meta_logger is not None:
-            self.meta_logger.info("Epoch {} - Saving experimental details to {}".format(self.epoch, outfile))
+            self.meta_logger.info("Epoch: {} - Saving experimental details to {}".format(self.epoch, outfile))
 
     def end(self, model):
 

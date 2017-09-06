@@ -138,7 +138,10 @@ class MLP(nn.Module):
                 for p_name, param in module.named_parameters():
                     module._parameters[p_name] = Variable(module._parameters[p_name].data, requires_grad=True)
 
-    def test_model(self, dataset, use_cuda=False):
+    def test_model(self, dataset, use_cuda=False, quick_test=False):
+
+        if quick_test:
+            return self.quick_test_model(dataset, use_cuda)
         # Test the Model
         correct = 0
         total = 0
@@ -154,6 +157,18 @@ class MLP(nn.Module):
             total += labels.size(0)
             correct += self.accuracy(outputs, labels)
 
+        return 100. * correct / float(total)
+
+    def quick_test_model(self, dataset, use_cuda=False):
+
+        images, labels = dataset.next_batch(is_train=False)
+        total = labels.size(0)
+        if use_cuda:
+            images = images.cuda()
+            labels = labels.cuda()
+        images = images.view(-1, self.nn_architecture["n_input"])
+        outputs = self.evaluate(images, use_copy_obj=True)
+        correct = self.accuracy(outputs, labels.data)
         return 100. * correct / float(total)
 
 

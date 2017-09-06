@@ -258,7 +258,27 @@ class ACTBatchHandler(BatchHandler):
 
         return delta_param, rho_probs, eval_par_new
 
-    def __call__(self, exper, epoch_obj, meta_optimizer):
+    def _check_tbptt_init(self, exper, meta_optimizer):
+
+        if exper.args.learner == 'act_graves':
+            # meta model uses truncated BPTT, Keep states for truncated BPTT
+            if self.step > exper.args.truncated_bptt_step - 1:
+                keep_states = True
+            else:
+                keep_states = False
+            if self.step % exper.args.truncated_bptt_step == 0:
+                # exper.meta_logger.info("DEBUG@step %d - Resetting LSTM" % self.step)
+                self.forward_steps = 1
+                meta_optimizer.reset_lstm(keep_states=keep_states)
+                # kind of fake reset, the actual value of the function parameters are NOT changed, only
+                # the pytorch Variable, in order to prevent the .backward() function to go beyond the truncated
+                # BPTT steps
+                self.functions.reset_params()
+                loss_sum = 0
+            else:
+                self.forward_steps += 1
+
+    def __call__(self, exper, epoch_obj, meta_optimizer, final_batch=False):
 
         self.step = 0
         meta_optimizer.reset_lstm(keep_states=False)
@@ -301,6 +321,11 @@ class ACTBatchHandler(BatchHandler):
                 self.eval_last_step_taken = self.step
             epoch_obj.set_max_time_steps_taken(self.eval_last_step_taken, self.is_train)
             exper.meta_logger.info("! - Validation last step {} - !".format(self.eval_last_step_taken))
+
+        if exper.args.problem == "mlp" and final_batch:
+            # evaluate the last MLP that we optimized
+            accuracy = self.functions.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
+            exper.meta_logger.info("Epoch {}: last batch - accuracy of last MLP {:.4f}".format(exper.epoch, accuracy))
 
     def compute_probs(self, new_rho_t):
 

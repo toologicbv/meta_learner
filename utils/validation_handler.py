@@ -18,7 +18,7 @@ class ValidateMLPOnMetaLearner(object):
         self.save_model = save_model
         self.avg_final_step_loss = 0.
 
-    def __call__(self, exper, meta_learner, optimizees):
+    def __call__(self, exper, meta_learner, optimizees, with_step_acc=False):
         start_validate = time.time()
         fixed_weights = generate_fixed_weights(exper, steps=exper.config.max_val_opt_steps)
 
@@ -42,6 +42,9 @@ class ValidateMLPOnMetaLearner(object):
                 mlp.set_eval_obj_parameters(par_new)
                 image, y_true = exper.dta_set.next_batch(is_train=True)
                 loss_step = mlp.evaluate(image, use_copy_obj=True, compute_loss=True, y_true=y_true)
+                if with_step_acc:
+                    accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
+                    exper.val_stats["step_acc"][exper.epoch][step] += accuracy
                 meta_learner.losses.append(Variable(loss_step.data.unsqueeze(1)))
                 mlp.set_parameters(par_new)
                 mlp.zero_grad()
@@ -50,6 +53,10 @@ class ValidateMLPOnMetaLearner(object):
 
             # make another step to register final loss
             loss = get_func_loss(exper, mlp, average=False)
+            if with_step_acc:
+                accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
+                exper.val_stats["step_acc"][exper.epoch][step] += accuracy
+            # collect results
             col_losses.append(loss.data.cpu().squeeze().numpy()[0].astype(float))
             self.avg_final_step_loss += loss.data.cpu().squeeze().numpy()[0].astype(float)
             np_losses = np.array(col_losses)
@@ -60,6 +67,7 @@ class ValidateMLPOnMetaLearner(object):
             self.total_opt_loss += meta_learner.final_loss(loss_weights=fixed_weights).data.squeeze()[0]
 
         exper.val_stats["step_losses"][exper.epoch] *= 1./float(num_of_mlps)
+        exper.val_stats["step_acc"][exper.epoch] *= 1. / float(num_of_mlps)
         self.total_loss *= 1./float(num_of_mlps)
         self.total_opt_loss *= 1. / float(num_of_mlps)
         self.avg_final_step_loss *= 1. / float(num_of_mlps)
@@ -71,12 +79,20 @@ class ValidateMLPOnMetaLearner(object):
             exper.meta_logger.info(">>> NOTE: only showing last 100 steps <<<")
         else:
             step_results = exper.val_stats["step_losses"][exper.epoch]
-        exper.meta_logger.info("INFO - Epoch {}: Final step losses: {}".format(exper.epoch,
-                                                                               np.array_str(step_results, precision=4)))
+        exper.meta_logger.info("INFO - Epoch {}: "
+                               "Evaluation - Final step losses: {}".format(exper.epoch,
+                                                                           np.array_str(step_results, precision=4)))
+        if with_step_acc:
+            exper.meta_logger.info("INFO - Epoch {}: "
+                                   "Evaluation - Final step accuracies: {}".format(exper.epoch,
+                                                                      np.array_str(exper.val_stats["step_acc"][exper.epoch],
+                                                                                   precision=4)))
+
         duration = time.time() - start_validate
-        exper.meta_logger.info("INFO - Epoch {}, elapsed time {:.2f} seconds: ".format(exper.epoch,
-                                                                                       duration))
-        exper.meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
+        exper.meta_logger.info("INFO - Epoch {}: Evaluation - elapsed time {:.2f} seconds: ".format(exper.epoch,
+                                                                                                    duration))
+        exper.meta_logger.info("INFO - Epoch {}: Evaluation - "
+                               "Final validation stats: total-step-losses / final-step loss "
                                ": {:.4}/{:.4}".format(exper.epoch, self.total_loss, self.avg_final_step_loss))
         exper.add_duration(duration, is_train=False)
 

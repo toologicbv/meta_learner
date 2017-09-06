@@ -155,7 +155,8 @@ def main():
             if exper.args.learner in ['meta', 'act']:
                 exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i + 1))
                 optimizees = get_batch_functions(exper)
-                execute_batch(exper, optimizees, meta_optimizer, exper.optimizer, epoch_obj)
+                execute_batch(exper, optimizees, meta_optimizer, exper.optimizer, epoch_obj,
+                              final_batch=True if i+1 == epoch_obj.num_of_batches else False)
 
             elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":
                 loss_sum = Variable(torch.DoubleTensor([0.]))
@@ -166,7 +167,7 @@ def main():
                 for _ in np.arange(exper.args.samples_per_batch):
                     batch = batch_handler_class(exper, is_train=True)
                     batch_handler_class.id += 1
-                    batch(exper, epoch_obj, meta_optimizer)
+                    batch(exper, epoch_obj, meta_optimizer, final_batch=True if i+1 == epoch_obj.num_of_batches else False)
                     batch.compute_batch_loss(epoch_obj.weight_regularizer)
                     loss_sum += batch.loss_sum
                     kl_sum += batch.kl_term

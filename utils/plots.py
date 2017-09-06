@@ -931,6 +931,8 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
 
     if exper.args.problem == "regression":
         scale = [9., 70]
+    elif exper.args.problem == "mlp":
+        scale = [1., 2.5]
 
     if data_set == "train":
         run_type = "training"

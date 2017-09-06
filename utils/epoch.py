@@ -107,6 +107,11 @@ class Epoch(object):
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
             exper.meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
                                                                                                 avg_opt_steps))
+        if exper.args.learner == "meta":
+            e_losses = exper.epoch_stats["step_losses"][self.epoch_id][0:exper.max_time_steps + 1]
+            exper.meta_logger.info("time step losses")
+            exper.meta_logger.info(np.array_str(e_losses, precision=4))
+
         if exper.args.learner == 'meta' and exper.args.version[0:2] == "V2":
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id,
@@ -150,6 +155,10 @@ class Epoch(object):
             exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(self.loss_optimizer)
+
+        if self.duration > 15.:
+            exp_file_name = "exp_statistics_{}.dll".format(self.epoch_id)
+            exper.save(file_name=exp_file_name)
 
     def set_max_time_steps_taken(self, steps, is_train):
         if is_train:
