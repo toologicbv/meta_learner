@@ -3,6 +3,11 @@ from config import config
 import math
 
 
+from regression import neg_log_likelihood_loss, nll_with_t_dist
+from regression import RegressionFunction, RegressionWithStudentT
+from utils.mlp import MLP
+
+
 class LessOrEqual(torch.autograd.Function):
     """
     We can implement our own custom autograd Functions by subclassing
@@ -73,3 +78,24 @@ def preprocess_gradients(x):
     x2 = x.sign() * indicator + math.exp(p) * x * (1 - indicator)
 
     return torch.cat((x1, x2), 1)
+
+
+def get_step_loss(optimizee_obj, new_parameters, avg_batch=False, exper=None):
+    if optimizee_obj.__class__ == RegressionFunction:
+        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
+                                       stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
+                                       avg_batch=avg_batch, size_average=False)
+    elif optimizee_obj.__class__ == RegressionWithStudentT:
+        loss = nll_with_t_dist(optimizee_obj.y, optimizee_obj.y_t(new_parameters), N=optimizee_obj.n_samples,
+                               shape_p=optimizee_obj.shape_p, scale_p=optimizee_obj.scale_p,
+                               avg_batch=avg_batch)
+
+    elif optimizee_obj.__class__ == MLP:
+        optimizee_obj.set_eval_obj_parameters(new_parameters)
+        image, y_true = exper.dta_set.next_batch(is_train=True)
+        loss = optimizee_obj.evaluate(image, use_copy_obj=True, compute_loss=True, y_true=y_true)
+    else:
+        raise ValueError("Optimizee class not supported {}".format(optimizee_obj.__class__))
+
+    return loss
+

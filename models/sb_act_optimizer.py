@@ -39,11 +39,17 @@ class StickBreakingACTBaseModel(nn.Module):
             self.cuda()
 
     def forward(self, x_t):
-
         if self.use_cuda and not x_t.is_cuda:
             x_t = x_t.cuda()
+        if x_t.dim() == 1:
+            x_t = x_t.unsqueeze(1)
+        # the 2nd input dimension is 3 when we're optimizing the MLPs. In this case we scale the outputs as
+        # mentioned in the L2L paper by 0.1
+        if x_t.size(1) == 3:
+            do_scale = True
+        else:
+            do_scale = False
 
-        x_t = x_t.unsqueeze(1)
         x_t = self.linear_in(x_t)
         for i in range(len(self.lstms)):
             if x_t.size(0) != self.hx[i].size(0):
@@ -55,6 +61,9 @@ class StickBreakingACTBaseModel(nn.Module):
 
         theta_out = self.theta_linear_out(x_t)
         rho_out = F.sigmoid(self.rho_linear_out(x_t))
+        if do_scale:
+            # in case of MLP we scale the output as mentioned in L2L paper
+            theta_out = 0.1 * theta_out
 
         return tuple((theta_out.squeeze(), rho_out.squeeze()))
 

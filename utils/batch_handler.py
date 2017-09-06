@@ -5,12 +5,9 @@ from scipy.stats import geom, nbinom, poisson
 import torch
 from torch.autograd import Variable
 
-
+from utils.helper import preprocess_gradients, get_step_loss
 from utils.common import get_batch_functions, get_func_loss
 from utils.helper import tensor_and, tensor_any, LessOrEqual
-
-
-from models.rnn_optimizer import get_step_loss
 
 
 class BatchHandler(object):
@@ -52,6 +49,7 @@ class ACTBatchHandler(BatchHandler):
                 raise ValueError("Parameter -optimizees- can't be None. Please provide a test set")
             self.functions = optimizees
 
+        self.func_is_nn_module = torch.nn.Module in self.functions.__class__.__bases__
         self.batch_size = self.functions.num_of_funcs
         # will be intensively used to select the functions that still need to be optimzed after t steps
         self.bool_mask = Variable(torch.ones(self.batch_size, 1).type(torch.ByteTensor))
@@ -118,27 +116,8 @@ class ACTBatchHandler(BatchHandler):
         :return: IMPORTANT RETURNS LOSS STEP THAT IS NOT MULTIPLIED BY QT-VALUE! NUMPY FLOAT32
         """
         loss = get_func_loss(exper, self.functions, average=False)
-        # compute gradients of optimizee which will need for the meta-learner
-        loss.backward(self.backward_ones)
-        # register the baseline loss at step 0
-        if self.step == 0:
-            self.process_step0(exper, loss)
-        param_size = self.functions.params.grad.size()
-        if not self.is_train:
-            # IMPORTANT! BECAUSE OTHERWISE RUNNING INTO MEMORY ISSUES - PASS GRADS NOT IN A NEW VARIABLE
-            delta_param, rho_probs = meta_optimizer.forward(self.functions.params.grad.view(-1))
-        else:
-            flat_grads = Variable(self.functions.params.grad.data.view(-1))
-            delta_param, rho_probs = meta_optimizer.forward(flat_grads)
-        # (1) reshape parameter tensor (2) take mean to compute qt values
-        # try to produce ones
-        delta_param = delta_param.view(param_size)
-        rho_probs = torch.mean(rho_probs.view(*param_size), 1, keepdim=True)
-
-        if not self.is_train:
-            # during evaluation we keep ALL parameters generated in order to be able to compute new loss values
-            # for all optimizees
-            eval_par_new = Variable(self.functions.params.data - delta_param.data)
+        # make the forward step, which depends heavily on the experiment we're performing (MLP or Regression(T))
+        delta_param, rho_probs, eval_par_new = self.forward(loss, exper, meta_optimizer)
         # then, apply the previous batch mask, although we did the forward pass with all functions, we filter here
         delta_param = torch.mul(delta_param, self.float_mask)
         # moved to method >>> compute_probs <<<
@@ -151,6 +130,7 @@ class ACTBatchHandler(BatchHandler):
             new_probs = torch.mul(rho_probs.double(), self.float_mask.double())
         else:
             # stick-breaking approach: transform RNN output rho_t values to probabilities
+            # method compute_probs multiplies with the float_mask object!
             new_probs = self.compute_probs(rho_probs)
         # we need to determine the indices of the functions that "stop" in this time step (new_funcs_mask)
         funcs_that_stop = torch.le(self.compare_probs + new_probs, self.one_minus_eps)
@@ -171,7 +151,13 @@ class ACTBatchHandler(BatchHandler):
         # IMPORTANT: although above we constructed the new mask (for the next time step) we use the previous mask for the
         # increase of the cumulative probs which we use in the WHILE loop to determine when to stop the complete batch
         self.compare_probs += torch.mul(new_probs, self.float_mask.double())
-        par_new = self.functions.params - delta_param
+        # IMPORTANT UPDATE OF OPTIMIZEE PARAMETERS
+        if self.func_is_nn_module:
+            # awkward but true: delta_param has [batch_dim, num_params] due to multiplication with float masks, but
+            # must have transpose shape for this update
+            par_new = self.functions.get_flat_params() - delta_param.permute(1, 0)
+        else:
+            par_new = self.functions.params - delta_param
         # increase the number of steps taken for the functions that are still in the race, we need these to compare
         # against the maximum allowed number of steps
         self.counter_compare += new_float_mask
@@ -196,18 +182,81 @@ class ACTBatchHandler(BatchHandler):
             new_float_mask.type(torch.ByteTensor)
         # compute the new step loss
         if self.is_train:
-            loss_step = self.step_loss(par_new, average_batch=True)
+            loss_step = self.step_loss(par_new, exper, average_batch=True)
         else:
-            loss_step = self.step_loss(eval_par_new, average_batch=True)
+            loss_step = self.step_loss(eval_par_new, exper, average_batch=True)
         # update batch functions parameter for next step
         if self.is_train:
             self.functions.set_parameters(par_new)
         else:
             self.functions.set_parameters(eval_par_new)
 
-        self.functions.params.grad.data.zero_()
+        if self.func_is_nn_module:
+            self.functions.zero_grad()
+        else:
+            self.functions.params.grad.data.zero_()
 
         return loss_step.data.cpu().squeeze().numpy()[0]
+
+    def forward(self, loss, exper, meta_optimizer):
+        # Note: splitting the logic between the different experiments:
+        #       (1) MLP
+        #       (2) All others (Regression & Regression_T)
+        # compute gradients of optimizee which will need for the meta-learner
+        if exper.args.problem == "mlp":
+            loss.backward()
+            if self.is_train:
+                delta_param, rho_probs = meta_optimizer.forward(Variable(torch.cat((preprocess_gradients(
+                    self.functions.get_flat_grads().data),
+                    self.functions.get_flat_params().data), 1)))
+            else:
+                delta_param, rho_probs = meta_optimizer.forward(Variable(torch.cat((preprocess_gradients(
+                    self.functions.get_flat_grads().data),
+                    self.functions.get_flat_params().data),
+                    1), volatile=True))
+
+            if not self.is_train:
+                # during evaluation we keep ALL parameters generated in order to be able to compute new loss values
+                # for all optimizees
+                eval_par_new = Variable(self.functions.get_flat_params().data - delta_param.data.unsqueeze(1))
+            else:
+                eval_par_new = None
+            # we have no batch dimension, so we add one in order to adjust to the
+            # rho_probs has shape [num_of_flat_parameters, ]. Note, batch dimension is dim0
+            # for the rho_probs we can just add the 2nd dim where ever we want, because we take the mean anyway [1 x 1]
+            # for the delta_param the situation is unfortunately more confusing. In the act_step method [1 x num-params]
+            # would be appreciated because of the float-masks which have batch dim as dim0. But the set_parameter method
+            # of MLP object expects [num_params, 1]...
+            delta_param = delta_param.unsqueeze(0)
+            rho_probs = rho_probs.unsqueeze(1)
+            rho_probs = torch.mean(rho_probs, 0, keepdim=True)
+
+        else:
+            loss.backward(self.backward_ones)
+            param_size = self.functions.params.grad.size()
+            if self.is_train:
+                flat_grads = Variable(self.functions.params.grad.data.view(-1))
+                delta_param, rho_probs = meta_optimizer.forward(flat_grads)
+            else:
+                # IMPORTANT! BECAUSE OTHERWISE RUNNING INTO MEMORY ISSUES - PASS GRADS NOT IN A NEW VARIABLE
+                delta_param, rho_probs = meta_optimizer.forward(self.functions.params.grad.view(-1))
+
+            # (1) reshape parameter tensor (2) take mean to compute qt values
+            # try to produce ones
+            delta_param = delta_param.view(param_size)
+            rho_probs = torch.mean(rho_probs.view(*param_size), 1, keepdim=True)
+
+            if not self.is_train:
+                # during evaluation we keep ALL parameters generated in order to be able to compute new loss values
+                # for all optimizees
+                eval_par_new = Variable(self.functions.params.data - delta_param.data)
+            else:
+                eval_par_new = None
+        # register the baseline loss at step 0
+        if self.step == 0:
+            self.process_step0(exper, loss)
+
+        return delta_param, rho_probs, eval_par_new
 
     def __call__(self, exper, epoch_obj, meta_optimizer):
 
@@ -299,12 +348,12 @@ class ACTBatchHandler(BatchHandler):
         meta_optimizer.zero_grad()
         return self.loss_sum.data.cpu().squeeze().numpy()[0], sum_grads
 
-    def step_loss(self, new_parameters, average_batch=True):
+    def step_loss(self, new_parameters, exper, average_batch=True):
 
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
-        loss = get_step_loss(self.functions, new_parameters, avg_batch=False)
+        loss = get_step_loss(self.functions, new_parameters, avg_batch=False, exper=exper)
         if loss.dim() == 1:
             loss = loss.unsqueeze(1)
 
@@ -482,7 +531,11 @@ class ACTBatchHandler(BatchHandler):
         return g_priors
 
     def process_step0(self, exper, loss):
-        baseline_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0]
+        # in the MLP experiments the loss has size [1x1], we don't want to take the mean then
+        if loss.size(0) > 1:
+            baseline_loss = torch.mean(loss, 0).data.cpu().squeeze().numpy()[0]
+        else:
+            baseline_loss = loss.data.cpu().squeeze().numpy()[0]
         exper.add_step_loss(baseline_loss, self.step, is_train=self.is_train)
         exper.add_opt_steps(self.step, is_train=self.is_train)
 

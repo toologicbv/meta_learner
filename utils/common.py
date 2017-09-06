@@ -14,6 +14,7 @@ import models.rnn_optimizer
 import models.sb_act_optimizer
 from probs import ConditionalTimeStepDist, TimeStepsDist
 from regression import RegressionFunction, L2LQuadratic, RosenBrock, RegressionWithStudentT
+
 from mlp import MLP
 
 
@@ -263,6 +264,8 @@ def get_batch_functions(exper):
         funcs = MLP(default_mlp_architecture)
         if exper.args.cuda:
             funcs = funcs.cuda()
+    else:
+        raise ValueError("Problem type >>>{}<<< is not supported".format(exper.args.problem))
 
     return funcs
 
@@ -399,6 +402,5 @@ def generate_fixed_weights(exper, steps=None):
         fixed_weights = fixed_weights.cuda()
 
     return fixed_weights
-
 
 

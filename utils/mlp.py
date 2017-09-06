@@ -20,6 +20,9 @@ class MLP(nn.Module):
 
         else:
             self.eval_copy = None
+        # slightly awkward, we need this attribute in order to make the optimization process general. Remember for the
+        # other experiments (regression) we work with batches of function
+        self.num_of_funcs = 1
 
     def _generate_network(self):
         self.input_layer = nn.Linear(self.nn_architecture["n_input"], self.nn_architecture["n_hidden_layer1"])

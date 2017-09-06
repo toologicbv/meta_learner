@@ -12,7 +12,7 @@ from collections import OrderedDict
 from layer_lstm import LayerLSTMCell
 from utils.config import config
 from utils.regression import neg_log_likelihood_loss, nll_with_t_dist, RegressionFunction, RegressionWithStudentT
-from utils.helper import preprocess_gradients
+from utils.helper import preprocess_gradients, get_step_loss
 
 
 def generate_reversed_cum(q_probs_in, priors_in, use_cuda=False):
@@ -71,21 +71,6 @@ def kl_divergence(q_probs=None, prior_probs=None, threshold=-1e-4):
             # raise ValueError("KL divergence can't be less than zero {}".format(kl_str))
 
     return kl_div
-
-
-def get_step_loss(optimizee_obj, new_parameters, avg_batch=False):
-    if optimizee_obj.__class__ == RegressionFunction:
-        loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
-                                       stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
-                                       avg_batch=avg_batch, size_average=False)
-    elif optimizee_obj.__class__ == RegressionWithStudentT:
-        loss = nll_with_t_dist(optimizee_obj.y, optimizee_obj.y_t(new_parameters), N=optimizee_obj.n_samples,
-                               shape_p=optimizee_obj.shape_p, scale_p=optimizee_obj.scale_p,
-                               avg_batch=avg_batch)
-    else:
-        raise ValueError("Optimizee class not supported {}".format(optimizee_obj.__class__))
-
-    return loss
 
 
 def init_stat_vars(conf=None):
