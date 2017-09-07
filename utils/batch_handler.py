@@ -320,7 +320,6 @@ class ACTBatchHandler(BatchHandler):
             if self.eval_last_step_taken == 0:
                 self.eval_last_step_taken = self.step
             epoch_obj.set_max_time_steps_taken(self.eval_last_step_taken, self.is_train)
-            exper.meta_logger.info("! - Validation last step {} - !".format(self.eval_last_step_taken))
 
         if exper.args.problem == "mlp" and final_batch:
             # evaluate the last MLP that we optimized

@@ -153,7 +153,7 @@ def main():
         for i in range(epoch_obj.num_of_batches):
 
             if exper.args.learner in ['meta', 'act']:
-                exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i + 1))
+                # exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i + 1))
                 optimizees = get_batch_functions(exper)
                 execute_batch(exper, optimizees, meta_optimizer, exper.optimizer, epoch_obj,
                               final_batch=True if i+1 == epoch_obj.num_of_batches else False)

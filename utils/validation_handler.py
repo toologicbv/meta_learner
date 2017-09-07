@@ -81,12 +81,17 @@ class ValidateMLPOnMetaLearner(object):
             step_results = exper.val_stats["step_losses"][exper.epoch]
         exper.meta_logger.info("INFO - Epoch {}: "
                                "Evaluation - Final step losses: {}".format(exper.epoch,
-                                                                           np.array_str(step_results, precision=4)))
+
+                                                                np.array_str(step_results, precision=4)))
         if with_step_acc:
             exper.meta_logger.info("INFO - Epoch {}: "
                                    "Evaluation - Final step accuracies: {}".format(exper.epoch,
                                                                       np.array_str(exper.val_stats["step_acc"][exper.epoch],
                                                                                    precision=4)))
+        else:
+            accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
+            exper.meta_logger.info("INFO - Epoch {}: "
+                                   "Evaluation - accuracies of last MLP: {:.4f}".format(exper.epoch, accuracy))
 
         duration = time.time() - start_validate
         exper.meta_logger.info("INFO - Epoch {}: Evaluation - elapsed time {:.2f} seconds: ".format(exper.epoch,

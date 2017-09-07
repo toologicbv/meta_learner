@@ -355,26 +355,48 @@ class Experiment(object):
             del validation_handler
 
         elif self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
-            if self.args.problem == "mlp":
-                functions = functions[0]
-                if self.args.cuda:
-                    functions = functions.cuda()
-            self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
-                                                                                    functions.num_of_funcs))
+
             batch_handler_class = getattr(utils.batch_handler, self.batch_handler_class)
             if eval_time_steps is None:
                 self.init_val_stats()
             else:
                 self.init_val_stats(eval_time_steps)
-            functions.reset()
-            test_batch = batch_handler_class(self, is_train=False, optimizees=functions)
-            test_batch(self, epoch_obj, meta_optimizer,
-                       final_batch=True if self.args.problem == "mlp" else False)
-            test_batch.compute_batch_loss()
-            meta_optimizer.reset_final_loss()
-            meta_optimizer.zero_grad()
-            eval_loss = test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
+            if self.args.problem == "mlp":
+                num_iters = len(functions)
+                num_of_funcs = num_iters
+            else:
+                num_iters = 1
+                num_of_funcs = functions.num_of_funcs
+
+            self.meta_logger.info("Epoch: {} - Evaluating {} test functions".format(self.epoch,
+                                                                                    num_of_funcs))
+            eval_loss = 0
+            kl_term = 0
+            penalty_term = 0
+            for i in np.arange(num_iters):
+                if self.args.problem == "mlp":
+                    optimizee = functions[i]
+                    if self.args.cuda:
+                        optimizee = optimizee.cuda()
+                else:
+                    optimizee = functions
+
+                optimizee.reset()
+                test_batch = batch_handler_class(self, is_train=False, optimizees=optimizee)
+                test_batch(self, epoch_obj, meta_optimizer,
+                           final_batch=True if self.args.problem == "mlp" else False)
+                test_batch.compute_batch_loss(weight_regularizer=epoch_obj.weight_regularizer)
+                meta_optimizer.reset_final_loss()
+                meta_optimizer.zero_grad()
+                eval_loss += test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
+                kl_term += test_batch.kl_term
+                penalty_term += test_batch.penalty_term
+
+            eval_loss *= 1/float(num_iters)
+            kl_term *= 1 / float(num_iters)
+            penalty_term *= 1 / float(num_iters)
             duration = time.time() - start_validate
+            self.scale_step_statistics(is_train=False)
             if self.config.max_val_opt_steps > 200:
                 start = self.config.max_val_opt_steps - 100
                 end = self.config.max_val_opt_steps + 1
@@ -388,6 +410,7 @@ class Experiment(object):
             # --------------- halting step for this evaluation run --------
             np_halting_step = self.val_stats["halting_step"][self.epoch]
             avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_halting_step)
+            self.meta_logger.info("! - Validation last step {} - !".format(epoch_obj.test_max_time_steps_taken))
             self.meta_logger.info("Epoch: {} - evaluation - halting step distribution".format(self.epoch))
             self.meta_logger.info(np.array_str(np_halting_step[1:epoch_obj.test_max_time_steps_taken + 1]))
             self.meta_logger.info("Epoch: {} - evaluation - Average number of optimization steps {:.3f} "
@@ -396,8 +419,8 @@ class Experiment(object):
                                                                                 int(total_steps)))
 
             self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl-term/penalty "
-                                  "{:.3f}/{:.4f}/{:.4f}".format(self.epoch, duration, eval_loss, test_batch.kl_term,
-                                                                test_batch.penalty_term))
+                                  "{:.3f}/{:.4f}/{:.4f}".format(self.epoch, duration, eval_loss, kl_term,
+                                                                penalty_term))
             # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
             # once, which is different during training because we process multiple batches in ONE EPOCH
             # for the validation "loss" (not opt_loss) we can just sum the step_losses we collected earlier
@@ -405,12 +428,12 @@ class Experiment(object):
             # this is the ACT-SB loss!
             self.val_stats["opt_loss"].append(eval_loss)
             # ja not consistent but .kl_term is already a numpy float whereas .loss_sum is not
-            self.val_stats["kl_term"].append(test_batch.kl_term)
-            self.val_stats["penalty_term"].append(test_batch.penalty_term)
+            self.val_stats["kl_term"].append(kl_term)
+            self.val_stats["penalty_term"].append(penalty_term)
             self.add_duration(duration, is_train=False)
             # save the initial distance of each optimizee from its global minimum
-            if hasattr(functions, "distance_to_min"):
-                self.val_stats["loss_funcs"][self.epoch] = functions.distance_to_min
+            if hasattr(optimizee, "distance_to_min"):
+                self.val_stats["loss_funcs"][self.epoch] = optimizee.distance_to_min
             del test_batch
 
         else:
