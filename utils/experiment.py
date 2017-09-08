@@ -236,6 +236,16 @@ class Experiment(object):
     def start(self, meta_logger=None):
         # Model specific things to initialize
 
+        if self.args.problem == "mlp":
+            if self.args.learner == "meta":
+                # for the meta model we want the the validation horizon to be equal to the max number of opt steps
+                # during training. We are actually interest to explore longer horizons during validation but
+                # it destroys the learning curves, so we postpone the longer horizons
+                self.args.max_val_opt_steps = self.args.optimizer_steps
+            else:
+                # for the ACT models we don't want the validation horizon to exceed the max horizon during training
+                self.args.max_val_opt_steps = self.args.config.T
+
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
                 raise ValueError("Version {} currently not supported (only V1.x and V2.x)".format(self.args.version))

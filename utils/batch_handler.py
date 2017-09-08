@@ -634,7 +634,8 @@ class ACTGravesBatchHandler(ACTBatchHandler):
         if mean_field:
             loss_matrix = torch.cat(self.batch_step_losses, 1).double()
             qts = self.q_t[:, 0:loss_matrix.size(1)]
-            losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0)
+            losses = torch.mean(torch.sum(loss_matrix, 1), 0) + torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0)
+            # losses = torch.mean(torch.sum(loss_matrix, 1), 0)
         else:
             idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
             if self.halting_steps.cuda:
