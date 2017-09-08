@@ -18,10 +18,10 @@ class ValidateMLPOnMetaLearner(object):
         self.save_model = save_model
         self.avg_final_step_loss = 0.
 
-    def __call__(self, exper, meta_learner, optimizees, with_step_acc=False):
+    def __call__(self, exper, meta_learner, optimizees, with_step_acc=False, verbose=False):
         start_validate = time.time()
         fixed_weights = generate_fixed_weights(exper, steps=exper.config.max_val_opt_steps)
-
+        avg_accuracies = []
         num_of_mlps = len(optimizees)
         for i, mlp in enumerate(optimizees):
             if exper.args.cuda:
@@ -66,6 +66,12 @@ class ValidateMLPOnMetaLearner(object):
 
             self.total_opt_loss += meta_learner.final_loss(loss_weights=fixed_weights).data.squeeze()[0]
 
+            accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
+            avg_accuracies.append(accuracy)
+            if verbose:
+                exper.meta_logger.info("INFO - Epoch {}: "
+                                       "Evaluation - accuracies of last MLP: {:.4f}".format(exper.epoch, accuracy))
+
         exper.val_stats["step_losses"][exper.epoch] *= 1./float(num_of_mlps)
         exper.val_stats["step_acc"][exper.epoch] *= 1. / float(num_of_mlps)
         self.total_loss *= 1./float(num_of_mlps)
@@ -83,15 +89,15 @@ class ValidateMLPOnMetaLearner(object):
                                "Evaluation - Final step losses: {}".format(exper.epoch,
 
                                                                 np.array_str(step_results, precision=4)))
+        avg_accuracies = np.mean(np.array(avg_accuracies))
+        exper.meta_logger.info("INFO - Epoch {}: - Evaluation - average accuracy {:.3f}".format(exper.epoch,
+                                                                                                avg_accuracies))
+
         if with_step_acc:
             exper.meta_logger.info("INFO - Epoch {}: "
                                    "Evaluation - Final step accuracies: {}".format(exper.epoch,
                                                                       np.array_str(exper.val_stats["step_acc"][exper.epoch],
                                                                                    precision=4)))
-        else:
-            accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
-            exper.meta_logger.info("INFO - Epoch {}: "
-                                   "Evaluation - accuracies of last MLP: {:.4f}".format(exper.epoch, accuracy))
 
         duration = time.time() - start_validate
         exper.meta_logger.info("INFO - Epoch {}: Evaluation - elapsed time {:.2f} seconds: ".format(exper.epoch,

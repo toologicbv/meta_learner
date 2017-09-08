@@ -629,7 +629,7 @@ class ACTGravesBatchHandler(ACTBatchHandler):
     def cuda(self):
         super(ACTGravesBatchHandler, self).cuda()
 
-    def compute_batch_loss(self, weight_regularizer=1., mean_field=False):
+    def compute_batch_loss(self, weight_regularizer=1., mean_field=True):
         ponder_cost = self.compute_ponder_cost(tau=weight_regularizer)
         if mean_field:
             loss_matrix = torch.cat(self.batch_step_losses, 1).double()
@@ -643,8 +643,7 @@ class ACTGravesBatchHandler(ACTBatchHandler):
             loss_matrix = torch.cat(self.batch_step_losses, 1)
             losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
 
-        # self.loss_sum = (losses.double() + ponder_cost).squeeze()
-        self.loss_sum = losses.double().squeeze()
+        self.loss_sum = (losses.double() + ponder_cost).squeeze()
         self.kl_term = ponder_cost.data.cpu().squeeze().numpy()[0]
 
     def compute_ponder_cost(self, tau=5e-2):
