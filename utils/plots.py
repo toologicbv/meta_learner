@@ -50,7 +50,7 @@ def create_x_val_array(exper, loss):
     return np.array(x_vals)
 
 
-def get_exper_loss_data(exper, loss_type, fig_name=None):
+def get_exper_loss_data(exper, loss_type, fig_name=None, validation=False):
     exper_label = "_" + create_exper_label(exper)
     dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
     if loss_type == "loss":
@@ -62,26 +62,26 @@ def get_exper_loss_data(exper, loss_type, fig_name=None):
         train_loss = exper.epoch_stats['loss']
         val_loss = exper.val_stats['loss']
         plt.ylabel("loss (optimizee)")
-        if fig_name is None:
-            fig_name = os.path.join(exper.output_dir, config.loss_fig_name + exper_label + dt + config.dflt_plot_ext)
+        loss_fig_name = exper.config.loss_fig_name
+
     elif loss_type == "opt_loss":
         num_opt_steps = exper.avg_num_opt_steps
         train_loss = exper.epoch_stats['opt_loss']
         val_loss = exper.val_stats['opt_loss']
         plt.ylabel("optimizer-loss")
-        if fig_name is None:
-            fig_name = os.path.join(exper.output_dir, config.opt_loss_fig_name + exper_label + dt +
-                                    config.dflt_plot_ext)
+        loss_fig_name = exper.config.opt_loss_fig_name
+
     elif loss_type == "param_error":
         num_opt_steps = exper.avg_num_opt_steps
         train_loss = exper.epoch_stats['param_error']
         val_loss = exper.val_stats['param_error']
         plt.ylabel("Parameter error")
-        if fig_name is None:
-            fig_name = os.path.join(exper.output_dir, config.param_error_fig_name + exper_label + dt + config.dflt_plot_ext)
+        loss_fig_name = exper.config.param_error_fig_name
     else:
         raise ValueError("loss_type {} not supported".format(loss_type))
-
+    if fig_name is None:
+        run_type = "_eval" if validation else "_train"
+        fig_name = os.path.join(exper.output_dir, loss_fig_name + run_type + exper_label + config.dflt_plot_ext)
     return num_opt_steps, train_loss, val_loss, fig_name
 
 
@@ -90,7 +90,8 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
 
     title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
     ax = plt.figure(figsize=(height, width)).gca()
-    num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name)
+    num_opt_steps, train_loss, val_loss, fig_name = get_exper_loss_data(exper, loss_type, fig_name=fig_name,
+                                                                        validation=validation)
     plt.xlabel("epochs")
     x_vals = np.arange(1, exper.epoch+1, 1)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -569,7 +570,7 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
         else:
             raise ValueError("{} loss type is not supported".format(loss_type))
 
-        num_opt_steps, train_loss, val_loss, _ = get_exper_loss_data(expers[e], loss)
+        num_opt_steps, train_loss, val_loss, _ = get_exper_loss_data(expers[e], loss, validation=validation)
 
         model = expers[e].args.model
 

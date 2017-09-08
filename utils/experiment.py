@@ -244,7 +244,7 @@ class Experiment(object):
                 self.args.max_val_opt_steps = self.args.optimizer_steps
             else:
                 # for the ACT models we don't want the validation horizon to exceed the max horizon during training
-                self.args.max_val_opt_steps = self.args.config.T
+                self.args.max_val_opt_steps = self.config.T
 
         if self.args.learner == "act":
             if self.args.version[0:2] not in ['V1', 'V2']:
@@ -383,6 +383,7 @@ class Experiment(object):
             eval_loss = 0
             kl_term = 0
             penalty_term = 0
+            test_max_time_steps_taken = 0
             for i in np.arange(num_iters):
                 if self.args.problem == "mlp":
                     optimizee = functions[i]
@@ -401,7 +402,10 @@ class Experiment(object):
                 eval_loss += test_batch.loss_sum.data.cpu().squeeze().numpy()[0]
                 kl_term += test_batch.kl_term
                 penalty_term += test_batch.penalty_term
+                if epoch_obj.test_max_time_steps_taken > test_max_time_steps_taken:
+                    test_max_time_steps_taken = epoch_obj.test_max_time_steps_taken
 
+            epoch_obj.test_max_time_steps_taken = test_max_time_steps_taken
             eval_loss *= 1/float(num_iters)
             kl_term *= 1 / float(num_iters)
             penalty_term *= 1 / float(num_iters)
@@ -508,8 +512,17 @@ class Experiment(object):
             self.generate_figures()
 
     def generate_figures(self):
-        loss_plot(self, loss_type="loss", save=True, validation=self.run_validation)  # self.run_validation
-        loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
+        if self.args.problem == "mlp":
+            # for the MLP experiment we don't want the learning curves of training & validation in one figure
+            # because the scales are very different
+            loss_plot(self, loss_type="loss", save=True, validation=False)
+            loss_plot(self, loss_type="opt_loss", save=True, validation=False, log_scale=False)
+            if self.run_validation:
+                loss_plot(self, loss_type="loss", save=True, validation=True, only_val=True)
+                loss_plot(self, loss_type="opt_loss", save=True, validation=True, only_val=True, log_scale=False)
+        else:
+            loss_plot(self, loss_type="loss", save=True, validation=self.run_validation)
+            loss_plot(self, loss_type="opt_loss", save=True, validation=self.run_validation, log_scale=False)
         plot_image_map_losses(self, data_set="train", do_save=True)
         plot_dist_optimization_steps(self, data_set="train", save=True)
         plot_gradient_stats(self, do_show=False, do_save=True)
