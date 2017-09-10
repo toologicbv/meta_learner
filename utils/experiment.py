@@ -254,6 +254,7 @@ class Experiment(object):
             else:
                 self.avg_num_opt_steps = self.pt_dist.mean
                 self.max_time_steps = self.config.T
+            self.batch_handler_class = "BatchHandler"
         else:
             if self.args.learner == "act_sb":
                 self.batch_handler_class = "ACTBatchHandler"
@@ -547,7 +548,8 @@ class Experiment(object):
             # plot_dist_optimization_steps(self.exper, data_set="train", save=True)
             # plot_dist_optimization_steps(experiment, data_set="val", save=True)
             plot_qt_probs(self, data_set="train", save=True)
-            plot_loss_versus_halting_step(self, do_show=False, do_save=True)
+            if self.args.problem != "mlp":
+                plot_loss_versus_halting_step(self, do_show=False, do_save=True)
             # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
 
     @staticmethod

@@ -142,13 +142,23 @@ def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj, final
         # ACT model processing. NOTE: we only end up here if learner != "meta" !!!
         elif exper.args.learner == 'act':
             delta_param, delta_qt = meta_optimizer.meta_update(optimizees)
-            par_new = optimizees.params - delta_param
+
+            if exper.args.problem == "mlp":
+                par_new = optimizees.get_flat_params() + delta_param.unsqueeze(1)
+                delta_qt = torch.mean(delta_qt, 0, keepdim=True)
+                optimizees.set_eval_obj_parameters(par_new)
+                image, y_true = exper.dta_set.next_batch(is_train=True)
+                loss_step = optimizees.evaluate(image , use_copy_obj=True, compute_loss=True, y_true=y_true)
+                meta_optimizer.losses.append(Variable(loss_step.data.unsqueeze(1)))
+            else:
+                par_new = optimizees.params - delta_param
+
             qt_param = qt_param + delta_qt
             if exper.args.problem == "quadratic":
                 loss_step = optimizees.compute_loss(average=False, params=par_new)
                 meta_optimizer.losses.append(loss_step)
                 loss_step = 1 / float(optimizees.num_of_funcs) * torch.sum(loss_step)
-            else:
+            elif exper.args.problem != "mlp":
                 # Regression
                 loss_step = meta_optimizer.step_loss(optimizees, par_new, average_batch=True)
             meta_optimizer.q_t.append(qt_param)

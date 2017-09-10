@@ -383,10 +383,15 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
     def forward(self, x_t, param_shape=None):
 
+        if x_t.dim() == 1:
+            x_t = x_t.unsqueeze(1)
         if self.use_cuda and not x_t.is_cuda:
             x_t = x_t.cuda()
+        if x_t.size(1) == 3:
+            do_scale = True
+        else:
+            do_scale = False
 
-        x_t = x_t.unsqueeze(1)
         x_t = self.linear1(x_t)
         for i in range(len(self.lstms)):
             if x_t.size(0) != self.hx[i].size(0):
@@ -398,7 +403,9 @@ class AdaptiveMetaLearnerV2(MetaLearner):
 
         theta_out = self.linear_out(x_t)
         qt_out = self.act_linear_out(x_t)
-        # qt_out = self.act_qt_out (qt_out.view(param_shape))
+        if do_scale:
+            # in case of MLP we scale the output as mentioned in L2L paper
+            theta_out = 0.1 * theta_out
 
         return tuple((theta_out.squeeze(), qt_out.squeeze()))
 
@@ -408,15 +415,20 @@ class AdaptiveMetaLearnerV2(MetaLearner):
             :param optimizee_with_grads:
             :return: delta theta, delta qt
         """
+        is_nn_module = nn.Module in optimizee_with_grads.__class__.__bases__
+        if is_nn_module:
+            delta_theta, delta_qt = self(Variable(torch.cat((preprocess_gradients(optimizee_with_grads.get_flat_grads().data),
+                                                  optimizee_with_grads.get_flat_params().data), 1)))
+        else:
+            param_size = optimizee_with_grads.params.grad.size()
 
-        param_size = optimizee_with_grads.params.grad.size()
+            flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
+            delta_theta, delta_qt = self(flat_grads, param_size)
+            # reshape parameters
+            delta_theta = delta_theta.view(param_size)
+            # reshape qt-values and calculate mean
+            delta_qt = torch.mean(delta_qt.view(param_size), 1).unsqueeze(1)
 
-        flat_grads = Variable(optimizee_with_grads.params.grad.data.view(-1))
-        delta_theta, delta_qt = self(flat_grads, param_size)
-        # reshape parameters
-        delta_theta = delta_theta.view(param_size)
-        # reshape qt-values and calculate mean
-        delta_qt = torch.mean(delta_qt.view(param_size), 1).unsqueeze(1)
         return delta_theta, delta_qt
 
     def step_loss(self, optimizee_obj, new_parameters, average_batch=True):

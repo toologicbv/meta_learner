@@ -107,7 +107,7 @@ class Epoch(object):
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
             exper.meta_logger.debug("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id + 1,
                                                                                                 avg_opt_steps))
-        if exper.args.learner == "meta":
+        if exper.args.learner == "meta" or (exper.args.learner == "act" and exper.args.version == "V2"):
             e_losses = exper.epoch_stats["step_losses"][self.epoch_id][0:exper.max_time_steps + 1]
             exper.meta_logger.info("time step losses")
             exper.meta_logger.info(np.array_str(e_losses, precision=4))
