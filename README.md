@@ -1,6 +1,6 @@
-# meta_learner version10 (optimizing regression functions with 10 parameters fitting student-t distributions)
-AI masterthesis. Iterative learning. Meta learning. Stochastic approach to adaptive computation time.
+# meta_learner version11 (optimizing multi-layered-perceptrons with slightly different architectures)
+AI masterthesis. Iterative learning. Meta learning. Computational time adaptive learning to learn approach 
 
-## ACT Stick-breaking model
+## ACT-Graves Stick-breaking model
 
-A second version of the ACT-SB implementation. 
+

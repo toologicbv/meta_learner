@@ -92,6 +92,9 @@ def get_step_loss(optimizee_obj, new_parameters, avg_batch=False, exper=None, is
 
     elif optimizee_obj.__class__ == MLP:
         optimizee_obj.set_eval_obj_parameters(new_parameters)
+        # we're always evaluating on the training set! Also when we're optimizing MLPs in the test-phase.
+        # we only use the is_train parameter in order to store the step-losses during testing (in order to have
+        # "something" to measure input-dependency...although this is still weak
         image, y_true = exper.dta_set.next_batch(is_train=True)
         loss = optimizee_obj.evaluate(image, use_copy_obj=True, compute_loss=True, y_true=y_true, is_train=is_train)
     else:
