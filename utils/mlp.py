@@ -13,6 +13,10 @@ class MLP(nn.Module):
     def __init__(self, mlp_architecture, make_copy_obj=True):
         super(MLP, self).__init__()
         self.nn_architecture = mlp_architecture
+        if "n_hidden_layer2" in self.nn_architecture:
+            self.two_hidden_layers = True
+        else:
+            self.two_hidden_layers = False
         self._generate_network()
         self.initial_params = self.get_flat_params().clone()
         if make_copy_obj:
@@ -23,10 +27,17 @@ class MLP(nn.Module):
         # slightly awkward, we need this attribute in order to make the optimization process general. Remember for the
         # other experiments (regression) we work with batches of function
         self.num_of_funcs = 1
+        self.losses = []
 
     def _generate_network(self):
         self.input_layer = nn.Linear(self.nn_architecture["n_input"], self.nn_architecture["n_hidden_layer1"])
-        self.hidden_layer1 = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_output"])
+        if self.two_hidden_layers:
+            # 2 layer MLP
+            self.hidden_layer1 = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_hidden_layer2"])
+            self.hidden_layer2 = nn.Linear(self.nn_architecture["n_hidden_layer2"], self.nn_architecture["n_output"])
+        else:
+            # one layer MLP
+            self.hidden_layer1 = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_output"])
         self.act_output_layer = getattr(torch.nn, self.nn_architecture["act_func_output"])()
         self.loss_function = getattr(torch.nn, self.nn_architecture["loss_function"])()
 
@@ -34,15 +45,18 @@ class MLP(nn.Module):
         x = inputs.view(-1, self.nn_architecture["n_input"])
         out = self.input_layer(x)
         out = self.hidden_layer1(out)
+        if self.two_hidden_layers:
+            out = self.hidden_layer2(out)
         out = self.act_output_layer(out)
 
         return out
 
-    def compute_loss(self, y_pred, y_true):
+    def compute_loss(self, y_pred, y_true, store_loss=False):
         loss = self.loss_function(y_pred, y_true)
+
         return loss
 
-    def evaluate(self, x, use_copy_obj=False, compute_loss=False, y_true=None):
+    def evaluate(self, x, use_copy_obj=False, compute_loss=False, y_true=None, is_train=True):
         """
 
         :param x: the MNIST image passed as an autograd Variable, can have 3 dim or 2 dim (2 & 3 combined)
@@ -62,7 +76,11 @@ class MLP(nn.Module):
             if y_true is None:
                 raise ValueError("Can't compute loss if y_true parameter is None")
             else:
-                return self.compute_loss(y_pred, y_true)
+                store_loss = True if (use_copy_obj and not is_train) else False
+                loss = self.compute_loss(y_pred, y_true)
+                if store_loss:
+                    self.losses.append(loss.data.cpu().squeeze().numpy()[0])
+                return loss
         else:
             return y_pred
 

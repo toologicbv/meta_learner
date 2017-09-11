@@ -36,6 +36,32 @@ default_mlp_architecture = \
          n_output=10                        # MNIST number of output tokens
          )
 
+two_layer_mlp_architecture = \
+    dict(loss_function="CrossEntropyLoss",  # Loss function
+         n_input=784,                       # MNIST data input (img shape: 28*28)
+         n_hidden_layer1=20,                # number of hidden units first hidden layer
+         n_hidden_layer2=20,                # number of hidden units 2nd hidden layer
+         act_func_output="Sigmoid",         # activation function
+         n_output=10                        # MNIST number of output tokens
+         )
+
+
+test40_mlp_architecture = \
+    dict(loss_function="CrossEntropyLoss",  # Loss function
+         n_input=784,                       # MNIST data input (img shape: 28*28)
+         n_hidden_layer1=40,                # number of hidden units first hidden layer
+         act_func_output="Sigmoid",         # activation function
+         n_output=10                        # MNIST number of output tokens
+         )
+
+testRELU_mlp_architecture = \
+    dict(loss_function="CrossEntropyLoss",  # Loss function
+         n_input=784,                       # MNIST data input (img shape: 28*28)
+         n_hidden_layer1=20,                # number of hidden units first hidden layer
+         act_func_output="ReLU",            # activation function
+         n_output=10                        # MNIST number of output tokens
+         )
+
 
 def create_logger(exper=None, file_handler=False, output_dir=None):
     # create logger

@@ -80,7 +80,7 @@ def preprocess_gradients(x):
     return torch.cat((x1, x2), 1)
 
 
-def get_step_loss(optimizee_obj, new_parameters, avg_batch=False, exper=None):
+def get_step_loss(optimizee_obj, new_parameters, avg_batch=False, exper=None, is_train=True):
     if optimizee_obj.__class__ == RegressionFunction:
         loss = neg_log_likelihood_loss(optimizee_obj.y, optimizee_obj.y_t(new_parameters),
                                        stddev=optimizee_obj.stddev, N=optimizee_obj.n_samples,
@@ -93,7 +93,7 @@ def get_step_loss(optimizee_obj, new_parameters, avg_batch=False, exper=None):
     elif optimizee_obj.__class__ == MLP:
         optimizee_obj.set_eval_obj_parameters(new_parameters)
         image, y_true = exper.dta_set.next_batch(is_train=True)
-        loss = optimizee_obj.evaluate(image, use_copy_obj=True, compute_loss=True, y_true=y_true)
+        loss = optimizee_obj.evaluate(image, use_copy_obj=True, compute_loss=True, y_true=y_true, is_train=is_train)
     else:
         raise ValueError("Optimizee class not supported {}".format(optimizee_obj.__class__))
 

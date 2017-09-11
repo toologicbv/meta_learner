@@ -88,6 +88,7 @@ class ACTBatchHandler(BatchHandler):
         self.iterations = Variable(torch.zeros(self.batch_size, 1))
         self.qt_remainders = Variable(torch.zeros(self.batch_size, 1).double())
         self.penalty_term = 0.
+        self.test_result_scores = []
         if exper.args.cuda:
             self.cuda()
 
@@ -258,26 +259,6 @@ class ACTBatchHandler(BatchHandler):
 
         return delta_param, rho_probs, eval_par_new
 
-    def _check_tbptt_init(self, exper, meta_optimizer):
-
-        if exper.args.learner == 'act_graves':
-            # meta model uses truncated BPTT, Keep states for truncated BPTT
-            if self.step > exper.args.truncated_bptt_step - 1:
-                keep_states = True
-            else:
-                keep_states = False
-            if self.step % exper.args.truncated_bptt_step == 0:
-                # exper.meta_logger.info("DEBUG@step %d - Resetting LSTM" % self.step)
-                self.forward_steps = 1
-                meta_optimizer.reset_lstm(keep_states=keep_states)
-                # kind of fake reset, the actual value of the function parameters are NOT changed, only
-                # the pytorch Variable, in order to prevent the .backward() function to go beyond the truncated
-                # BPTT steps
-                self.functions.reset_params()
-                loss_sum = 0
-            else:
-                self.forward_steps += 1
-
     def __call__(self, exper, epoch_obj, meta_optimizer, final_batch=False):
 
         self.step = 0
@@ -324,7 +305,8 @@ class ACTBatchHandler(BatchHandler):
         if exper.args.problem == "mlp" and final_batch:
             # evaluate the last MLP that we optimized
             accuracy = self.functions.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
-            exper.meta_logger.info("Epoch {}: last batch - accuracy of last MLP {:.4f}".format(exper.epoch, accuracy))
+            # exper.meta_logger.info("Epoch {}: last batch - accuracy of last MLP {:.4f}".format(exper.epoch, accuracy))
+            self.test_result_scores.append(accuracy)
 
     def compute_probs(self, new_rho_t):
 
@@ -377,7 +359,7 @@ class ACTBatchHandler(BatchHandler):
         # Note: for the ACT step loss, we're only summing over the number of samples (dim1), for META model
         # we also sum over dim0 - the number of functions. But for ACT we need the losses per function in the
         # final_loss calculation (multiplied with the qt values, which we collect also for each function
-        loss = get_step_loss(self.functions, new_parameters, avg_batch=False, exper=exper)
+        loss = get_step_loss(self.functions, new_parameters, avg_batch=False, exper=exper, is_train=self.is_train)
         if loss.dim() == 1:
             loss = loss.unsqueeze(1)
 

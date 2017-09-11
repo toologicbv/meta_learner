@@ -23,7 +23,18 @@ from mnist_data_obj import MNISTDataSet
 
 class Experiment(object):
 
-    def __init__(self, run_args, config):
+    def __init__(self, run_args, config, set_seed=False):
+
+        # during "stand-alone" evaluation we're creating Experiment objects and we need to make sure especially in case
+        # of the MLP experiment with the MNIST dataset that the batches are equivalent. Hence we can "force" a seed here
+        # Remember, Experiment object has MNIST dataset from pytorch attached as attribute.
+        if set_seed:
+            SEED = 2345
+            torch.manual_seed(SEED)
+            if run_args.cuda:
+                torch.cuda.manual_seed(SEED)
+            np.random.seed(SEED)
+
         self.args = run_args
         self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
                             "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}, "halting_stats": {},
@@ -351,6 +362,9 @@ class Experiment(object):
     def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
 
+        if self.args.problem == "mlp" and self.dta_set is None:
+            self.dta_set = MNISTDataSet(self.args.batch_size, use_cuda=self.args.cuda)
+
         if self.args.problem == "mlp" and self.args.learner == "meta":
             # >>>> Evaluation of MLP with meta model <<<
             self.meta_logger.info("Epoch: {} - Evaluating {} test MLPs".format(self.epoch,
@@ -362,7 +376,7 @@ class Experiment(object):
                 self.init_val_stats(eval_time_steps)
             validation_handler = validation_class(self, save_model=save_model)
             validation_handler(self, meta_optimizer, functions)
-
+            self.val_stats["step_acc"][self.epoch] = validation_handler.avg_accuracy
             del validation_handler
 
         elif self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
@@ -436,6 +450,14 @@ class Experiment(object):
             self.meta_logger.info("Epoch: {} - End test evaluation (elapsed time {:.2f} sec) avg act loss/kl-term/penalty "
                                   "{:.3f}/{:.4f}/{:.4f}".format(self.epoch, duration, eval_loss, kl_term,
                                                                 penalty_term))
+            if self.args.problem == "mlp":
+                avg_accuracy = np.mean(test_batch.test_result_scores)
+                self.meta_logger.info("Epoch: {} - End test evaluation - Avg accuracy {:.3f}".format(self.epoch,
+                                                                                                     avg_accuracy))
+                mlp_losses = np.vstack(np.array(mlp.losses) for mlp in functions)
+                self.val_stats["loss_funcs"][self.epoch] = mlp_losses
+                self.val_stats["step_acc"][self.epoch] = avg_accuracy
+
             # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
             # once, which is different during training because we process multiple batches in ONE EPOCH
             # for the validation "loss" (not opt_loss) we can just sum the step_losses we collected earlier

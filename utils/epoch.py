@@ -156,9 +156,9 @@ class Epoch(object):
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(self.loss_optimizer)
 
-        if self.duration > 15.:
-            exp_file_name = "exp_statistics_{}.dll".format(self.epoch_id)
-            exper.save(file_name=exp_file_name)
+        # if self.duration > 15.:
+        #    exp_file_name = "exp_statistics_{}.dll".format(self.epoch_id)
+        #    exper.save(file_name=exp_file_name)
 
     def set_max_time_steps_taken(self, steps, is_train):
         if is_train:

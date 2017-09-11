@@ -17,11 +17,11 @@ class ValidateMLPOnMetaLearner(object):
         self.total_loss = 0.
         self.save_model = save_model
         self.avg_final_step_loss = 0.
+        self.avg_accuracy = []
 
     def __call__(self, exper, meta_learner, optimizees, with_step_acc=False, verbose=False):
         start_validate = time.time()
         fixed_weights = generate_fixed_weights(exper, steps=exper.config.max_val_opt_steps)
-        avg_accuracies = []
         num_of_mlps = len(optimizees)
         for i, mlp in enumerate(optimizees):
             if exper.args.cuda:
@@ -67,7 +67,7 @@ class ValidateMLPOnMetaLearner(object):
             self.total_opt_loss += meta_learner.final_loss(loss_weights=fixed_weights).data.squeeze()[0]
 
             accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
-            avg_accuracies.append(accuracy)
+            self.avg_accuracy.append(accuracy)
             if verbose:
                 exper.meta_logger.info("INFO - Epoch {}: "
                                        "Evaluation - accuracies of last MLP: {:.4f}".format(exper.epoch, accuracy))
@@ -89,9 +89,9 @@ class ValidateMLPOnMetaLearner(object):
                                "Evaluation - Final step losses: {}".format(exper.epoch,
 
                                                                 np.array_str(step_results, precision=4)))
-        avg_accuracies = np.mean(np.array(avg_accuracies))
+        self.avg_accuracy = np.mean(np.array(self.avg_accuracy))
         exper.meta_logger.info("INFO - Epoch {}: - Evaluation - average accuracy {:.3f}".format(exper.epoch,
-                                                                                                avg_accuracies))
+                                                                                                self.avg_accuracy))
 
         if with_step_acc:
             exper.meta_logger.info("INFO - Epoch {}: "
