@@ -107,7 +107,7 @@ def print_flags(exper):
             exper.meta_logger.info(" ! NOTE: using KL cost annealing")
             exper.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(exper.annealing_schedule)))
 
-    if exper.args.learner == "act_graves":
+    if exper.args.learner == "meta_act":
         exper.meta_logger.info("Hyperparameter for ACT Graves model: tau={:.6f}".format(exper.config.tau))
     if exper.args.learner[0:3] == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
         if not exper.args.fixed_horizon:
@@ -203,7 +203,7 @@ def get_model(exper, num_inputs, retrain=False):
                                    num_hidden=exper.args.hidden_size,
                                    use_cuda=exper.args.cuda,
                                    output_bias=exper.args.output_bias)
-    elif exper.args.learner[0:6] == "act_sb" or exper.args.learner == "act_graves":
+    elif exper.args.learner[0:6] == "act_sb" or exper.args.learner == "meta_act":
         str_classname = "StickBreakingACTBaseModel"
         act_class = getattr(models.sb_act_optimizer, str_classname)
         meta_optimizer = act_class(num_inputs=num_inputs,

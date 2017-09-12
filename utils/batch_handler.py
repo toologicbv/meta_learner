@@ -611,9 +611,15 @@ class ACTGravesBatchHandler(ACTBatchHandler):
     def cuda(self):
         super(ACTGravesBatchHandler, self).cuda()
 
-    def compute_batch_loss(self, weight_regularizer=1., mean_field=True):
+    def compute_batch_loss(self, weight_regularizer=1., loss_type="mean_field"):
+        # loss_type: (1) mean_field (2) final_step (3) combined
         ponder_cost = self.compute_ponder_cost(tau=weight_regularizer)
-        if mean_field:
+        if loss_type == "mean_field":
+            loss_matrix = torch.cat(self.batch_step_losses, 1).double()
+            qts = self.q_t[:, 0:loss_matrix.size(1)]
+            losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0)
+
+        elif loss_type == "combined":
             loss_matrix = torch.cat(self.batch_step_losses, 1).double()
             qts = self.q_t[:, 0:loss_matrix.size(1)]
 
@@ -624,12 +630,14 @@ class ACTGravesBatchHandler(ACTBatchHandler):
 
             losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0) + last_losses
 
-        else:
+        elif loss_type == "final_step":
             idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
             if self.halting_steps.cuda:
                 idx_last_step = idx_last_step.cuda()
             loss_matrix = torch.cat(self.batch_step_losses, 1)
             losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
+        else:
+            raise ValueError("Parameter loss_type {} not supported by this implementation".format(loss_type))
 
         self.loss_sum = (losses.double() + ponder_cost).squeeze()
         self.kl_term = ponder_cost.data.cpu().squeeze().numpy()[0]

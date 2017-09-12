@@ -116,7 +116,7 @@ class Epoch(object):
             avg_opt_steps = int(np.mean(np.array(self.avg_opt_steps)))
             exper.meta_logger.info("Epoch: {}, Average number of optimization steps {}".format(self.epoch_id,
                                                                                                avg_opt_steps))
-        if exper.args.learner[0:6] == 'act_sb' or exper.args.learner == "act_graves":
+        if exper.args.learner[0:6] == 'act_sb' or exper.args.learner == "meta_act":
             np_halting_step = exper.epoch_stats["halting_step"][self.epoch_id]
             step_indices = np.nonzero(np_halting_step)
             min_steps = np.min(step_indices)

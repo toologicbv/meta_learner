@@ -954,7 +954,7 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
                                                                           exper.config.ptT_shape_param)
     elif exper.args.learner[0:6] == "act_sb":
         stochastic = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
-    elif exper.args.learner == "act_graves":
+    elif exper.args.learner == "meta_act":
         stochastic = r" ($\tau={:.5f}$)".format(exper.config.tau)
     else:
         stochastic = ""
@@ -1004,7 +1004,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         plot_title = model_info + "q(t|x) during TRAINING for epoch {} (".format(epoch) + exper.args.problem
         if exper.args.learner[0:6] == "act_sb":
             plot_title += r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
-        elif exper.args.learner == "act_graves":
+        elif exper.args.learner == "meta_act":
             plot_title += r") - $\tau={:.5f}$".format(exper.config.tau)
     else:
         T = np.max(exper.val_stats["qt_hist"][epoch].nonzero()) + 1
@@ -1012,7 +1012,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         plot_title = model_info + "q(t|x) during EVALUATION for epoch {} (".format(epoch) + exper.args.problem
         if exper.args.learner[0:6] == "act_sb":
             plot_title += r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
-        elif exper.args.learner == "act_graves":
+        elif exper.args.learner == "meta_act":
             plot_title += r") - $\tau={:.5f}$".format(exper.config.tau)
 
     ax = plt.figure(figsize=(height, width)).gca()
@@ -1117,7 +1117,7 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
                      r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
     else:
         p_title = ""
-    if exper.args.learner == "act_graves":
+    if exper.args.learner == "meta_act":
         p_title = title_prefix + " per time step" + \
                   r" ($\tau={:.5f}$)".format(exper.config.tau)
 
@@ -1165,7 +1165,7 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     suffix = " (KL cost annealing)" if (exper.args.learner[0:6] == "act_sb" and exper.args.version == "V2") else ""
     ptitle = "Model {} - ".format(exper.args.learner+exper.args.version) + \
              "halting step statistics versus loss components during training "
-    if exper.args.learner == "act_graves":
+    if exper.args.learner == "meta_act":
         ptitle += r" ($\tau={:.5f}$)".format(exper.config.tau)
     else:
         ptitle += r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
@@ -1193,12 +1193,12 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
         ax.set_ylim(opt_loss_lim)
     # second y-axis
     ax2 = ax.twinx()
-    if exper.args.learner == "act_graves":
+    if exper.args.learner == "meta_act":
         graph_label = "penalty-term"
     else:
         graph_label = "kl-divergence"
     l2, = ax2.plot(x, kl_terms, marker='o', label=graph_label, c='g')
-    if exper.args.learner == "act_graves":
+    if exper.args.learner == "meta_act":
         ax2.set_ylabel("penalty-term")
     else:
         ax2.set_ylabel("kl-divergence")

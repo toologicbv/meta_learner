@@ -46,7 +46,7 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "act_graves") else {},
+                          "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "meta_act") else {},
                           "halting_step": {}, "kl_term": [], "penalty_term": [],
                           "duration": [], "halt_step_funcs": {}, "step_acc": OrderedDict()}
         self.epoch = 0
@@ -65,7 +65,7 @@ class Experiment(object):
         self.meta_logger = None
         self.fixed_weights = None
         self.type_prior = "geometric"
-        if run_args.learner == "act_graves":
+        if run_args.learner == "meta_act":
             self.annealing_schedule = np.empty(self.args.max_epoch)
             self.annealing_schedule.fill(self.config.tau)
         else:
@@ -109,7 +109,7 @@ class Experiment(object):
                           "step_losses": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
-                          "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "act_graves") else {},
+                          "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "meta_act") else {},
                           "halting_step": {}, "kl_term": [], "penalty_term": [], "duration": [], "halt_step_funcs": {},
                           "step_acc": OrderedDict()}
 
@@ -275,13 +275,13 @@ class Experiment(object):
                 self.batch_handler_class = "ACTBatchHandler"
             elif self.args.learner == "act_sb_eff":
                 self.batch_handler_class = "ACTEfficientBatchHandler"
-            elif self.args.learner == "act_graves":
+            elif self.args.learner == "meta_act":
                 self.batch_handler_class = "ACTGravesBatchHandler"
             else:
                 self.batch_handler_class = "BatchHandler"
 
             self.avg_num_opt_steps = self.args.optimizer_steps
-            if self.args.learner[0:6] == "act_sb" or self.args.learner == "act_graves":
+            if self.args.learner[0:6] == "act_sb" or self.args.learner == "meta_act":
                 self.max_time_steps = self.config.T
             if self.args.learner == 'meta' and self.args.problem == "mlp":
                 self.validation_handler_class = "ValidateMLPOnMetaLearner"
@@ -325,7 +325,7 @@ class Experiment(object):
             if self.args.learner == "meta" or self.args.learner == "act":
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    str(int(self.avg_num_opt_steps)) + "ops"
-            elif self.args.learner == "act_graves":
+            elif self.args.learner == "meta_act":
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                   "tau{:.3}".format(self.config.tau)
             else:
@@ -383,7 +383,7 @@ class Experiment(object):
             self.val_stats["step_acc"][self.epoch] = validation_handler.avg_accuracy
             del validation_handler
 
-        elif self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
+        elif self.args.learner[0:6] == 'act_sb' or self.args.learner == "meta_act":
 
             batch_handler_class = getattr(utils.batch_handler, self.batch_handler_class)
             if eval_time_steps is None:
@@ -496,7 +496,7 @@ class Experiment(object):
         if save_run is not None:
             self.save(file_name="exp_stats_run_" + save_run + ".dll")
 
-        if save_model and self.args.learner[0:6] == 'act_sb' or self.args.learner == "act_graves":
+        if save_model and self.args.learner[0:6] == 'act_sb' or self.args.learner == "meta_act":
             model_path = os.path.join(self.output_dir, meta_optimizer.name + "_eval_run" + str(self.epoch) +
                                       self.config.save_ext)
             meta_optimizer.save_params(model_path)
@@ -556,7 +556,7 @@ class Experiment(object):
         if self.run_validation:
             plot_image_map_losses(self, data_set="eval", do_save=True)
 
-        if self.args.learner[0:6] == "act_sb" or self.args.learner == "act_graves":
+        if self.args.learner[0:6] == "act_sb" or self.args.learner == "meta_act":
             plot_image_map_data(self, data_set="train", data="qt_value", do_save=True, do_show=False)
             plot_image_map_data(self, data_set="train", data="halting_step", do_save=True, do_show=False)
             plot_actsb_qts(self, data_set="train", save=True)
@@ -612,5 +612,9 @@ class Experiment(object):
             else:
                 experiment.meta_logger = meta_logger
             experiment.meta_logger.info("created local logger for experiment with model {}".format(experiment.model_name))
+
+        # backward compatibility
+        if experiment.args.learner == "act_graves":
+            experiment.args.learner = "meta_act"
 
         return experiment
