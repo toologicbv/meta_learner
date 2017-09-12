@@ -70,6 +70,7 @@ def get_exper_loss_data(exper, loss_type, fig_name=None, validation=False):
         val_loss = exper.val_stats['opt_loss']
         plt.ylabel("optimizer-loss")
         loss_fig_name = exper.config.opt_loss_fig_name
+        print(num_opt_steps, len(exper.epoch_stats['opt_loss']))
 
     elif loss_type == "param_error":
         num_opt_steps = exper.avg_num_opt_steps
@@ -1112,7 +1113,7 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
     min_value = np.min(X[X > 0])
     X[X == 0] = -1
     plt.figure(figsize=(width, height))
-    if exper.args.learner[0:3] == "act":
+    if exper.args.learner[0:3] == "act" or exper.args.learner == "meta_act":
         p_title = title_prefix + " per time step" + \
                      r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
     else:

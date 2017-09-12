@@ -108,8 +108,9 @@ def print_flags(exper):
             exper.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(exper.annealing_schedule)))
 
     if exper.args.learner == "meta_act":
-        exper.meta_logger.info("Hyperparameter for ACT Graves model: tau={:.6f}".format(exper.config.tau))
-    if exper.args.learner[0:3] == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2'):
+        exper.meta_logger.info("Hyperparameter for meta-act model: tau={:.6f}".format(exper.config.tau))
+    if exper.args.learner[0:3] == 'act' or (exper.args.learner == 'meta' and exper.args.version == 'V2') \
+            or exper.args.learner == "meta_act":
         if not exper.args.fixed_horizon:
             exper.meta_logger.info("Maximum horizon constraint to {} due to memory "
                                    "shortage".format(exper.config.T))

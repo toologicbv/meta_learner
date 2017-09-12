@@ -151,7 +151,7 @@ class Epoch(object):
         exper.epoch_stats["param_error"].append(self.param_loss)
         exper.add_duration(self.duration, is_train=True)
 
-        if exper.args.learner[0:3] == 'act':
+        if exper.args.learner[0:3] == 'act' or exper.args.learner == "meta_act":
             exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(self.loss_optimizer)
