@@ -57,7 +57,7 @@ class ACTBatchHandler(BatchHandler):
         self.tensor_one = Variable(torch.ones(1).double())
         self.max_T = Variable(torch.FloatTensor([self.horizon]).expand_as(self.float_mask))
         if self.is_train:
-            self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0., 1.).double()
+            self.one_minus_eps = torch.FloatTensor(self.max_T.size()).uniform_(0, 1.).double()
             self.one_minus_eps = Variable(self.tensor_one.data.expand_as(self.one_minus_eps) - self.one_minus_eps)
         else:
             # during evaluation we fix the threshold
@@ -125,7 +125,7 @@ class ACTBatchHandler(BatchHandler):
         # rho_new = torch.mul(rho_probs, self.float_mask)
         # compute new probability values, based on the cumulative probs construct new batch mask
         # note that we also save the new rho_t values in the array self.rho_t (in the method compute_probs)
-        if self.learner == "act_graves":
+        if self.learner == "meta_act":
             # in Graves ACT model, the qt values are probabilities already : sigmoid(W^T h_t + bias) values
             # so we don't use any stick-breaking here (meaning the rho_t values that we transfer in the act_sb
             new_probs = torch.mul(rho_probs.double(), self.float_mask.double())
@@ -139,7 +139,7 @@ class ACTBatchHandler(BatchHandler):
         # NOTE: ALSO for the Graves ACT model we increase all functions that participated in THIS ITERATION and
         #       therefore we compare with self.compare_probs BEFORE we increase them with the new probs
         iterations = less_or_equal(self.compare_probs, self.one_minus_eps)
-        if self.learner == "act_graves":
+        if self.learner == "meta_act":
             self.halting_steps += iterations
         else:
             # and we increase the number of time steps TAKEN with the previous float_mask object to keep track of the steps
