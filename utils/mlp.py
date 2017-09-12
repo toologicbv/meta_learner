@@ -30,25 +30,26 @@ class MLP(nn.Module):
         self.losses = []
 
     def _generate_network(self):
-        self.input_layer = nn.Linear(self.nn_architecture["n_input"], self.nn_architecture["n_hidden_layer1"])
+        self.hidden_layer1 = nn.Linear(self.nn_architecture["n_input"], self.nn_architecture["n_hidden_layer1"])
+        self.act_hidden1 = getattr(torch.nn, self.nn_architecture["act_function"])()
         if self.two_hidden_layers:
             # 2 layer MLP
-            self.hidden_layer1 = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_hidden_layer2"])
-            self.hidden_layer2 = nn.Linear(self.nn_architecture["n_hidden_layer2"], self.nn_architecture["n_output"])
+            self.hidden_layer2 = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_hidden_layer2"])
+            self.act_hidden2 = getattr(torch.nn, self.nn_architecture["act_function"])()
+            self.output_layer = nn.Linear(self.nn_architecture["n_hidden_layer2"], self.nn_architecture["n_output"])
         else:
-            # one layer MLP
-            self.hidden_layer1 = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_output"])
-        self.act_output_layer = getattr(torch.nn, self.nn_architecture["act_func_output"])()
+            self.output_layer = nn.Linear(self.nn_architecture["n_hidden_layer1"], self.nn_architecture["n_output"])
+
         self.loss_function = getattr(torch.nn, self.nn_architecture["loss_function"])()
 
     def forward(self, inputs):
         x = inputs.view(-1, self.nn_architecture["n_input"])
-        out = self.input_layer(x)
-        out = self.hidden_layer1(out)
+        out = self.hidden_layer1(x)
+        out = self.act_hidden1(out)
         if self.two_hidden_layers:
             out = self.hidden_layer2(out)
-        out = self.act_output_layer(out)
-
+            out = self.act_hidden2(out)
+        out = self.output_layer(out)
         return out
 
     def compute_loss(self, y_pred, y_true, store_loss=False):

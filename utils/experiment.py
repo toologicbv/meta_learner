@@ -72,7 +72,7 @@ class Experiment(object):
             self.annealing_schedule = np.ones(self.args.max_epoch)
         if run_args.learner == "meta" and run_args.version == "V7":
             # metaV7 uses incremental learning schedule
-            self.generate_incremental_lr_scheme()
+            self.generate_curriculum_regime()
         else:
             self.inc_learning_schedule = None
         self.batch_handler_class = None
@@ -208,8 +208,8 @@ class Experiment(object):
         self.annealing_schedule[until_epoch:] = sigmoid[until_epoch]
         # self.annealing_schedule = np.zeros(self.args.max_epoch)
 
-    def generate_incremental_lr_scheme(self, type='linear'):
-        if type == 'linear':
+    def generate_curriculum_regime(self, type='linear'):
+        if type == 'linear' and self.args.problem[0:10] == "regression":
             self.inc_learning_schedule = np.zeros(self.args.max_epoch).astype(int)
             # we save 1/3 of the epochs to train for args.optimizer_steps e.g. 50
             last_steps = self.args.max_epoch // 3
@@ -223,8 +223,12 @@ class Experiment(object):
 
             self.inc_learning_schedule[self.inc_learning_schedule == 0] = self.args.optimizer_steps
 
+        elif type == 'linear' and self.args.problem == "mlp":
+            self.inc_learning_schedule = np.zeros(self.args.max_epoch).astype(int)
+            self.inc_learning_schedule[0:12] = np.array([3, 4, 6, 10, 20, 40, 50, 60, 70, 80, 90, 100])
+            self.inc_learning_schedule[self.inc_learning_schedule == 0] = self.args.optimizer_steps
         else:
-            raise ValueError("Incremental learning scheme is not supported {}".format(type))
+            raise ValueError("Curriculum learning scheme is not supported {}".format(type))
 
     def scale_step_statistics(self, is_train=True):
         if is_train:

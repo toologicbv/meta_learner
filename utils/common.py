@@ -32,7 +32,7 @@ default_mlp_architecture = \
     dict(loss_function="CrossEntropyLoss",  # Loss function
          n_input=784,                       # MNIST data input (img shape: 28*28)
          n_hidden_layer1=20,                # number of hidden units first hidden layer
-         act_func_output="Sigmoid",         # activation function
+         act_function="Sigmoid",            # activation function
          n_output=10                        # MNIST number of output tokens
          )
 
@@ -41,7 +41,7 @@ two_layer_mlp_architecture = \
          n_input=784,                       # MNIST data input (img shape: 28*28)
          n_hidden_layer1=20,                # number of hidden units first hidden layer
          n_hidden_layer2=20,                # number of hidden units 2nd hidden layer
-         act_func_output="Sigmoid",         # activation function
+         act_function="Sigmoid",            # activation function
          n_output=10                        # MNIST number of output tokens
          )
 
@@ -50,7 +50,7 @@ test40_mlp_architecture = \
     dict(loss_function="CrossEntropyLoss",  # Loss function
          n_input=784,                       # MNIST data input (img shape: 28*28)
          n_hidden_layer1=40,                # number of hidden units first hidden layer
-         act_func_output="Sigmoid",         # activation function
+         act_function="Sigmoid",            # activation function
          n_output=10                        # MNIST number of output tokens
          )
 
@@ -58,7 +58,7 @@ testRELU_mlp_architecture = \
     dict(loss_function="CrossEntropyLoss",  # Loss function
          n_input=784,                       # MNIST data input (img shape: 28*28)
          n_hidden_layer1=20,                # number of hidden units first hidden layer
-         act_func_output="ReLU",            # activation function
+         act_function="ReLU",               # activation function
          n_output=10                        # MNIST number of output tokens
          )
 
@@ -124,7 +124,7 @@ def halting_step_stats(halting_steps):
     values = np.arange(0, num_of_steps)
     total_steps = np.sum(values * halting_steps)
     avg_opt_steps = np.sum(1. / num_of_funcs * values * halting_steps)
-    E_x_2 = np.sum(1. / num_of_funcs * values ** 2 * halting_steps)
+    E_x_2 = np.sum(1. / float(num_of_funcs) * values ** 2 * halting_steps)
     stddev = np.sqrt(E_x_2 - avg_opt_steps ** 2)
     cum_sum = np.cumsum(halting_steps)
     if cum_sum[np.nonzero(cum_sum)[0][0]] > num_of_funcs / 2.:
