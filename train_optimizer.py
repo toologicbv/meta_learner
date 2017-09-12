@@ -39,7 +39,7 @@ import utils.batch_handler
     act                 V2                      regression(_T)                              act learner with 1 LSTM
     act_sb              V1                      regression(_T)                              act with stick-breaking approach
     act_sb              V2                      regression(_T)                              act with SB and KL cost annealing
-    act_graves          V1                      regression(_T)                              Graves ACT with ponder-cost
+    meta_act          V1                      regression(_T)                              Graves ACT with ponder-cost
 """
 
 # for standard optimizer which we compare to
@@ -158,7 +158,7 @@ def main():
                 execute_batch(exper, optimizees, meta_optimizer, exper.optimizer, epoch_obj,
                               final_batch=True if i+1 == epoch_obj.num_of_batches else False)
 
-            elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "act_graves":
+            elif exper.args.learner[0:6] in ['act_sb'] or exper.args.learner == "meta_act":
                 loss_sum = Variable(torch.DoubleTensor([0.]))
                 kl_sum = 0.
                 penalty_sum = 0.

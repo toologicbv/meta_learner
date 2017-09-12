@@ -17,10 +17,10 @@ from regression import neg_log_likelihood_loss, nll_with_t_dist
 def create_exper_label(exper):
 
     retrain = "_retrain" if exper.args.retrain else ""
-    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "act_graves":
+    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
             str(int(exper.avg_num_opt_steps)) + "ops" + retrain
-    elif exper.args.learner == "act_graves":
+    elif exper.args.learner == "meta_act":
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
                  "tau{:.5}".format(exper.config.tau) + retrain
     else:
@@ -121,13 +121,13 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     plt.legend(loc="best")
     p_title = "Train/validation loss for model {} (epochs {})".format(exper.args.learner+exper.args.version,
                                                                       exper.args.max_epoch)
-    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "act_graves":
+    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         p_title += " ({}-opt-steps)".format(num_opt_steps)
     if (exper.args.learner == "meta" and exper.args.version == "V3.1") or \
             (exper.args.learner == "act" and exper.args.version == "V2") or \
             (exper.args.learner[0:6] == "act_sb"):
         p_title += r' ($\nu = {:.2}$)'.format(exper.config.ptT_shape_param)
-    elif exper.args.learner == "act_graves":
+    elif exper.args.learner == "meta_act":
         p_title += r' ($\tau = {:.5}$)'.format(exper.config.tau)
     plt.title(p_title, **title_font)
 
@@ -183,12 +183,12 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     if data_set == "train":
         epoch_keys = exper.epoch_stats["opt_step_hist"].keys()
         stats_dict = exper.epoch_stats["opt_step_hist"]
-        if exper.args.learner[0:6] == "act_sb" or exper.args.learner == "act_graves":
+        if exper.args.learner[0:6] == "act_sb" or exper.args.learner == "meta_act":
             epoch_keys = exper.epoch_stats["halting_step"].keys()
             opt_step_hist = exper.epoch_stats["halting_step"][epoch]
         T = exper.config.T
     else:
-        if exper.args.learner[0:6] == "act_sb" or exper.args.learner == "act_graves":
+        if exper.args.learner[0:6] == "act_sb" or exper.args.learner == "meta_act":
             epoch_keys = exper.val_stats["halting_step"].keys()
             opt_step_hist = exper.val_stats["halting_step"][epoch]
         else:
@@ -196,7 +196,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
             stats_dict = exper.val_stats["opt_step_hist"]
         T = exper.config.max_val_opt_steps
 
-    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "act_graves":
+    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         for e, epoch_key in enumerate(epoch_keys):
 
             if e == 0:
@@ -211,7 +211,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     norms = 1. / np.sum(opt_step_hist) * opt_step_hist
     o_mean = int(round(np.sum(index * norms)))
     model = "Model {} - ".format(exper.args.learner + exper.args.version)
-    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "act_graves":
+    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         p_title = model + " Distribution of number of optimization steps (E[T|{}]={})".format(T, o_mean)
         p_label = "with p(T|nu)={:.3f})".format(config.pT_shape_param)
         y_label = "Proportion"
@@ -219,7 +219,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
         if exper.args.learner[0:6] == "act_sb":
             p_title = model + r" Histogram of halting step (" + data_set + \
                       r" in epoch {}) with prior $p(t|\nu={:.3f}$)".format(epoch, exper.config.ptT_shape_param)
-        if exper.args.learner == "act_graves":
+        if exper.args.learner == "meta_act":
             p_title = model + r" Histogram of halting step (" + data_set + \
                       r" in epoch {}) with $\tau={:.5f}$)".format(epoch, exper.config.tau)
         p_label = ""
@@ -232,12 +232,12 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     plt.bar(index, norms, bar_width, color='b', align='center',
             label=p_label)
     # plot mean value again...in red
-    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "act_graves":
+    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         plt.bar([o_mean], norms[o_mean - 1], bar_width, color='r', align="center")
     plt.xlabel("Number of optimization steps")
     plt.ylabel(y_label)
     plt.title(p_title, **title_font)
-    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "act_graves":
+    if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         plt.legend(loc="best")
     if fig_name is None:
         fig_name = os.path.join(exper.output_dir, exper.config.T_dist_fig_name + "_" + data_set +

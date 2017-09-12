@@ -3,7 +3,7 @@ import torch
 import os
 import sys
 import dill
-from config import config, MetaConfig
+from config import config
 
 import argparse
 import logging
