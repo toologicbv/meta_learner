@@ -411,7 +411,8 @@ class ACTBatchHandler(BatchHandler):
         if mean_field:
             # get the loss value for each optimizee for the halting step
             loss_matrix = torch.cat(self.batch_step_losses, 1).double()
-            losses = torch.mean(torch.sum(torch.mul(self.q_t[:, 0:self.step], loss_matrix), 1), 0)  # q_T_values
+            # last_step_loss = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
+            losses = torch.mean(torch.sum(torch.mul(self.q_t[:, 0:self.step], loss_matrix), 1), 0) # + last_step_loss
         else:
             loss_matrix = torch.cat(self.batch_step_losses, 1)
             # REMEMBER THIS IS act_sbV2 where we multiply q_t with the log-likelihood
@@ -421,24 +422,13 @@ class ACTBatchHandler(BatchHandler):
         # compute final loss, in which we multiply each loss by the qt time step values
         # remainder = torch.mean(self.iterations).double()
         if self.learner == "act_sb" and (self.version == "V3.1"):
-            # penalty_condition = torch.lt(self.counter_compare, self.max_T)
-            # penalty_condition_idx = penalty_condition.data.squeeze().nonzero().squeeze()
-            # num_of_penalties = torch.sum(penalty_condition).data.cpu().squeeze().numpy()[0]
-            # if num_of_penalties > 0:
-            #     last_step_priors = (self.construct_priors_v2())[penalty_condition_idx]
-            #     last_step_qts = q_T_values[penalty_condition_idx] + self.qt_remainders[penalty_condition_idx]
-            #     remainder = 3.3 * torch.mean(self.approximate_kl_div_with_sum(last_step_qts, last_step_priors))
-            #     self.penalty_term = remainder.data.cpu().squeeze().numpy()[0]
-            #     self.loss_sum = (losses.double() + kl_term + remainder).squeeze()
-            # else:
-            #     self.loss_sum = (losses.double() + kl_term).squeeze()
-            remainder = 5. * torch.mean(self.qt_remainders).double()
+            remainder = weight_regularizer * torch.mean(self.qt_remainders).double()
             self.loss_sum = (losses.double() + remainder).squeeze()
             self.penalty_term = remainder.data.cpu().squeeze().numpy()[0]
             self.kl_term = 0.
         else:
             self.loss_sum = (losses.double() + kl_term).squeeze()
-        # self.loss_sum = kl_term.squeeze()
+
         self.kl_term = kl_term.data.cpu().squeeze().numpy()[0]
 
     def compute_last_qt(self, halting_idx):

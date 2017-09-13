@@ -71,7 +71,7 @@ class MetaConfig(object):
         """
             Percentage of training epochs that use KL cost annealing
         """
-        self.kl_anneal_perc = 0.8
+        self.kl_anneal_perc = 0.2
 
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost

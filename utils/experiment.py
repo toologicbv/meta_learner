@@ -68,6 +68,9 @@ class Experiment(object):
         if run_args.learner == "meta_act":
             self.annealing_schedule = np.empty(self.args.max_epoch)
             self.annealing_schedule.fill(self.config.tau)
+        elif run_args.learner == "act_sb" and run_args.version == "V3.2":
+            self.annealing_schedule = np.empty(self.args.max_epoch)
+            self.annealing_schedule.fill(self.config.kl_anneal_perc)
         else:
             self.annealing_schedule = np.ones(self.args.max_epoch)
         if run_args.learner == "meta" and run_args.version == "V7":
