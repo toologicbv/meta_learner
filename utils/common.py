@@ -103,7 +103,7 @@ def print_flags(exper):
         exper.meta_logger.info("shape parameter of prior p(t|T) nu={:.3}".format(exper.config.ptT_shape_param))
     if exper.args.learner[0:6] == 'act_sb':
         exper.meta_logger.info("shape parameter of prior p(t|nu={:.3f})".format(exper.config.ptT_shape_param))
-        if exper.args.version == "V2":
+        if exper.args.version == "V2" or exper.args.version == "V3.2":
             exper.meta_logger.info(" ! NOTE: using KL cost annealing")
             exper.meta_logger.info(">>> Annealing schedule {}".format(np.array_str(exper.annealing_schedule)))
 
