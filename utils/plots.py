@@ -23,6 +23,10 @@ def create_exper_label(exper):
     elif exper.args.learner == "meta_act":
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
                  "tau{:.5}".format(exper.config.tau) + retrain
+    elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
+        label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
+                 "nu{:.5}".format(exper.config.ptT_shape_param) + \
+                 "kls{}".format(exper.config.kl_anneal_perc) + retrain
     else:
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
                  "nu{:.3}".format(exper.config.ptT_shape_param) + retrain

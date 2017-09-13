@@ -245,6 +245,7 @@ class Experiment(object):
         if is_train:
             self.epoch_stats["step_losses"][self.epoch] *= step_loss_factors
             # we can (have to) skip the first factor because that is for step 0 and only used for scaling the loss values
+            # AND REMEMBER: the loss value array starts with step 0, but qt values start at step 1
             self.epoch_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
         else:
             self.val_stats["step_losses"][self.epoch] *= step_loss_factors
