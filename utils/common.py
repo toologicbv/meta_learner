@@ -8,6 +8,7 @@ from config import config
 import argparse
 import logging
 import numpy as np
+from scipy.stats import geom
 
 from torch.autograd import Variable
 import models.rnn_optimizer
@@ -407,9 +408,15 @@ def generate_fixed_weights(exper, steps=None):
         if exper.args.version == "V3.1":
             exper.meta_logger.info("Model with fixed weights from geometric distribution p(t|{},{:.3f})".format(
                 steps, exper.config.ptT_shape_param))
-            prior_probs = construct_prior_p_t_T(steps, exper.config.ptT_shape_param,
-                                                batch_size=1, cuda=exper.args.cuda)
+            prior_probs = geom.pmf(np.arange(1, steps+1), p=(1-exper.config.ptT_shape_param))
+            prior_probs = 1. / np.sum(prior_probs) * prior_probs
+            prior_probs = np.array([0.607,   0.3749,  0.1777,  0.0779,  0.0288,  0.0215,  0.0145])
+            prior_probs = Variable(torch.from_numpy(prior_probs).float())
+            if exper.args.cuda:
+                prior_probs = prior_probs.cuda()
+
             fixed_weights = prior_probs.squeeze()
+            exper.meta_logger.info(fixed_weights)
 
         elif exper.args.version == "V3.2":
             fixed_weights = Variable(torch.FloatTensor(steps), requires_grad=False)

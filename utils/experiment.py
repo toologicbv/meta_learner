@@ -247,7 +247,10 @@ class Experiment(object):
             self.epoch_stats["step_losses"][self.epoch] *= step_loss_factors
             # we can (have to) skip the first factor because that is for step 0 and only used for scaling the loss values
             # AND REMEMBER: the loss value array starts with step 0, but qt values start at step 1
+            # weigh the step probabilities according to the number of times they are executed
             self.epoch_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
+            # make sure the qt-values sum to one after scaling
+            self.epoch_stats["qt_hist"][self.epoch] *= 1./np.sum(self.epoch_stats["qt_hist"][self.epoch])
         else:
             self.val_stats["step_losses"][self.epoch] *= step_loss_factors
             # see explanation above
@@ -409,6 +412,8 @@ class Experiment(object):
             penalty_term = 0
             test_max_time_steps_taken = 0
             for i in np.arange(num_iters):
+                if num_iters != 1 and i % 10 == 0:
+                    print(" >>> Optimizing {} MLP <<<".format(i+1))
                 if self.args.problem == "mlp":
                     optimizee = functions[i]
                     if self.args.cuda:

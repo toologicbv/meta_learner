@@ -407,6 +407,7 @@ class ACTBatchHandler(BatchHandler):
                                                           , 0)
         else:
             kl_term = weight_regularizer * self.compute_stochastic_ponder_cost()
+
         # get the loss value for each optimizee for the halting step
         if mean_field:
             # get the loss value for each optimizee for the halting step
