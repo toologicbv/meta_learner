@@ -428,7 +428,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         else:
             res_dict = expers[e].val_stats["step_losses"]
             y_label = "avg final loss"
-            plot_title = sort_exper + " (avg loss per step)"
+            plot_title = sort_exper + " average loss per step"
         if plot_best:
             plot_title = "Best run selected --- " + plot_title
 
@@ -998,7 +998,7 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
 
 
 def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, save=False, show=False,
-                   plot_prior=False, epoch=None, add_info=False):
+                   plot_prior=False, epoch=None, add_info=False, omit_last_step=False):
     if data_set not in ["train", "eval"]:
         raise ValueError("For parameter -data_set- you can only choose 1)train or 2)eval")
 
@@ -1007,24 +1007,36 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         epoch = exper.epoch
 
     bar_width = 0.3
-    model_info = "Model {} - ".format(exper.args.learner + exper.args.version)
+    model_info = "{} - {} - ".format(exper.args.problem, exper.args.learner + exper.args.version)
     if data_set == "train":
-        T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero()) + 1
+        if omit_last_step:
+            T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero())
+        else:
+            T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero()) + 1
         qt_hist = exper.epoch_stats["qt_hist"][epoch][:T]
         # print(np.array_str(exper.epoch_stats["qt_hist"][epoch][:T+2], precision=4))
-        plot_title = model_info + "q(t|x) during TRAINING for epoch {} (".format(epoch) + exper.args.problem
-        if exper.args.learner[0:6] == "act_sb":
-            plot_title += r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+        plot_title = model_info + "q(t|x) during training for epoch {} ".format(epoch)
+        if exper.args.learner == "act_sb" and exper.args.version != "V3.2":
+            plot_title += r" - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
         elif exper.args.learner == "meta_act":
-            plot_title += r") - $\tau={:.5f}$".format(exper.config.tau)
+            plot_title += r" - $(\tau={})$".format(exper.config.tau)
+        elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
+            plot_title += r"- $(\tau={}$".format(exper.config.tau)
+            plot_title += " - kls={})".format(exper.config.kl_anneal_perc)
     else:
-        T = np.max(exper.val_stats["qt_hist"][epoch].nonzero()) + 1
+        if omit_last_step:
+            T = np.max(exper.val_stats["qt_hist"][epoch].nonzero())
+        else:
+            T = np.max(exper.val_stats["qt_hist"][epoch].nonzero()) + 1
         qt_hist = exper.val_stats["qt_hist"][epoch][:T]
-        plot_title = model_info + "q(t|x) during EVALUATION for epoch {} (".format(epoch) + exper.args.problem
-        if exper.args.learner[0:6] == "act_sb":
-            plot_title += r") - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+        plot_title = model_info + "q(t|x) during evaluation"
+        if exper.args.learner == "act_sb" and exper.args.version != "V3.2":
+            plot_title += r" - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
         elif exper.args.learner == "meta_act":
-            plot_title += r") - $\tau={:.5f}$".format(exper.config.tau)
+            plot_title += r" - $(\tau={})$".format(exper.config.tau)
+        elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
+            plot_title += r"- $(\tau={}$".format(exper.config.tau)
+            plot_title += " - kls={})".format(exper.config.kl_anneal_perc)
 
     ax = plt.figure(figsize=(height, width)).gca()
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1032,7 +1044,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
     index = np.arange(1, qt_hist.shape[0] + 1).astype(int)
 
     plt.bar(index, qt_hist, bar_width, color='b', align='center',
-            label=r"$q(t)$")
+            label=r"$q(t|x)$")
     if plot_prior:
         priors = geom.pmf(index, exper.config.ptT_shape_param)
         plt.bar(index+bar_width, priors, bar_width, color='orange', align='center',
