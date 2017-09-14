@@ -167,6 +167,8 @@ def main():
                 for _ in np.arange(exper.args.samples_per_batch):
                     batch = batch_handler_class(exper, is_train=True)
                     batch_handler_class.id += 1
+                    # final_batch parameter does nothing else than printing the accuracy for the last batch in the
+                    # MLP experiment. Not used for regression_(T)
                     batch(exper, epoch_obj, meta_optimizer, final_batch=True if i+1 == epoch_obj.num_of_batches else False)
                     batch.compute_batch_loss(epoch_obj.weight_regularizer)
                     loss_sum += batch.loss_sum
@@ -176,7 +178,7 @@ def main():
                 act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, exper.optimizer, loss_sum=loss_sum)
                 epoch_obj.model_grads.append(sum_grads)
                 epoch_obj.add_kl_term(kl_sum * 1./float(exper.args.samples_per_batch),
-                                      penalty_sum* 1./float(exper.args.samples_per_batch))
+                                      penalty_sum * 1./float(exper.args.samples_per_batch))
                 epoch_obj.add_act_loss(act_loss)
             else:
                 raise ValueError("args.learner {} not supported by this implementation".format(exper.args.learner))

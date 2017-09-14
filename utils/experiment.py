@@ -86,6 +86,7 @@ class Experiment(object):
             self.dta_set = MNISTDataSet(run_args.batch_size, use_cuda=run_args.cuda)
         else:
             self.dta_set = None
+        self.training_horizon = None
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)

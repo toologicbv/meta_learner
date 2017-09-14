@@ -441,6 +441,12 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if expers[e].args.learner == "act" or (expers[e].args.learner == "meta"
                                                and expers[e].args.version == "V3.1"):
             model += r"($\nu={:.2f}$)".format(expers[e].config.ptT_shape_param)
+        if expers[e].args.learner == "act_sb" and expers[e].args.version == "V3.2":
+            if hasattr(expers[e], "training_horizon") and expers[e].training_horizon is not None:
+                horizon = expers[e].training_horizon
+            else:
+                horizon = expers[e].config.T
+            model += "_kls{:.3f}_H-{}".format(expers[e].config.kl_anneal_perc, horizon)
         min_param_value = 999.
 
         if plot_best:
@@ -1172,6 +1178,8 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
              "halting step statistics versus loss components during training "
     if exper.args.learner == "meta_act":
         ptitle += r" ($\tau={:.5f}$)".format(exper.config.tau)
+    elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
+        ptitle += r" ($\nu={:.3f}$ kls={:.3f})".format(exper.config.ptT_shape_param, exper.config.kl_anneal_perc)
     else:
         ptitle += r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
 
