@@ -11,7 +11,7 @@ if "/home/jogi/.local/lib/python2.7/site-packages" in sys.path:
 from utils.experiment import Experiment
 from utils.epoch import Epoch
 from utils.config import config
-from utils.common import get_model, print_flags
+from utils.common import get_model, print_flags, load_curriculum
 from utils.common import get_batch_functions
 from utils.common import OPTIMIZER_DICT
 from train_batch_meta_act import execute_batch
@@ -84,9 +84,9 @@ parser.add_argument('--model', type=str, default="default",
                          'in model directory')
 parser.add_argument('--log_dir', type=str, default="default",
                     help='log directory under logs')
-parser.add_argument('--checkpoint_dir', type=str, default=None,
+parser.add_argument('--checkpoint_dir', type=str, default="checkpoints",
                     help='checkpoint directory under default process directory')
-parser.add_argument('--checkpoint_eval', type=int, default=20, metavar='N',
+parser.add_argument('--checkpoint_eval', type=int, default=None, metavar='N',
                     help='interval between model checkpoint savings (default: 20)')
 parser.add_argument('--retrain', action='store_true', default=False,
                     help='retrain an existing model (note should exist in <models> or specific log_dir (.pkl)')
@@ -145,6 +145,7 @@ def main():
     batch_handler_class = None if exper.batch_handler_class is None else \
         getattr(utils.batch_handler, exper.batch_handler_class)
 
+    curriculum_schedule = load_curriculum("curriculum.dll")
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
         batch_handler_class.id = 0
@@ -152,11 +153,14 @@ def main():
         epoch_obj = Epoch()
         epoch_obj.start(exper)
         exper.meta_logger.info("Epoch {}: Num of batches {}".format(exper.epoch, epoch_obj.num_of_batches))
+        if exper.args.learner == "meta" and exper.args.version == "V7":
+            global_curriculum = curriculum_schedule[exper.epoch - 1]
         for i in range(epoch_obj.num_of_batches):
-
             if exper.args.learner in ['meta', 'act']:
                 # exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i + 1))
                 optimizees = get_batch_functions(exper)
+                if exper.args.learner == "meta" and exper.args.version == "V7":
+                    exper.inc_learning_schedule[exper.epoch - 1] = global_curriculum[i]
                 execute_batch(exper, optimizees, meta_optimizer, exper.optimizer, epoch_obj,
                               final_batch=True if i+1 == epoch_obj.num_of_batches else False)
 
@@ -197,7 +201,10 @@ def main():
             if exper.args.lr_step_decay != 0 \
                     and (epoch_obj.loss_optimizer <= exper.loss_threshold_lr_decay
                          or exper.lr_decay_last_epoch != 0):
-                exper.check_lr_decay(exper, meta_optimizer, epoch_obj.loss_optimizer )
+                exper.check_lr_decay(exper, meta_optimizer, epoch_obj.loss_optimizer)
+        # execute a checkpoint (save model) if necessary
+        if exper.args.checkpoint_eval is not None and exper.epoch % exper.args.checkpoint_eval == 0:
+            epoch_obj.execute_checkpoint(exper, meta_optimizer)
 
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):

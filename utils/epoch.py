@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 import time
@@ -168,3 +170,13 @@ class Epoch(object):
             return self.train_max_time_steps_taken
         else:
             return self.test_max_time_steps_taken
+
+    def execute_checkpoint(self, exper, meta_optimizer):
+        checkpoint_dir = os.path.join(exper.output_dir, exper.args.checkpoint_dir)
+        if not os.path.isdir(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+
+        model_path = os.path.join(checkpoint_dir, meta_optimizer.name + "_chkpt" + str(self.epoch_id) +
+                                  exper.config.save_ext)
+        meta_optimizer.save_params(model_path)
+        exper.meta_logger.info("Epoch {}: - checkpoint - successfully saved model to {}".format(self.epoch_id, model_path))

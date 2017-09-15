@@ -1021,7 +1021,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         elif exper.args.learner == "meta_act":
             plot_title += r" - $(\tau={})$".format(exper.config.tau)
         elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
-            plot_title += r"- $(\tau={}$".format(exper.config.tau)
+            plot_title += r"- $(\nu={}$".format(exper.config.ptT_shape_param)
             plot_title += " - kls={})".format(exper.config.kl_anneal_perc)
     else:
         if omit_last_step:
@@ -1035,7 +1035,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=16, width=12, 
         elif exper.args.learner == "meta_act":
             plot_title += r" - $(\tau={})$".format(exper.config.tau)
         elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
-            plot_title += r"- $(\tau={}$".format(exper.config.tau)
+            plot_title += r"- $(\nu={}$".format(exper.config.ptT_shape_param)
             plot_title += " - kls={})".format(exper.config.kl_anneal_perc)
 
     ax = plt.figure(figsize=(height, width)).gca()

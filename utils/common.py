@@ -438,3 +438,25 @@ def generate_fixed_weights(exper, steps=None):
     return fixed_weights
 
 
+def transform_halting_steps_to_opt_steps(halt_steps, last_epoch=None):
+    r = []
+    for i, steps in enumerate(halt_steps):
+        max_idx = np.max(steps.nonzero())
+        # skip first 0-step
+        l = []
+        for j, counter in enumerate(steps[1:max_idx+1]):
+            if counter != 0:
+                l.extend([j+1] * counter)
+        r.append(l)
+    return r
+
+
+def load_curriculum(file_name):
+    filepath = os.path.join("data", file_name)
+    try:
+        with open(filepath, 'rb') as f:
+            schedule = dill.load(f)
+    except:
+        raise IOError("Can't open file {}".format(filepath))
+
+    return schedule

@@ -22,7 +22,7 @@ def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj, final
     if exper.args.learner == 'meta' and exper.args.version[0:2] == 'V2':
         optimizer_steps = exper.pt_dist.rvs(n=1)[0]
     elif exper.args.learner == 'meta' and exper.args.version[0:2] == 'V7':
-        # Incremtnal learning
+        # Curriculum learning
         optimizer_steps = exper.inc_learning_schedule[exper.epoch-1]
 
     elif exper.args.learner == 'act' and not exper.args.fixed_horizon:

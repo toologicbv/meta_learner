@@ -89,7 +89,10 @@ class Experiment(object):
             self.dta_set = None
         self.training_horizon = None
         # learning rate decay variables
-        self.loss_threshold_lr_decay = self.config.loss_threshold_lr_decay
+        if hasattr(self.config, "loss_threshold_lr_decay"):
+            self.loss_threshold_lr_decay = self.config.loss_threshold_lr_decay
+        else:
+            self.loss_threshold_lr_decay = 0
         self.lr_decay_last_epoch = 0
         self.lr_decay_rate = 0.5
         self.learning_rates = []
