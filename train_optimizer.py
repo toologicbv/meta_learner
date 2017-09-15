@@ -145,7 +145,8 @@ def main():
     batch_handler_class = None if exper.batch_handler_class is None else \
         getattr(utils.batch_handler, exper.batch_handler_class)
 
-    curriculum_schedule = load_curriculum("curriculum.dll")
+    if exper.args.learner == "meta" and exper.args.version == "V7":
+        curriculum_schedule = load_curriculum("curriculum.dll")
     for epoch in range(exper.args.max_epoch):
         exper.epoch += 1
         batch_handler_class.id = 0

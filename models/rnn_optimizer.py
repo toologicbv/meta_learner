@@ -235,6 +235,9 @@ class MetaLearner(nn.Module):
         losses = torch.mean(torch.cat(self.losses, 1), 0).squeeze()
         return torch.sum(losses * loss_weights)
 
+    def save_params(self, absolute_path):
+        torch.save(self.state_dict(), absolute_path)
+
 
 class MetaLearnerWithValueFunction(MetaLearner):
     def __init__(self, num_params_optimizee, num_inputs=1, num_hidden=20, num_layers=2, use_cuda=False,

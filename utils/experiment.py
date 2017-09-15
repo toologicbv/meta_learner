@@ -279,8 +279,10 @@ class Experiment(object):
             # AND REMEMBER: the loss value array starts with step 0, but qt values start at step 1
             # weigh the step probabilities according to the number of times they are executed
             self.epoch_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
+            # Actually the "meta" model has no qt-values. But we just instead check whether the whole sum is bigger than 0
             # make sure the qt-values sum to one after scaling
-            self.epoch_stats["qt_hist"][self.epoch] *= 1./np.sum(self.epoch_stats["qt_hist"][self.epoch])
+            if np.sum(self.epoch_stats["qt_hist"][self.epoch]) > 0:
+                self.epoch_stats["qt_hist"][self.epoch] *= 1./np.sum(self.epoch_stats["qt_hist"][self.epoch])
         else:
             self.val_stats["step_losses"][self.epoch] *= step_loss_factors
             # see explanation above
