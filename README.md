@@ -22,4 +22,5 @@ The master thesis project combines the work of Andrychowicz et al.  (Learning to
 
 ##### References
 [Adaptive Computation Time for Recurrent Neural Networks](http://arxiv.org/abs/1603.08983) Graves, 2016
+
 [Learning to learn by Gradient descent by gradient descent](https://arxiv.org/pdf/1606.04474.pdf) Andrychowicz et al, 2016
