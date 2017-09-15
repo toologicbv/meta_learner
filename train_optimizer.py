@@ -197,7 +197,7 @@ def main():
             if exper.args.lr_step_decay != 0 \
                     and (epoch_obj.loss_optimizer <= exper.loss_threshold_lr_decay
                          or exper.lr_decay_last_epoch != 0):
-                exper.check_lr_decay(exper, meta_optimizer.parameters())
+                exper.check_lr_decay(exper, meta_optimizer, epoch_obj.loss_optimizer )
 
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):

@@ -95,20 +95,25 @@ class Experiment(object):
         self.learning_rates = []
         self.learning_rates.append(run_args.lr)
 
-    def check_lr_decay(self, exper, model_parameters):
+    def check_lr_decay(self, exper, meta_optimizer, current_loss=None):
         if self.epoch - self.lr_decay_last_epoch == exper.args.lr_step_decay - 1 \
                 or self.lr_decay_last_epoch == 0:
             # first set epoch in which we decay the lr (note, we check at the end of an epoch, so we add one
             self.lr_decay_last_epoch = self.epoch + 1  # we decay for the next epoch
             new_lr = self.lr_decay_rate * self.learning_rates[-1]  # multiply with the last lr we used
             # we need to construct the optimizer again with the model parameters
-            exper.optimizer = OPTIMIZER_DICT[exper.args.optimizer](model_parameters, lr=new_lr)
+            exper.optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=new_lr)
             self.meta_logger.info("Epoch {}: - LEARNING RATE DECAY: changed "
                                   "learning rate from {} to {} <<< ".format(self.epoch,
                                                                             self.learning_rates[-1],
                                                                             new_lr))
             # save new learning rate
             self.learning_rates.append(new_lr)
+            if current_loss is not None and current_loss <= 0.8:
+                model_path = os.path.join(self.output_dir, meta_optimizer.name + "_eval_run" + str(self.epoch) +
+                                          self.config.save_ext)
+                meta_optimizer.save_params(model_path)
+                self.meta_logger.info("Epoch: {} - Successfully saved model to {}".format(self.epoch, model_path))
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)
