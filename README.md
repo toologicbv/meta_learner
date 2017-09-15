@@ -7,7 +7,7 @@
 	- pytorch version 0.2.0 (with CUDA 8.0);
 	- can be used to optimize regression functions;
 	- optimize regression functions by fitting Student-t distributions to the individual data points;
-	- simple neural networks (e.g. 1-layer and 2-layer MLPs).
+	- optimize simple neural networks (e.g. 1-layer and 2-layer MLPs) on MNIST.
 
 
 - Run `python train_optimizer.py --use_cuda --problem=mlp --functions_per_epoch=2048 --batch_size=128 --lr=1e-4 --learner=meta_act --hidden_size=40 --eval_freq=10 --max_epoch=150`
