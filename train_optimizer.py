@@ -103,6 +103,7 @@ parser.add_argument('--fixed_horizon', action='store_true', default=False,
                     help='applicable for ACT-model: model will use fixed training horizon (default optimizer_steps)')
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
 parser.add_argument('--samples_per_batch', type=int, default=1, metavar='N', help='number of samples per batch (default: 1)')
+parser.add_argument('--lr_step_decay', type=int, default=0, help="enables learning rate step-decay (after loss_threshold")
 
 
 parser.add_argument("--output_bias")
@@ -140,6 +141,7 @@ def main():
         # we're using one of the standard optimizers, initialized per function below
         meta_optimizer = None
         exper.optimizer = None
+
     batch_handler_class = None if exper.batch_handler_class is None else \
         getattr(utils.batch_handler, exper.batch_handler_class)
 
@@ -174,6 +176,7 @@ def main():
                     loss_sum += batch.loss_sum
                     kl_sum += batch.kl_term
                     penalty_sum += batch.penalty_term
+
                 loss_sum = loss_sum * 1./float(exper.args.samples_per_batch)
                 act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, exper.optimizer, loss_sum=loss_sum)
                 epoch_obj.model_grads.append(sum_grads)
@@ -189,6 +192,13 @@ def main():
 
         exper.scale_step_statistics()
         epoch_obj.end(exper)
+        # check whether we need to adjust the learning rate
+        if exper.args.problem == "mlp" and (exper.args.learner == "meta_act" or exper.args.learner == "act_sb"):
+            if exper.args.lr_step_decay != 0 \
+                    and (epoch_obj.loss_optimizer <= exper.loss_threshold_lr_decay
+                         or exper.lr_decay_last_epoch != 0):
+                exper.check_lr_decay(exper, meta_optimizer.parameters())
+
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
             exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None) # "{}".format(exper.epoch)

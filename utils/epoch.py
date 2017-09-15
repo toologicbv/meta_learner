@@ -30,6 +30,7 @@ class Epoch(object):
         self.weight_regularizer = 0
         self.backward_ones = None
         self.model_grads = []
+        self.lr_decay_last_epoch = 0
 
     def add_step_loss(self, avg_loss, last_time_step=False):
         if not isinstance(avg_loss, (np.float, np.float32, np.float64)):
@@ -155,10 +156,6 @@ class Epoch(object):
             exper.epoch_stats["opt_loss"].append(self.final_act_loss)
         elif exper.args.learner == 'meta':
             exper.epoch_stats["opt_loss"].append(self.loss_optimizer)
-
-        # if self.duration > 15.:
-        #    exp_file_name = "exp_statistics_{}.dll".format(self.epoch_id)
-        #    exper.save(file_name=exp_file_name)
 
     def set_max_time_steps_taken(self, steps, is_train):
         if is_train:

@@ -12,6 +12,7 @@ import time
 from config import config, MetaConfig
 from probs import TimeStepsDist
 from common import load_val_data, create_logger, generate_fixed_weights, halting_step_stats
+from common import OPTIMIZER_DICT
 from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps, plot_gradient_stats
 from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats_with_loss, plot_loss_versus_halting_step
 from plots import create_exper_label
@@ -87,6 +88,27 @@ class Experiment(object):
         else:
             self.dta_set = None
         self.training_horizon = None
+        # learning rate decay variables
+        self.loss_threshold_lr_decay = self.config.loss_threshold_lr_decay
+        self.lr_decay_last_epoch = 0
+        self.lr_decay_rate = 0.5
+        self.learning_rates = []
+        self.learning_rates.append(run_args.lr)
+
+    def check_lr_decay(self, exper, model_parameters):
+        if self.epoch - self.lr_decay_last_epoch == exper.args.lr_step_decay - 1 \
+                or self.lr_decay_last_epoch == 0:
+            # first set epoch in which we decay the lr (note, we check at the end of an epoch, so we add one
+            self.lr_decay_last_epoch = self.epoch + 1  # we decay for the next epoch
+            new_lr = self.lr_decay_rate * self.learning_rates[-1]  # multiply with the last lr we used
+            # we need to construct the optimizer again with the model parameters
+            exper.optimizer = OPTIMIZER_DICT[exper.args.optimizer](model_parameters, lr=new_lr)
+            self.meta_logger.info("Epoch {}: - LEARNING RATE DECAY: changed "
+                                  "learning rate from {} to {} <<< ".format(self.epoch,
+                                                                            self.learning_rates[-1],
+                                                                            new_lr))
+            # save new learning rate
+            self.learning_rates.append(new_lr)
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)

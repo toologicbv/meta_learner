@@ -78,5 +78,9 @@ class MetaConfig(object):
         """
         self.tau = 2e-3  # worked well for Graves model "regression" problem
         # self.tau = 7e-4
+        """
+            Learning rate decay parameters
+        """
+        self.loss_threshold_lr_decay = 1.
 
 config = MetaConfig()
