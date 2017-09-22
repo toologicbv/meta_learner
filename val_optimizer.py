@@ -13,8 +13,7 @@ from utils.common import softmax, stop_computing, construct_prior_p_t_T, generat
 
 
 def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=True, plot_func=False,
-                       num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False,
-                       save_run=None):
+                       num_of_plots=3, save_plot=True, show_plot=False, save_qt_prob_funcs=False, save_model=False):
 
     start_validate = time.time()
     global STD_OPT_LR
@@ -25,7 +24,7 @@ def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=T
     # initialize stats arrays
     exper.val_stats["step_losses"][exper.epoch] = np.zeros(exper.config.max_val_opt_steps + 1)
     exper.val_stats["step_param_losses"][exper.epoch] = np.zeros(exper.config.max_val_opt_steps + 1)
-
+    exper.val_stats["step_loss_var"][exper.epoch] = np.zeros(exper.config.max_val_opt_steps + 1)
     exper.meta_logger.info("---------------------------------------------------------------------------------------")
     if val_set is None:
         # if no validation set is provided just use one random generated q-function to run the validation
@@ -87,6 +86,9 @@ def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=T
         loss.backward(backward_ones)
         param_loss = val_set.param_error(average=True).data.cpu().numpy()[0].astype(float)
         # remember dim 0 is batch size
+        # compute and store the variance of this step for the test functions
+        loss_var = torch.std(loss, 0).data.cpu().numpy()[0].astype(float)
+        exper.val_stats["step_loss_var"][exper.epoch][i] = loss_var
         loss = torch.sum(torch.mean(loss, 0)).data.cpu().numpy()[0].astype(float)
         col_losses.append(loss)
         col_param_losses.append(param_loss)
@@ -186,6 +188,9 @@ def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=T
         exper.val_stats["loss_funcs"][:, i+1] = loss.data.cpu().squeeze().numpy()
     # how many of the val funcs are close to global minimum? Temporary
     last_losses = loss.data.cpu().squeeze().numpy()
+    # compute and save the last std for the test functions
+    loss_var = torch.std(loss, 0).data.cpu().numpy()[0].astype(float)
+    exper.val_stats["step_loss_var"][exper.epoch][i+1] = loss_var
     # end
     diff_min = torch.mean(loss - val_set.true_minimum_nll.expand_as(loss)).data.cpu().squeeze().numpy()[0].astype(float)
     loss = torch.sum(torch.mean(loss, 0)).data.cpu().squeeze().numpy()[0].astype(float)
@@ -250,7 +255,7 @@ def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=T
     exper.meta_logger.info("INFO - Epoch {}, elapsed time {:.2f} seconds: ".format(exper.epoch,
                                                                              duration))
     exper.meta_logger.info("INFO - Epoch {}: Final validation stats: total-step-losses / final-step loss / "
-                     "final-true_min: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, loss, diff_min))
+                           "final-true_min: {:.4}/{:.4}/{:.4}".format(exper.epoch, total_loss, loss, diff_min))
     exper.add_duration(duration, is_train=False)
     if exper.args.learner == "act":
         # exper.val_stats["ll_loss"][exper.epoch] = meta_learner.ll_loss
@@ -265,11 +270,15 @@ def validate_optimizer(meta_learner, exper, val_set=None, max_steps=6, verbose=T
                                                                                 precision=4)))
     if exper.val_stats["step_losses"][exper.epoch].shape[0] > 210:
         step_results = exper.val_stats["step_losses"][exper.epoch][-100:]
+        step_vars = exper.val_stats["step_loss_var"][exper.epoch][-100:]
         exper.meta_logger.info(">>> NOTE: only showing last 100 steps <<<")
     else:
         step_results = exper.val_stats["step_losses"][exper.epoch]
+        step_vars = exper.val_stats["step_loss_var"][exper.epoch]
     exper.meta_logger.info("INFO - Epoch {}: Final step losses: {}".format(exper.epoch,
                                                                            np.array_str(step_results, precision=4)))
+    exper.meta_logger.info("INFO - Epoch {}: Final step loss "
+                           "standard deviations: {}".format(exper.epoch, np.array_str(step_vars, precision=4)))
 
     exper.meta_logger.info("--------------------------- End of validation --------------------------------------------")
     if exper.args.learner != "manual" and save_model:

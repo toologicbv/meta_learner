@@ -37,18 +37,19 @@ class Experiment(object):
             np.random.seed(SEED)
 
         self.args = run_args
-        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                            "opt_loss": [], "step_losses": OrderedDict(), "halting_step": {}, "halting_stats": {},
+        self.epoch_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": OrderedDict(), "opt_step_hist": {},
+                            "opt_loss": [], "step_losses": OrderedDict(), "halting_step": OrderedDict(),
+                            "halting_stats": OrderedDict(),
                             "kl_term": np.zeros(run_args.max_epoch), "penalty_term": np.zeros(run_args.max_epoch),
                             "weight_regularizer": np.zeros(run_args.max_epoch),
                             "grad_stats": np.zeros((run_args.max_epoch, 2)),  # store mean and stddev of gradients model
                             "duration": [], "step_acc": OrderedDict()}
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                          "step_losses": OrderedDict(), "opt_loss": [],
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": OrderedDict(), "opt_step_hist": {},
+                          "step_losses": OrderedDict(), "step_loss_var": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "meta_act") else {},
-                          "halting_step": {}, "kl_term": [], "penalty_term": [],
+                          "halting_step": OrderedDict(), "kl_term": [], "penalty_term": [],
                           "duration": [], "halt_step_funcs": {}, "step_acc": OrderedDict()}
         self.epoch = 0
         self.output_dir = None
@@ -132,6 +133,7 @@ class Experiment(object):
         if eval_time_steps is None:
             eval_time_steps = self.config.max_val_opt_steps
         self.val_stats["step_losses"][self.epoch] = np.zeros(eval_time_steps + 1)
+        self.val_stats["step_loss_var"][self.epoch] = np.zeros(eval_time_steps + 1)
         self.val_stats["opt_step_hist"][self.epoch] = np.zeros(eval_time_steps + 1).astype(int)
         self.val_stats["halting_step"][self.epoch] = np.zeros(eval_time_steps + 1).astype(int)
         self.val_stats["qt_hist"][self.epoch] = np.zeros(eval_time_steps)
@@ -139,12 +141,13 @@ class Experiment(object):
         self.val_stats["step_acc"][self.epoch] = np.zeros(eval_time_steps + 1)
 
     def reset_val_stats(self):
-        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": {}, "opt_step_hist": {},
-                          "step_losses": OrderedDict(), "opt_loss": [],
+        self.val_stats = {"loss": [], "param_error": [], "act_loss": [], "qt_hist": OrderedDict(), "opt_step_hist": {},
+                          "step_losses": OrderedDict(), "step_loss_var": OrderedDict(), "opt_loss": [],
                           "step_param_losses": OrderedDict(),
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "meta_act") else {},
-                          "halting_step": {}, "kl_term": [], "penalty_term": [], "duration": [], "halt_step_funcs": {},
+                          "halting_step": OrderedDict(), "kl_term": [], "penalty_term": [], "duration": [],
+                          "halt_step_funcs": {},
                           "step_acc": OrderedDict()}
 
     def add_halting_steps(self, halting_steps, is_train=True):
@@ -580,8 +583,8 @@ class Experiment(object):
         if not self.args.on_server:
             self.generate_figures()
 
-    def generate_figures(self):
-        if self.args.problem == "mlp":
+    def generate_figures(self, separate_losses=True):
+        if separate_losses:
             # for the MLP experiment we don't want the learning curves of training & validation in one figure
             # because the scales are very different
             loss_plot(self, loss_type="loss", save=True, validation=False)

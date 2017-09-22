@@ -21,6 +21,11 @@ from mlp import MLP
 
 CANONICAL = False
 
+MODEL_DICT = {'metaV1': "LSTM baseline",
+              'metaV7': "LSTM curriculum",
+              'meta_actV1': "M-ACT",
+              'act_sbV3.2': "M-PACT"}
+
 OPTIMIZER_DICT = {'sgd': torch.optim.SGD, # Gradient Descent
                   'adadelta': torch.optim.Adadelta, # Adadelta
                   'adagrad': torch.optim.Adagrad, # Adagrad
@@ -62,6 +67,12 @@ testRELU_mlp_architecture = \
          act_function="ReLU",               # activation function
          n_output=10                        # MNIST number of output tokens
          )
+
+
+def get_official_model_name(exper):
+
+    key_value = exper.args.learner+exper.args.version
+    return MODEL_DICT.get(key_value, key_value)
 
 
 def create_logger(exper=None, file_handler=False, output_dir=None):

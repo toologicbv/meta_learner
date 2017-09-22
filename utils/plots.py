@@ -12,6 +12,7 @@ from pytz import timezone
 from itertools import cycle
 from probs import ConditionalTimeStepDist
 from regression import neg_log_likelihood_loss, nll_with_t_dist
+from common import get_official_model_name
 
 
 def create_exper_label(exper):
@@ -124,7 +125,8 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
             plt.plot(x_vals[offset:].astype(int), val_loss[offset:], 'b', label="valid-loss")
 
     plt.legend(loc="best")
-    p_title = "Train/validation loss for model {} (epochs {})".format(exper.args.learner+exper.args.version,
+    model_name = get_official_model_name(exper)
+    p_title = "Train/validation loss for model {} (epochs {})".format(model_name,
                                                                       exper.args.max_epoch)
     if exper.args.learner[0:6] != "act_sb" and exper.args.learner != "meta_act":
         p_title += " ({}-opt-steps)".format(num_opt_steps)
@@ -938,11 +940,12 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
 def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, height=15, do_save=False, do_show=False,
                           cmap=cmocean.cm.haline, scale=[11, 70]):
 
+    model_name = get_official_model_name(exper)
     if data_set not in ["train", "eval"]:
         raise ValueError("For parameter -data_set- you can only choose 1)train or 2)eval")
 
     if exper.args.problem == "regression":
-        scale = [9., 70]
+        scale = [9., 65.5]
     elif exper.args.problem == "mlp":
         scale = [0.4, 2.4]
 
@@ -967,11 +970,13 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
         stochastic = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
     elif exper.args.learner == "meta_act":
         stochastic = r" ($\tau={:.5f}$)".format(exper.config.tau)
+    elif exper.args.learner == "meta":
+        stochastic = " (training horizon {})".format(exper.avg_num_opt_steps)
     else:
         stochastic = ""
 
-    ptitle = "Model {} - ".format(exper.args.learner+exper.args.version)
-    plt.title(ptitle + "loss per time step during " + run_type + stochastic, **config.title_font)
+    ptitle = "{} - ".format(model_name)
+    plt.title(ptitle + "loss per time step during " + stochastic, **config.title_font)
     # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
     # color
     cmap.set_under(color='darkgray')
