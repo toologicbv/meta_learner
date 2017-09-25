@@ -485,9 +485,8 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         index = np.arange(min_step, max_step)
         icolor = iter_colors.next()
         if with_stddev:
-            losses = expers[e].val_stats["loss_funcs"][:, min_step:max_step]
-            mean_losses = np.mean(losses, 0)
-            std_losses = np.std(losses, 0)
+            mean_losses = expers[e].val_stats["step_losses"][:, min_step:max_step]
+            std_losses = expers[e].val_stats["step_loss_var"][:, min_step:max_step]
             mean_plus_std = mean_losses + std_losses
             mean_min_std = mean_losses - std_losses
             y_min_value = np.min(mean_min_std)

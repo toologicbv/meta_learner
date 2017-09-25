@@ -99,14 +99,33 @@ class Experiment(object):
         self.learning_rates = []
         self.learning_rates.append(run_args.lr)
 
-    def check_lr_decay(self, exper, meta_optimizer, current_loss=None):
-        if self.epoch - self.lr_decay_last_epoch == exper.args.lr_step_decay - 1 \
-                or self.lr_decay_last_epoch == 0:
-            # first set epoch in which we decay the lr (note, we check at the end of an epoch, so we add one
-            self.lr_decay_last_epoch = self.epoch + 1  # we decay for the next epoch
+    def check_lr_decay(self, meta_optimizer, current_loss=None, decay_type="lr_step_decay"):
+        do_lr_decay = False
+        if decay_type == "lr_step_decay":
+            if self.epoch - self.lr_decay_last_epoch == self.args.lr_step_decay - 1 \
+                    or self.lr_decay_last_epoch == 0:
+                do_lr_decay = True
+                # first set epoch in which we decay the lr (note, we check at the end of an epoch, so we add one
+                self.lr_decay_last_epoch = self.epoch + 1  # we decay for the next epoch
+            else:
+                do_lr_decay = False
+        elif decay_type == "compare_val_loss":
+            if len(self.val_stats["opt_loss"]) > 2:
+                # did our validation loss increase?
+                if self.val_stats["opt_loss"][-2] < self.val_stats["opt_loss"][-1]:
+                    perc_diff = (self.val_stats["opt_loss"][-1] - self.val_stats["opt_loss"][-2]) \
+                                  / float(self.val_stats["opt_loss"][-2])
+                    # increase is more than 5% w.r.t. previous (lower) validation loss
+                    self.meta_logger.info("!!! Learning rate decay: increased validation loss {:.2f}%".format(perc_diff*100))
+                    if perc_diff >= 0.05:
+                        do_lr_decay = True
+        else:
+            raise ValueError("Learning rate decay type {} is not supported".format(decay_type))
+
+        if do_lr_decay:
             new_lr = self.lr_decay_rate * self.learning_rates[-1]  # multiply with the last lr we used
             # we need to construct the optimizer again with the model parameters
-            exper.optimizer = OPTIMIZER_DICT[exper.args.optimizer](meta_optimizer.parameters(), lr=new_lr)
+            self.optimizer = OPTIMIZER_DICT[self.args.optimizer](meta_optimizer.parameters(), lr=new_lr)
             self.meta_logger.info("Epoch {}: - LEARNING RATE DECAY: changed "
                                   "learning rate from {} to {} <<< ".format(self.epoch,
                                                                             self.learning_rates[-1],

@@ -213,14 +213,18 @@ def main():
             if exper.args.lr_step_decay != 0 \
                     and (epoch_obj.loss_optimizer <= exper.loss_threshold_lr_decay
                          or exper.lr_decay_last_epoch != 0):
-                exper.check_lr_decay(exper, meta_optimizer, epoch_obj.loss_optimizer)
+                exper.check_lr_decay(meta_optimizer, epoch_obj.loss_optimizer, decay_type="lr_step_decay")
         # execute a checkpoint (save model) if necessary
         if exper.args.checkpoint_eval is not None and exper.epoch % exper.args.checkpoint_eval == 0:
             epoch_obj.execute_checkpoint(exper, meta_optimizer)
 
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
-            exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None) # "{}".format(exper.epoch)
+            exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None)  # "{}".format(exper.epoch)
+            # check if we need to lower learning rate, only when we didn't enable lr_step_decay already via args
+            if exper.args.lr_step_decay == 0:
+                # we start checking the learning rate if we already evaluated for at least 3 times
+                exper.check_lr_decay(meta_optimizer, decay_type="compare_val_loss")
         # per epoch collect the statistics w.r.t q(t|x, T) distribution for training and validation
         if exper.args.learner == 'act':
 

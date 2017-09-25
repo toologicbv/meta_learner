@@ -81,6 +81,6 @@ class MetaConfig(object):
         """
             Learning rate decay parameters
         """
-        self.loss_threshold_lr_decay = 1.
+        self.loss_threshold_lr_decay = 523.
 
 config = MetaConfig()
