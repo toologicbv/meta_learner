@@ -130,6 +130,12 @@ def print_flags(exper):
         exper.meta_logger.info("Please note that MetaLearner is trained incrementally")
         exper.meta_logger.info(np.array_str(exper.inc_learning_schedule))
 
+    if exper.args.trunc_bptt:
+        exper.meta_logger.info(" IMPORTANT >>> Using truncated BPTT {} ".format(exper.args.truncated_bptt_step))
+    else:
+        exper.meta_logger.info(" IMPORTANT >>> NOT USING truncated BPTT")
+    exper.meta_logger.info("NOTE: >>> Using batch handler class {} <<<".format(exper.batch_handler_class))
+
 
 def halting_step_stats(halting_steps):
     num_of_steps = halting_steps.shape[0]

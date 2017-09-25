@@ -27,7 +27,7 @@ class StickBreakingACTBaseModel(nn.Module):
                 self.lstms.append(nn.LSTMCell(num_hidden, num_hidden))
 
         self.theta_linear_out = nn.Linear(num_hidden, 1, bias=output_bias)
-        self.rho_linear_out = nn.Linear(num_hidden, 1, bias=True)
+        self.rho_linear_out = nn.Linear(num_hidden, 1, bias=False)
         # lower the initial bias value of the linear output layer that generates the rho_t values, this helps the model
         # to explore longer time sequences
         # self.rho_linear_out.bias.data = torch.FloatTensor([-1.])

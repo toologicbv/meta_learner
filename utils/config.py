@@ -55,9 +55,9 @@ class MetaConfig(object):
         # probability of continue computation
 
         self.pT_shape_param = 0.945
-        self.ptT_shape_param = 0.5
-        self.T = 100  # avg = 80 with 0.98
-        self.max_val_opt_steps = 50
+        self.ptT_shape_param = 0.9
+        self.T = 50  # avg = 80 with 0.98
+        self.max_val_opt_steps = 100
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
@@ -71,13 +71,12 @@ class MetaConfig(object):
         """
             Percentage of training epochs that use KL cost annealing
         """
-        # self.kl_anneal_perc = 0.03
-        self.kl_anneal_perc = 1.
+        self.kl_anneal_perc = 0.02
 
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost
         """
-        self.tau = 2e-3  # worked well for Graves model "regression" problem
+        self.tau = 1e-2  # worked well for Graves model "regression" problem
         # self.tau = 7e-4
         """
             Learning rate decay parameters

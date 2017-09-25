@@ -315,11 +315,12 @@ class Experiment(object):
             self.batch_handler_class = "BatchHandler"
         else:
             if self.args.learner == "act_sb":
-                self.batch_handler_class = "ACTBatchHandler"
-            elif self.args.learner == "act_sb_eff":
-                self.batch_handler_class = "ACTEfficientBatchHandler"
+                if self.args.version == "V3.2":
+                   self.batch_handler_class = "MPACTBatchHandler"
+                else:
+                    self.batch_handler_class = "ACTBatchHandler"
             elif self.args.learner == "meta_act":
-                self.batch_handler_class = "ACTGravesBatchHandler"
+                self.batch_handler_class = "MACTBatchHandler"
             else:
                 self.batch_handler_class = "BatchHandler"
 
@@ -374,7 +375,7 @@ class Experiment(object):
             else:
                 self.args.model = self.args.learner + self.args.version + "_" + self.args.problem + "_" + \
                                    "nu{:.3}".format(self.config.ptT_shape_param)
-                self.meta_logger.info("NOTE: >>> Using batch handler class {} <<<".format(self.batch_handler_class))
+
         self.model_name = self.args.model
         if not self.args.learner == 'manual' and self.args.model is not None:
             self.model_path = os.path.join(self.output_dir, self.args.model + config.save_ext)

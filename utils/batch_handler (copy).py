@@ -89,15 +89,6 @@ class ACTBatchHandler(BatchHandler):
         self.qt_remainders = Variable(torch.zeros(self.batch_size, 1).double())
         self.penalty_term = 0.
         self.test_result_scores = []
-        # added for truncated BPTT
-        self.did_bptt_reset = False
-        self.forward_steps = 0
-        self.total_opt_loss = 0
-        self.total_kl_term = 0
-        self.total_sum_grads = 0
-        self.last_backward_step = 0
-        self.num_of_backwards = 0
-
         if exper.args.cuda:
             self.cuda()
 
@@ -125,7 +116,6 @@ class ACTBatchHandler(BatchHandler):
         :param meta_optimizer:
         :return: IMPORTANT RETURNS LOSS STEP THAT IS NOT MULTIPLIED BY QT-VALUE! NUMPY FLOAT32
         """
-        self.init_trunc_bptt(exper, meta_optimizer)
         loss = get_func_loss(exper, self.functions, average=False)
         # make the forward step, which depends heavily on the experiment we're performing (MLP or Regression(T))
         delta_param, rho_probs, eval_par_new = self.forward(loss, exper, meta_optimizer)
@@ -272,7 +262,7 @@ class ACTBatchHandler(BatchHandler):
     def __call__(self, exper, epoch_obj, meta_optimizer, final_batch=False):
 
         self.step = 0
-
+        meta_optimizer.reset_lstm(keep_states=False)
         if self.is_train:
             do_continue = tensor_any(tensor_and(torch.le(self.compare_probs, self.one_minus_eps),
                                                 torch.lt(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
@@ -288,25 +278,16 @@ class ACTBatchHandler(BatchHandler):
                                torch.lt(self.counter_compare, self.max_T))).data.cpu().numpy()[0]
             else:
                 do_continue = True if self.step < self.horizon-1 else False
-            if self.eval_last_step_taken == 0:
-                num_next_iter = torch.sum(self.float_mask).data.cpu().squeeze().numpy()[0]
-                if num_next_iter == 0. and self.eval_last_step_taken == 0.:
-                    self.eval_last_step_taken = self.step + 1
+                if self.eval_last_step_taken == 0:
+                    num_next_iter = torch.sum(self.float_mask).data.cpu().squeeze().numpy()[0]
+                    if num_next_iter == 0. and self.eval_last_step_taken == 0.:
+                        self.eval_last_step_taken = self.step + 1
 
-            if self.is_train and exper.args.trunc_bptt and \
-                    (self.forward_steps == exper.args.truncated_bptt_step or not do_continue):
-
-                    loss_sum, sum_grads = self.backward(epoch_obj, meta_optimizer, exper.optimizer,
-                                                        retain_graph=False,
-                                                        trunc_bptt=do_continue)
-                    self.num_of_backwards += 1
-                    self.total_opt_loss += loss_sum
-                    self.total_kl_term += self.kl_term
-                    self.total_sum_grads += sum_grads
-                    self.last_backward_step = self.step + 1
             # important increase step after "do_continue" stuff but before adding step losses
             self.step += 1
-
+            if self.learner == "act_sb_eff" and self.is_train:
+                # evaluating the lower bound after each step
+                self.backward(epoch_obj, meta_optimizer, exper.optimizer, retain_graph=True)
             exper.add_step_loss(avg_loss_step, self.step, is_train=self.is_train)
             exper.add_opt_steps(self.step, is_train=self.is_train)
             epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
@@ -326,41 +307,6 @@ class ACTBatchHandler(BatchHandler):
             accuracy = self.functions.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
             # exper.meta_logger.info("Epoch {}: last batch - accuracy of last MLP {:.4f}".format(exper.epoch, accuracy))
             self.test_result_scores.append(accuracy)
-
-    def init_trunc_bptt(self, exper, meta_optimizer):
-
-        if exper.args.trunc_bptt and self.is_train:
-            # Keep states for truncated BPTT
-            if self.step % exper.args.truncated_bptt_step == 0:
-                if self.step > exper.args.truncated_bptt_step - 1:
-                    keep_states = True
-                else:
-                    keep_states = False
-                # exper.meta_logger.info("DEBUG@step %d - Resetting LSTM" % self.step)
-                self.forward_steps = 1
-                meta_optimizer.reset_lstm(keep_states=keep_states)
-                self.functions.reset_params()
-                self.loss_sum = 0
-            else:
-                self.forward_steps += 1
-
-        elif self.step == 0:
-            # ALL OTHER MODELS: only for first step reset LSTM
-            self.forward_steps = 1
-            # initialize LSTM
-            meta_optimizer.reset_lstm(keep_states=False)
-            self.functions.reset_params()
-            self.loss_sum = 0
-
-    def bptt_reset(self):
-        self.qt_last_step = Variable(self.qt_last_step.data)
-        self.q_t = Variable(self.q_t.data)
-        self.batch_step_losses = [Variable(tensor.data) for tensor in self.batch_step_losses]
-        self.compare_probs = Variable(self.compare_probs.data)
-        self.halting_steps = Variable(self.halting_steps.data)
-        self.rho_t = Variable(self.rho_t.data)
-        if not self.did_bptt_reset:
-            self.did_bptt_reset = True
 
     def compute_probs(self, new_rho_t):
 
@@ -382,7 +328,7 @@ class ACTBatchHandler(BatchHandler):
 
         return probs
 
-    def backward(self, epoch_obj, meta_optimizer, optimizer, loss_sum=None, retain_graph=False, trunc_bptt=False):
+    def backward(self, epoch_obj, meta_optimizer, optimizer, loss_sum=None, retain_graph=False):
         if len(self.batch_step_losses) == 0:
             raise RuntimeError("No batch losses accumulated. Can't execute backward() on object")
         if loss_sum is None:
@@ -391,14 +337,19 @@ class ACTBatchHandler(BatchHandler):
             self.loss_sum = loss_sum
 
         self.loss_sum.backward(retain_graph=retain_graph)
-
+        # sum_grads = 0
+        # if meta_optimizer.rho_linear_out.weight.grad is not None:
+        #     sum_grads += torch.sum(meta_optimizer.rho_linear_out.weight.grad.data)
+        # else:
+        #     print(">>>>>>>>>>>>> NO GRADIENTS <<<<<<<<<<<<")
+        # if meta_optimizer.rho_linear_out.bias.grad is not None:
+        #     sum_grads += torch.sum(meta_optimizer.rho_linear_out.bias.grad.data)
+        # print("Sum rho layer gradients ", sum_grads)
         optimizer.step()
         # print("Sum grads {:.4f}".format(meta_optimizer.sum_grads(verbose=True)))
         # we don't want to reset all our internal meta learner variables when using efficient sampling
         if not retain_graph:
             meta_optimizer.reset_final_loss()
-        if trunc_bptt:
-            self.bptt_reset()
         sum_grads = meta_optimizer.sum_grads()
         meta_optimizer.zero_grad()
         return self.loss_sum.data.cpu().squeeze().numpy()[0], sum_grads
@@ -559,22 +510,18 @@ class ACTBatchHandler(BatchHandler):
     def construct_priors_v1(self, truncate=False):
         # construct array of arrays with different length of ranges, we need this to construct a 2D matrix that will be
         # passed to the geometric PMF function of scipy
-        # !!! NOTE: halting_steps are already increased but not our step
-        current_step = self.step + 1
-        R = np.array([np.arange(1, i + 1) for i in self.halting_steps.data.cpu().numpy()])
-        if current_step > 1:
-            R = np.vstack([np.lib.pad(a, (0, (current_step - len(a))), 'constant', constant_values=0) for a in R])
+        R = np.array([np.arange(1, i+1) for i in self.halting_steps.data.cpu().numpy()])
+        if self.step > 1:
+            R = np.vstack([np.lib.pad(a, (0, (self.step - len(a))), 'constant', constant_values=0) for a in R])
         if self.type_prior == "geometric":
-            g_priors = geom.pmf(R, p=(1 - self.prior_shape_param1))
+            g_priors = geom.pmf(R, p=(1-self.prior_shape_param1))
 
         else:
             raise ValueError("Unknown prior distribution {}. Only 1) geometric and 2) neg-binomial "
                              "are supported".format(self.type_prior))
-        # print("Halting steps {}".format(np.array_str(self.halting_steps.data.cpu().numpy())))
-        # print("R")
-        # print("{}".format(np.array(R)))
+
         if truncate:
-            g_priors = 1. / np.sum(g_priors) * g_priors
+            g_priors = 1./np.sum(g_priors) * g_priors
         g_priors = Variable(torch.from_numpy(g_priors).double())
         if self.q_t.is_cuda:
             g_priors = g_priors.cuda()
@@ -643,100 +590,6 @@ class ACTBatchHandler(BatchHandler):
             raise RuntimeError("Running away from here...")
 
         return kl_div
-
-
-class MACTBatchHandler(ACTBatchHandler):
-
-    def __init__(self, exper, is_train, optimizees=None):
-        super(MACTBatchHandler, self).__init__(exper, is_train, optimizees)
-
-        self.one_minus_eps[:] = exper.config.qt_threshold
-
-    def cuda(self):
-        super(MACTBatchHandler, self).cuda()
-
-    def compute_batch_loss(self, weight_regularizer=1., loss_type="mean_field"):
-        # loss_type: (1) mean_field (2) final_step (3) combined
-        ponder_cost = self.compute_ponder_cost(tau=weight_regularizer)
-        if loss_type == "mean_field":
-            loss_matrix = torch.cat(self.batch_step_losses, 1).double()
-            # qts = self.q_t[:, 0:loss_matrix.size(1)]
-            # losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0)
-            qts = self.q_t[:, self.last_backward_step:loss_matrix.size(1)]
-            losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix[:, self.last_backward_step:]), 1), 0)
-
-        elif loss_type == "combined":
-            loss_matrix = torch.cat(self.batch_step_losses, 1).double()
-            qts = self.q_t[:, 0:loss_matrix.size(1)]
-
-            idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
-            if self.halting_steps.cuda:
-                idx_last_step = idx_last_step.cuda()
-            last_losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
-
-            losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix), 1), 0) + last_losses
-
-        elif loss_type == "final_step":
-            idx_last_step = Variable(self.halting_steps.data.type(torch.LongTensor) - 1)
-            if self.halting_steps.cuda:
-                idx_last_step = idx_last_step.cuda()
-            loss_matrix = torch.cat(self.batch_step_losses, 1)
-            losses = torch.mean(torch.gather(loss_matrix, 1, idx_last_step), 0)
-        else:
-            raise ValueError("Parameter loss_type {} not supported by this implementation".format(loss_type))
-
-        self.loss_sum = (losses.double() + ponder_cost).squeeze()
-        self.kl_term = ponder_cost.data.cpu().squeeze().numpy()[0]
-
-    def compute_ponder_cost(self, tau=5e-2):
-        """
-        ponder cost for ONE time sequence according to the Graves ACT paper: c = N(t) + R(t)
-        where N(t) is the number of steps taken (in our case the halting step) plus R(t) the remainder of the
-        probability = (1 - \sum_{n=1}^{t-1} q_t) in our case
-
-        Important note on tau parameter:
-        According to Graves, they conducted grid-search for the synthetic tasks: tau = i x 10-j
-         i between 1-10 and j between 1-4 (see page 7)
-         :param tau: hyperparameter to scale the cost
-        :return:
-        """
-
-        c = tau * torch.sum(torch.mean(self.halting_steps).double() + torch.mean(self.qt_last_step))
-        return c
-
-    def set_qt_values(self, new_probs, next_iteration_condition, final_func_mask):
-        qt = Variable(torch.zeros(new_probs.size()).double())
-        next_iter = torch.sum(next_iteration_condition).data.cpu().numpy()[0]
-        finals = torch.sum(final_func_mask).data.cpu().squeeze().numpy()[0]
-        next_idx = next_iteration_condition.data.squeeze().nonzero().squeeze()
-        final_idx = final_func_mask.data.squeeze().nonzero().squeeze()
-        if new_probs.is_cuda:
-            qt = qt.cuda()
-
-        if next_iter > 0:
-            qt[next_idx] = new_probs[next_idx]
-        # print("{} step next/final {}/{}".format(self.step, next, finals))
-        if finals > 0:
-            # subtlety here: we compute \prod_{i=1}^{t-1} (1 - rho_i) = remainder.
-            #                indexing starts at 0 = first step. self.step starts counting at 0
-            #                so when self.step=1 (we're actually in step 2 then) we only compute (1-rho_1)
-            #                which should be correct in step 2 (because step 1 = rho_1)
-            qt_remainder = self.tensor_one.expand_as(self.compare_probs) - self.compare_probs
-            self.qt_last_step[final_idx] = (new_probs + qt_remainder)[final_idx]
-            qt[final_idx] = self.qt_last_step[final_idx]
-            if self.verbose:
-                print("remainders", qt_remainder.size())
-                print("in final mask? ", final_func_mask[10].data.cpu().numpy()[0])
-                if final_func_mask[10].data.cpu().numpy()[0] == 1:
-                    print("*** yes in final mask")
-                    print("new_prob ", new_probs[10].data.cpu().squeeze().numpy()[0])
-                    print("in qt ", qt[10].data.cpu().squeeze().numpy()[0])
-                    print("Remainder ", qt_remainder[10].data.cpu().squeeze().numpy()[0])
-
-        self.q_t[:, self.step] = qt
-        if self.verbose and finals > 0 and final_func_mask[10].data.cpu().numpy()[0] == 1:
-            print(self.q_t[10, 0:self.step + 1].data.cpu().squeeze().numpy())
-            print("Sum probs: ", np.sum(self.q_t[10, 0:self.step + 1].data.cpu().squeeze().numpy()))
 
 
 class ACTGravesBatchHandler(ACTBatchHandler):
@@ -831,29 +684,27 @@ class ACTGravesBatchHandler(ACTBatchHandler):
             print("Sum probs: ", np.sum(self.q_t[10, 0:self.step + 1].data.cpu().squeeze().numpy()))
 
 
-class MPACTBatchHandler(ACTBatchHandler):
+class ACTEfficientBatchHandler(ACTBatchHandler):
 
     def __init__(self, exper, is_train, optimizees=None):
-        super(MPACTBatchHandler, self).__init__(exper, is_train, optimizees)
+        super(ACTEfficientBatchHandler, self).__init__(exper, is_train, optimizees)
         self.verbose = False
 
-    def compute_batch_loss(self, weight_regularizer=1., variational=True, original_kl=False, mean_field=True):
-
+    def compute_batch_loss(self, weight_regularizer=1.):
+        # construct the individual priors for each batch function, return DoubleTensor[batch_size, self.steps]
+        g_priors = self.construct_priors_v1()
+        q_T_values = self.q_t[:, 0:self.step].double()
         # compute KL divergence term, take the mean over the mini-batch dimension 0
-        g_priors = self.construct_priors_v1(truncate=True)
-
-        loss_matrix = torch.cat(self.batch_step_losses, 1).double()
-        qts = self.q_t[:, self.last_backward_step:loss_matrix.size(1)].double()
-        g_priors = g_priors[:, self.last_backward_step:loss_matrix.size(1)]
-        # compute KL divergence term, take the mean over the mini-batch dimension 0
-        kl_term = weight_regularizer * torch.mean(torch.sum(torch.mul(qts,
-                                                                      self.approximate_kl_div_with_sum(qts, g_priors))
+        kl_term = weight_regularizer * torch.mean(torch.sum(torch.mul(self.rho_t[:, 0:self.step],
+                                                                      self.approximate_kl_div_with_sum(q_T_values, g_priors))
                                                             , 1)
                                                   , 0)
-
         # get the loss value for each optimizee for the halting step
-        losses = torch.mean(torch.sum(torch.mul(qts, loss_matrix[:, self.last_backward_step:]), 1), 0)  # + last_step_loss
+        loss_matrix = torch.cat(self.batch_step_losses, 1).double()
+        losses = torch.mean(torch.sum(torch.mul(self.rho_t[:, 0:self.step], loss_matrix), 1), 0)  # q_T_values
         # compute final loss, in which we multiply each loss by the qt time step values
-        self.loss_sum = (losses.double() + kl_term).squeeze()
+        self.loss_sum = (losses + kl_term).squeeze()
+
         self.kl_term = kl_term.data.cpu().squeeze().numpy()[0]
+
 

@@ -63,8 +63,8 @@ parser.add_argument('--batch_size', type=int, default=125, metavar='N',
                     help='number of functions per batch (default: 125)')
 parser.add_argument('--optimizer_steps', type=int, default=100, metavar='N',
                     help='number of meta optimizer steps (default: 100)')
-parser.add_argument('--truncated_bptt_step', type=int, default=0, metavar='N',
-                    help='step at which it truncates bptt (default: 0)')
+parser.add_argument('--truncated_bptt_step', type=int, default=20, metavar='N',
+                    help='step at which it truncates bptt (default: 20)')
 parser.add_argument('--functions_per_epoch', type=int, default=10000, metavar='N',
                     help='updates per epoch (default: 10000)')
 parser.add_argument('--x_samples', type=int, default=10, metavar='N',
@@ -111,7 +111,6 @@ args = parser.parse_args()
 # Important - we don't use an output bias on the LSTM linear output layer. Experiencing "drifting" behavior if we do
 args.output_bias = False
 args.cuda = args.use_cuda and torch.cuda.is_available()
-args.trunc_bptt = True if args.truncated_bptt_step != 0 else False
 
 
 def main():
@@ -157,7 +156,8 @@ def main():
         exper.meta_logger.info("Epoch {}: Num of batches {}".format(exper.epoch, epoch_obj.num_of_batches))
         if exper.args.learner == "meta" and exper.args.version == "V7":
             global_curriculum = curriculum_schedule[exper.epoch - 1]
-
+        if exper.epoch > 20:
+            exper.args.truncated_bptt_step = 20
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
                 # exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i + 1))
@@ -179,22 +179,13 @@ def main():
                     # final_batch parameter does nothing else than printing the accuracy for the last batch in the
                     # MLP experiment. Not used for regression_(T)
                     batch(exper, epoch_obj, meta_optimizer, final_batch=True if i+1 == epoch_obj.num_of_batches else False)
-                    # only calculate batch loss if we're not using truncated BPTT. Otherwise this is done in batchHandler
-                    if not exper.args.trunc_bptt:
-                        batch.compute_batch_loss(epoch_obj.weight_regularizer)
+                    batch.compute_batch_loss(epoch_obj.weight_regularizer)
                     loss_sum += batch.loss_sum
                     kl_sum += batch.kl_term
                     penalty_sum += batch.penalty_term
 
                 loss_sum = loss_sum * 1./float(exper.args.samples_per_batch)
-                # only execute backward if we're not using truncated BPTT. Otherwise this is done in batchHandler
-                if not exper.args.trunc_bptt:
-                    act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, exper.optimizer, loss_sum=loss_sum)
-                else:
-                    act_loss = batch.total_opt_loss
-                    sum_grads = batch.total_sum_grads
-                    kl_sum = batch.total_kl_term
-
+                act_loss, sum_grads = batch.backward(epoch_obj, meta_optimizer, exper.optimizer, loss_sum=loss_sum)
                 epoch_obj.model_grads.append(sum_grads)
                 epoch_obj.add_kl_term(kl_sum * 1./float(exper.args.samples_per_batch),
                                       penalty_sum * 1./float(exper.args.samples_per_batch))
