@@ -160,7 +160,10 @@ def main():
 
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
-                # exper.meta_logger.info("Epoch {}: batch {}".format(exper.epoch, i + 1))
+                # if exper.epoch == 11 and exper.args.truncated_bptt_step != exper.args.optimizer_steps:
+                #    exper.args.truncated_bptt_step = exper.args.optimizer_steps
+                #    exper.meta_logger.info("Epoch {}: setting truncated_bptt_step = {}".format(exper.epoch,
+                #                                                                           exper.args.truncated_bptt_step))
                 optimizees = get_batch_functions(exper)
                 if exper.args.learner == "meta" and exper.args.version == "V7":
                     exper.inc_learning_schedule[exper.epoch - 1] = global_curriculum[i]
@@ -209,11 +212,10 @@ def main():
         exper.scale_step_statistics()
         epoch_obj.end(exper)
         # check whether we need to adjust the learning rate
-        if exper.args.problem == "mlp" and (exper.args.learner == "meta_act" or exper.args.learner == "act_sb"):
-            if exper.args.lr_step_decay != 0 \
-                    and (epoch_obj.loss_optimizer <= exper.loss_threshold_lr_decay
-                         or exper.lr_decay_last_epoch != 0):
-                exper.check_lr_decay(meta_optimizer, epoch_obj.loss_optimizer, decay_type="lr_step_decay")
+        if exper.args.lr_step_decay != 0 \
+                and (epoch_obj.loss_optimizer <= exper.loss_threshold_lr_decay
+                     or exper.lr_decay_last_epoch != 0):
+            exper.check_lr_decay(meta_optimizer, epoch_obj.loss_optimizer, decay_type="lr_step_decay")
         # execute a checkpoint (save model) if necessary
         if exper.args.checkpoint_eval is not None and exper.epoch % exper.args.checkpoint_eval == 0:
             epoch_obj.execute_checkpoint(exper, meta_optimizer)

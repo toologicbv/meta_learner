@@ -1,5 +1,6 @@
 from config import config
 import matplotlib.pyplot as plt
+import matplotlib
 from pylab import MaxNLocator
 import cmocean
 
@@ -35,23 +36,8 @@ def create_exper_label(exper):
     return label1
 
 
-def create_x_val_array(exper, loss):
-    x_vals = [i for i in range(exper.epoch + 1) if i % exper.args.eval_freq == 0]
-
-    if exper.args.eval_freq == 1:
-        x_vals = x_vals[1:]
-    elif exper.args.eval_freq == exper.epoch:
-        # eval frequency and total number of epochs are the same, therefore
-        # one evaluation moments exper.epoch
-        x_vals = [exper.epoch]
-    else:
-        x_vals = x_vals[1:]
-        if len(x_vals) == len(loss):
-            if x_vals[-1] != exper.epoch:
-                x_vals[-1] = exper.epoch
-        else:
-            if x_vals[-1] != exper.epoch:
-                x_vals.append(exper.epoch)
+def create_x_val_array(exper):
+    x_vals = exper.val_stats["step_losses"].keys()
     return np.array(x_vals)
 
 
@@ -111,7 +97,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
         plt.xticks(x_vals.astype(int))
 
     if validation:
-        x_vals = create_x_val_array(exper, val_loss)
+        x_vals = create_x_val_array(exper)
 
     if len(x_vals) > 2:
         offset = 1
@@ -160,7 +146,7 @@ def param_error_plot(exper, fig_name=None, height=8, width=6, save=False, show=F
     if len(x_vals) <= 10:
         plt.xticks(x_vals)
 
-    x_vals = create_x_val_array(exper, exper.val_stats['param_error'])
+    x_vals = create_x_val_array(exper)
     if x_vals[0] <= 5:
         offset = 1
     else:
@@ -400,18 +386,17 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
 
 def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
-                         loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
-                         with_stddev=True, runID=None, y_lim=[13, 60]):
+                          loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
+                          with_stddev=True, runID=None, y_lim=[13, 60]):
     # extra_labels = ["", ""]
     num_of_expers = len(expers)
-    title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
 
     best_val_runs = [0 for i in range(num_of_expers)]
     lowest_value = [0 for i in range(num_of_expers)]
     idx_lowest_value = [0 for i in range(num_of_expers)]
-    p_colors = ['grey', 'orange', 'red', 'violet', 'dodgerblue', 'green', 'darkviolet']
+    p_colors = ['darkgoldenrod', 'royalblue', 'magenta', 'yellow', 'forestgreen', 'orange', 'red', 'darkviolet']
 
-    plt.figure(figsize=(width, height))
+    ax = plt.figure(figsize=(width, height)).gca()
     style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
              [4, 4, 2, 8, 2, 2]]
     iter_colors = cycle(p_colors)
@@ -429,17 +414,21 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             plot_title = sort_exper + " (avg parameter error per step)"
         else:
             res_dict = expers[e].val_stats["step_losses"]
-            y_label = "avg final loss"
-            plot_title = sort_exper + " average loss per step"
+            y_label = "mean final loss"
+            plot_title = sort_exper
         if plot_best:
             plot_title = "Best run selected --- " + plot_title
 
         keys = res_dict.keys()
         # res = res_dict[keys[len(keys) - i]]
         model = expers[e].args.model
+        model_name = get_official_model_name(expers[e])
         if "act" in model:
             if expers[e].args.fixed_horizon:
                 model += "(fixed-H)"
+        elif "metaV1" in model:
+            model = model_name + " (H={})".format(expers[e].args.optimizer_steps)
+
         if expers[e].args.learner == "act" or (expers[e].args.learner == "meta"
                                                and expers[e].args.version == "V3.1"):
             model += r"($\nu={:.2f}$)".format(expers[e].config.ptT_shape_param)
@@ -485,8 +474,8 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         index = np.arange(min_step, max_step)
         icolor = iter_colors.next()
         if with_stddev:
-            mean_losses = expers[e].val_stats["step_losses"][:, min_step:max_step]
-            std_losses = expers[e].val_stats["step_loss_var"][:, min_step:max_step]
+            mean_losses = expers[e].val_stats["step_losses"][val_run][min_step:max_step]
+            std_losses = expers[e].val_stats["step_loss_var"][val_run][min_step:max_step]
             mean_plus_std = mean_losses + std_losses
             mean_min_std = mean_losses - std_losses
             y_min_value = np.min(mean_min_std)
@@ -498,6 +487,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             y_max_value = np.max(mean_losses)
         y_min_value -= y_min_value * 0.1
         y_max_value += y_max_value * 0.1
+
         if plot_best:
             l_label = "{}({})(stop={})".format(model, best_val_runs[e], stop_step)
         else:
@@ -512,7 +502,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             plt.semilogy(index, mean_losses, color=icolor, dashes=iter_styles.next(),
                          linewidth=2., label=l_label)
             if with_stddev:
-                plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.1')
+                plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
                 plt.yscale("log")
         else:
             plt.plot(index, mean_losses, color=icolor,
@@ -521,22 +511,19 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             if with_stddev:
                 plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
 
-        # if min_step == 0:
-        #     start = 1
-        # else:
-        #    start = min_step
-        if len(index) > 150:
-            index = np.arange(min_step, max_step + 1, 50)
-        elif len(index) > 41:
-            index = np.arange(min_step, max_step +1, 10)
+    ax.grid(True, which='both', linestyle='--')
+    title_font = {'fontname': 'Arial', 'size': '36', 'color': 'black', 'weight': 'normal'}
+    axis_font = {'fontname': 'Arial', 'size': '30', 'weight': 'normal'}
+    plt.ylim([y_lim[0], y_lim[1]])
+    plt.ylabel(y_label, **axis_font)
+    plt.tick_params(axis='both', which='major', labelsize=20)
+    plt.tick_params(axis='both', which='minor', labelsize=20)
+    plt.xlim([min_step, max_step + 1])
+    plt.xlabel("time steps", **axis_font)
 
-        plt.xlim([min_step, max_step+1])
-        plt.ylim([y_lim[0], y_lim[1]])
-        plt.xticks(index)
-        plt.xlabel("Number of optimization steps")
-        plt.ylabel(y_label)
-        plt.legend(loc="best")
-        plt.title(plot_title, **title_font)
+    plt.legend(loc="best")
+    plt.title(plot_title, **title_font)
+    # ax.tick_params(labelsize=20)
 
     if do_save:
         # dt = "_" + datetime.now(timezone('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S.%f')[-15:-7]
@@ -598,7 +585,7 @@ def plot_exper_losses(expers, loss_type="loss", height=8, width=12, do_show=True
                         label="{}({})".format(model, expers[e].epoch))
         else:
             # validation results
-            x_vals = create_x_val_array(expers[e], val_loss)
+            x_vals = create_x_val_array(expers[e])
 
             if x_vals[0] <= 5:
                 offset = 1
@@ -937,7 +924,23 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
 
 
 def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, height=15, do_save=False, do_show=False,
-                          cmap=cmocean.cm.haline, scale=[11, 70]):
+                          cmap=cmocean.cm.haline, scale=[11, 70], max_epoch=None, max_time_step=None,
+                          fig_title=None, huge=False):
+    if huge:
+        font_size = ['42', '30']
+    else:
+        font_size = ['14', '12']
+
+    title_font = {'fontname': 'Arial', 'size': font_size[0], 'color': 'black', 'weight': 'normal'}
+    axis_font = {'fontname': 'Arial', 'size': font_size[1], 'weight': 'normal'}
+
+    def slice_matrix(losses, max_epoch, max_time_step):
+
+        if max_epoch is not None:
+            losses = losses[0:max_epoch, :]
+        if max_time_step is not None:
+            losses = losses[:, 0:max_time_step]
+        return losses
 
     model_name = get_official_model_name(exper)
     if data_set not in ["train", "eval"]:
@@ -949,13 +952,20 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
         scale = [0.4, 2.4]
 
     if data_set == "train":
-        run_type = "training"
         y_label = "Training epoch"
         X = np.vstack(exper.epoch_stats["step_losses"].values())
+        X = slice_matrix(X, max_epoch, max_time_step)
+        if X.shape[0] > 25:
+            y_step_size = X.shape[0] // 10
+        else:
+            y_step_size = 1
+        y_ticks = np.arange(1, X.shape[0]+1, y_step_size)
     else:
         y_label = "Evaluation run"
-        run_type = "evaluation (each {} epoch)".format(int(exper.args.eval_freq))
         X = np.vstack(exper.val_stats["step_losses"].values())
+        X = slice_matrix(X, max_epoch, max_time_step)
+        y_ticks = np.array(exper.val_stats["step_losses"].keys())
+        y_step_size = 1
     # we can be (nearly) sure to never reach zero loss values (exactly) and because those value disturbe the colormap
     # we set them to a "bad" value in order to color them specifically. This is necessary for the ACT model when
     # trained with a stochastic horizon
@@ -974,24 +984,31 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
     else:
         stochastic = ""
 
-    ptitle = "{} - ".format(model_name)
-    plt.title(ptitle + "loss per time step during " + stochastic, **config.title_font)
+    if fig_title is None:
+        fig_title = "{} - ".format(model_name) + "loss per time step " + stochastic
+
+    plt.title(fig_title, **title_font)
     # use the combination of "vmin" in imshow and "cmap.set_under()" to label the "bad" (zero) values with a specific
     # color
     cmap.set_under(color='darkgray')
     im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=scale[0], vmax=scale[1])
-    plt.xlabel("Number of optimization steps")
-    plt.ylabel(y_label)
-    if X.shape[0] > 25:
-        y_step_size = X.shape[0] // 10
+    plt.xlabel("time steps", **axis_font)
+    plt.ylabel(y_label, **axis_font)
+
+    plt.yticks(np.arange(0, X.shape[0], y_step_size), y_ticks, fontsize=font_size[1])
+    if X.shape[1] > 30:
+        x_step_size = X.shape[1] // 5
     else:
-        y_step_size = 1
-    plt.yticks(np.arange(0, X.shape[0], y_step_size), np.arange(1, X.shape[0]+1, y_step_size))
+        x_step_size = 1
+    plt.xticks(np.arange(0, X.shape[1], x_step_size), fontsize=font_size[1])
     plt.colorbar(im)
 
     if fig_name is None and do_save:
         fig_name = "_" + create_exper_label(exper)
         fig_name = os.path.join(exper.output_dir, data_set + "_step_loss_map" + fig_name + ".png")
+    else:
+        fig_name = os.path.join(exper.output_dir, fig_name + ".png")
+
     if do_save:
         plt.savefig(fig_name, bbox_inches='tight')
         print("INFO - Successfully saved fig %s" % fig_name)
@@ -1272,9 +1289,26 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
 
 
 def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_save=False,
-                                  fig_name=None, epoch=None, x_max=None):
+                                  fig_name=None, epoch=None, x_max=None, p_title=None, huge=False, log_scale=False):
     if epoch is None:
         epoch = exper.args.max_epoch
+
+    model_name = get_official_model_name(exper)
+    if exper.args.learner == "meta_act":
+        p_label = r" $\tau={:.5f}$".format(exper.config.tau)
+    elif exper.args.learner == "act_sb":
+        p_label = r" ($\mathcal{U}(0,1)$)"
+
+    else:
+        p_label = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+
+    if huge:
+        title_font = {'fontname': 'Arial', 'size': 32, 'color': 'black', 'weight': 'normal'}
+        axis_font = {'fontname': 'Arial', 'size': 20, 'weight': 'normal'}
+        legend_size = 16
+    else:
+        title_font = config.title_font
+        legend_size = 6
 
     halting_steps = exper.val_stats["halt_step_funcs"][epoch]
     nll_distance = exper.val_stats["loss_funcs"][epoch]
@@ -1285,20 +1319,26 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     fig, ax = plt.subplots()
     fig.set_figheight(height)
     fig.set_figwidth(width)
-    p_title = "Model {} - halting step versus NLL distance at step 0 (N={}) during evaluation ".format(
-        exper.args.learner + exper.args.version, nll_distance.shape[0]
-    )
-    ax.set_title(p_title + "(epoch={})".format(epoch), **config.title_font)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    if p_title is None:
+        p_title = "{} - halting step versus NLL distance at step 0 (N={}) during evaluation ".format(
+            model_name, nll_distance.shape[0])
+
+    ax.set_title(p_title, **title_font)
     _ = ax.scatter(halting_steps, nll_distance, s=5, alpha=0.2, color="r",
-                   label=r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param))
+                   label=p_label)
+    if log_scale:
+        ax.set_yscale('log')
     if x_max is None:
         ax.set_xlim([min_x - 1, max_x + 1])
     else:
         ax.set_xlim([min_x - 1, x_max])
-    ax.set_xlabel("Halting step")
+    ax.set_xlabel("Halting step", **axis_font)
     ax.set_ylim([0, max_y])
-    ax.set_ylabel("Distance NLL(start)-NLL(min)")
-    ax.legend(loc="best")
+    plt.tick_params(axis='both', which='major', labelsize=20)
+    plt.tick_params(axis='both', which='minor', labelsize=20)
+    ax.set_ylabel("Distance NLL(start)-NLL(min)", **axis_font)
+    ax.legend(loc="best", prop={'size': legend_size})
 
     if do_save:
         if fig_name is None:

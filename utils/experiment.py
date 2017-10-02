@@ -137,6 +137,10 @@ class Experiment(object):
                                           self.config.save_ext)
                 meta_optimizer.save_params(model_path)
                 self.meta_logger.info("Epoch: {} - Successfully saved model to {}".format(self.epoch, model_path))
+        # when lr decay is enabled we make sure that we validate the model each epoch
+        if do_lr_decay and self.args.eval_freq != 1:
+            self.args.eval_freq = 1
+            self.meta_logger.info("Epoch: {} - IMPORTANT: Setting evaluation frequency to 1")
 
     def init_epoch_stats(self):
         self.epoch_stats["step_losses"][self.epoch] = np.zeros(self.max_time_steps + 1)
@@ -200,6 +204,13 @@ class Experiment(object):
             self.epoch_stats["step_losses"][self.epoch][step] += step_loss
         else:
             self.val_stats["step_losses"][self.epoch][step] += step_loss
+
+    def add_step_loss_variance(self, step_loss, step):
+        # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!
+        # if not isinstance(step_loss, (np.float, np.float32, np.float64)):
+        #    raise ValueError("step_loss must be a numpy.float but is type {}".format(type(step_loss)))
+        loss_var = torch.std(step_loss, 0).data.cpu().numpy()[0].astype(float)
+        self.val_stats["step_loss_var"][self.epoch][step] = loss_var
 
     def add_step_accuracy(self, step_acc, step, is_train=True):
         # NOTE: we assume step starts with index 0!!! Because of numpy indexing but it is the first time step!!!

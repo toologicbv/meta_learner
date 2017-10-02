@@ -56,11 +56,15 @@ class MetaConfig(object):
 
         self.pT_shape_param = 0.945
         self.ptT_shape_param = 0.9
-        self.T = 50  # avg = 80 with 0.98
+        self.T = 100  # avg = 80 with 0.98
         self.max_val_opt_steps = 100
 
         # some fonts defaults for headers of plots
         self.title_font = {'fontname': 'Arial', 'size': '14', 'color': 'black', 'weight': 'normal'}
+        self.axis_font = {'fontname': 'Arial', 'size': '10', 'weight': 'normal'}
+
+        # plot colors for graphs
+        self.p_colors = ['darkgoldenrod', 'royalblue', 'magenta', 'yellow', 'forestgreen', 'orange', 'red', 'darkviolet']
 
         """
             Stopping threshold
@@ -76,11 +80,13 @@ class MetaConfig(object):
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost
         """
-        self.tau = 1e-2  # worked well for Graves model "regression" problem
+        self.tau = 3e-3  # worked well for Graves model "regression" problem
         # self.tau = 7e-4
         """
             Learning rate decay parameters
         """
-        self.loss_threshold_lr_decay = 523.
+        # self.loss_threshold_lr_decay = 523.  # meta - regression - 50ops
+        # self.loss_threshold_lr_decay = 281.  # meta - regression - 25ops
+        self.loss_threshold_lr_decay = 140.  # meta - regression - 10ops
 
 config = MetaConfig()

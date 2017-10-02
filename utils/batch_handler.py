@@ -127,6 +127,7 @@ class ACTBatchHandler(BatchHandler):
         """
         self.init_trunc_bptt(exper, meta_optimizer)
         loss = get_func_loss(exper, self.functions, average=False)
+
         # make the forward step, which depends heavily on the experiment we're performing (MLP or Regression(T))
         delta_param, rho_probs, eval_par_new = self.forward(loss, exper, meta_optimizer)
         # then, apply the previous batch mask, although we did the forward pass with all functions, we filter here
@@ -196,6 +197,9 @@ class ACTBatchHandler(BatchHandler):
             loss_step = self.step_loss(par_new, exper, average_batch=True)
         else:
             loss_step = self.step_loss(eval_par_new, exper, average_batch=True)
+            batch_loss = self.batch_step_losses[-1]
+            exper.add_step_loss_variance(batch_loss, self.step+1)
+
         # update batch functions parameter for next step
         if self.is_train:
             self.functions.set_parameters(par_new)
@@ -317,6 +321,7 @@ class ACTBatchHandler(BatchHandler):
         if epoch_obj.get_max_time_steps_taken(self.is_train) < self.step:
             epoch_obj.set_max_time_steps_taken(self.step, self.is_train)
         if not self.is_train:
+
             if self.eval_last_step_taken == 0:
                 self.eval_last_step_taken = self.step
             epoch_obj.set_max_time_steps_taken(self.eval_last_step_taken, self.is_train)
@@ -588,6 +593,8 @@ class ACTBatchHandler(BatchHandler):
             baseline_loss = loss.data.cpu().squeeze().numpy()[0]
         exper.add_step_loss(baseline_loss, self.step, is_train=self.is_train)
         exper.add_opt_steps(self.step, is_train=self.is_train)
+        if not self.is_train:
+            exper.add_step_loss_variance(loss, self.step)
 
     def compute_stochastic_ponder_cost(self):
         """
