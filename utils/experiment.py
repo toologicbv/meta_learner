@@ -517,11 +517,11 @@ class Experiment(object):
             self.meta_logger.info("Epoch: {} - evaluation result - time step losses".format(self.epoch))
             self.meta_logger.info(np.array_str(e_losses, precision=3))
             # --------------- halting step for this evaluation run --------
-            np_halting_step = self.val_stats["halting_step"][self.epoch]
-            avg_opt_steps, stddev, median, total_steps = halting_step_stats(np_halting_step)
+            avg_opt_steps, stddev, median, total_steps = self.get_step_dist_statistics(epoch=self.epoch)
             self.meta_logger.info("! - Validation last step {} - !".format(epoch_obj.test_max_time_steps_taken))
             self.meta_logger.info("Epoch: {} - evaluation - halting step distribution".format(self.epoch))
-            self.meta_logger.info(np.array_str(np_halting_step[1:epoch_obj.test_max_time_steps_taken + 1]))
+            self.meta_logger.info(np.array_str(self.val_stats["halting_step"][self.epoch]
+                                               [1:epoch_obj.test_max_time_steps_taken + 1]))
             self.meta_logger.info("Epoch: {} - evaluation - Average number of optimization steps {:.3f} "
                                   "stddev {:.3f} median {} sum-steps {}".format(self.epoch, avg_opt_steps,
                                                                                 stddev, median,
@@ -653,6 +653,12 @@ class Experiment(object):
             if self.args.problem != "mlp":
                 plot_loss_versus_halting_step(self, do_show=False, do_save=True)
             # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
+
+    def get_step_dist_statistics(self, epoch=None):
+        if epoch is None:
+            epoch = self.val_stats["halting_step"].keys()[-1]
+        avg_opt_steps, stddev, median, total_steps = halting_step_stats(self.val_stats["halting_step"][epoch])
+        return avg_opt_steps, stddev, median, total_steps
 
     @staticmethod
     def load(path_to_exp, full_path=False, do_log=False, meta_logger=None):

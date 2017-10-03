@@ -137,6 +137,27 @@ def print_flags(exper):
     exper.meta_logger.info("NOTE: >>> Using batch handler class {} <<<".format(exper.batch_handler_class))
 
 
+def compute_total_steps(exper, epoch_range=None, is_train=True):
+    if is_train:
+        keys = exper.epoch_stats["halting_step"].keys()
+        halt_dict = exper.epoch_stats["halting_step"]
+    else:
+        keys = exper.val_stats["halting_step"].keys()
+        halt_dict = exper.val_stats["halting_step"]
+    if epoch_range is None:
+        epoch_range = [keys[0], keys[-1]]
+
+    total_steps = 0
+    for key, halting_steps in halt_dict.items():
+
+        if epoch_range[0] <= key <= epoch_range[1]:
+            num_of_steps = halting_steps.shape[0]
+            values = np.arange(0, num_of_steps)
+            total_steps += np.sum(values * halting_steps)
+
+    return total_steps
+
+
 def halting_step_stats(halting_steps):
     num_of_steps = halting_steps.shape[0]
     num_of_funcs = np.sum(halting_steps)

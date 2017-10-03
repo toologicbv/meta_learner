@@ -80,7 +80,7 @@ class MetaConfig(object):
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost
         """
-        self.tau = 3e-3  # worked well for Graves model "regression" problem
+        self.tau = 2.2e-3  # worked well for Graves model "regression" problem
         # self.tau = 7e-4
         """
             Learning rate decay parameters
