@@ -104,6 +104,8 @@ parser.add_argument('--fixed_horizon', action='store_true', default=False,
 parser.add_argument('--on_server', action='store_true', default=False, help="enable if program runs on das4 server")
 parser.add_argument('--samples_per_batch', type=int, default=1, metavar='N', help='number of samples per batch (default: 1)')
 parser.add_argument('--lr_step_decay', type=int, default=0, help="enables learning rate step-decay (after loss_threshold")
+parser.add_argument('--mixed_mlp', action='store_true', default=False,
+                    help='only applicable for MLP problem: use one and two layer MLPs for training/validation)')
 
 
 parser.add_argument("--output_bias")
@@ -148,7 +150,10 @@ def main():
 
     if exper.args.learner == "meta" and exper.args.version == "V7":
         curriculum_schedule = load_curriculum("curriculum.dll")
+    else:
+        curriculum_schedule = None
     for epoch in range(exper.args.max_epoch):
+        # use binary_switch to alternative between 1 and 2 layer MLPs. Not used for any other optimization problem!
         exper.epoch += 1
         batch_handler_class.id = 0
         exper.init_epoch_stats()
@@ -160,10 +165,6 @@ def main():
 
         for i in range(epoch_obj.num_of_batches):
             if exper.args.learner in ['meta', 'act']:
-                # if exper.epoch == 11 and exper.args.truncated_bptt_step != exper.args.optimizer_steps:
-                #    exper.args.truncated_bptt_step = exper.args.optimizer_steps
-                #    exper.meta_logger.info("Epoch {}: setting truncated_bptt_step = {}".format(exper.epoch,
-                #                                                                           exper.args.truncated_bptt_step))
                 optimizees = get_batch_functions(exper)
                 if exper.args.learner == "meta" and exper.args.version == "V7":
                     exper.inc_learning_schedule[exper.epoch - 1] = global_curriculum[i]
@@ -222,7 +223,11 @@ def main():
 
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
-            exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None)  # "{}".format(exper.epoch)
+            if exper.args.problem == "mlp":
+                if epoch.loss_optimizer < exper.config.loss_threshold_lr_decay:
+                    exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None)
+            else:
+                exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None)
             # check if we need to lower learning rate, only when we didn't enable lr_step_decay already via args
             if exper.args.lr_step_decay == 0:
                 # we start checking the learning rate if we already evaluated for at least 3 times

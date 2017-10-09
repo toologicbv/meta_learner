@@ -403,7 +403,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
 
 def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=False, fig_name=None, plot_best=False,
                           loss_type='param_error', min_step=None, max_step=None, sort_exper=None, log_scale=True,
-                          with_stddev=True, runID=None, y_lim=[13, 60]):
+                          with_stddev=True, runID=None, y_lim=[13, 60], label_annotation=None):
     # extra_labels = ["", ""]
     num_of_expers = len(expers)
 
@@ -442,6 +442,10 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         model_name = get_official_model_name(expers[e])
         if "meta_actV1" in model:
             model = model_name + r" $(\tau={})$".format(expers[e].config.tau)
+        elif "act_sbV3.2" in model:
+            model = model_name + r" $(\nu={})$".format(expers[e].config.ptT_shape_param)
+            if expers[e].args.problem == "mlp":
+                model += "_kls{:.3f}_H-{}".format(expers[e].config.kl_anneal_perc, expers[e].training_horizon)
         elif "act" in model:
             if expers[e].args.fixed_horizon:
                 model += "(fixed-H)"
@@ -451,12 +455,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if expers[e].args.learner == "act" or (expers[e].args.learner == "meta"
                                                and expers[e].args.version == "V3.1"):
             model += r"($\nu={:.2f}$)".format(expers[e].config.ptT_shape_param)
-        if expers[e].args.learner == "act_sb" and expers[e].args.version == "V3.2":
-            if hasattr(expers[e], "training_horizon") and expers[e].training_horizon is not None:
-                horizon = expers[e].training_horizon
-            else:
-                horizon = expers[e].config.T
-            model += "_kls{:.3f}_H-{}".format(expers[e].config.kl_anneal_perc, horizon)
+
         min_param_value = 999.
 
         if plot_best:
@@ -513,7 +512,10 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             if expers[e].args.learner == "act":
                 l_label = "{}(stop={})".format(model, stop_step)
             else:
-                l_label = "{}".format(model) # + extra_labels[e]
+                l_label = "{}".format(model)
+
+        if label_annotation is not None:
+            l_label += label_annotation[e]
 
         if log_scale:
             # res_dict[best_val_runs[e]][min_step:max_step]
@@ -538,7 +540,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
     plt.tick_params(axis='both', which='major', labelsize=20)
     plt.tick_params(axis='both', which='minor', labelsize=20)
     plt.xlim([min_step, max_step-1])
-    plt.xlabel("time steps", **axis_font)
+    plt.xlabel("time step", **axis_font)
 
     plt.legend(loc="best")
     plt.title(plot_title, **title_font)
@@ -1012,7 +1014,7 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
     # color
     cmap.set_under(color='darkgray')
     im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=scale[0], vmax=scale[1])
-    plt.xlabel("time steps", **axis_font)
+    plt.xlabel("time step", **axis_font)
     plt.ylabel(y_label, **axis_font)
 
     plt.yticks(np.arange(0, X.shape[0], y_step_size), y_ticks, fontsize=font_size[1])
@@ -1043,7 +1045,7 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
 
 def plot_actsb_qts(exper, data_set="train", fig_name=None, height=7, width=11, save=False, show=False,
                    plot_prior=False, epoch=None, add_info=False, omit_last_step=False, huge=False,
-                   p_title=None):
+                   p_title=None, x_max=None):
     if data_set not in ["train", "eval"]:
         raise ValueError("For parameter -data_set- you can only choose 1)train or 2)eval")
 
@@ -1113,8 +1115,10 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=7, width=11, s
             index = np.arange(1, len(index), 5)
         plt.xticks(index)
     plt.legend(loc="best", prop={'size': legend_size})
-    plt.xlabel("time steps", **axis_font)
-    plt.ylabel("probabilities", **axis_font)
+    plt.xlabel("time step", **axis_font)
+    plt.ylabel("probability", **axis_font)
+    if x_max is not None:
+        plt.xlim([0, x_max])
     if huge:
         plt.tick_params(axis='both', which='major', labelsize=20)
         plt.tick_params(axis='both', which='minor', labelsize=20)
@@ -1360,10 +1364,10 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     if exper.args.learner == "meta_act":
         p_label = r" $\tau={:.5f}$".format(exper.config.tau)
     elif exper.args.learner == "act_sb":
-        p_label = r" ($\mathcal{U}(0,1)$)"
+        p_label = r" $\nu={}$".format(exper.config.ptT_shape_param)
 
     else:
-        p_label = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+        p_label = r" ($\nu={}$)".format(exper.config.ptT_shape_param)
 
     if huge:
         title_font = {'fontname': 'Arial', 'size': 32, 'color': 'black', 'weight': 'normal'}
@@ -1385,7 +1389,7 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     fig.set_figwidth(width)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     if p_title is None:
-        p_title = "{} - halting step versus NLL distance at step 0 (N={}) during evaluation ".format(
+        p_title = "{} - halting step versus NLL at step 0 (N={}) during evaluation ".format(
             model_name, nll_distance.shape[0])
 
     ax.set_title(p_title, **title_font)
@@ -1401,7 +1405,7 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     ax.set_ylim([0, max_y])
     plt.tick_params(axis='both', which='major', labelsize=20)
     plt.tick_params(axis='both', which='minor', labelsize=20)
-    ax.set_ylabel("Distance NLL(start)-NLL(min)", **axis_font)
+    ax.set_ylabel("initial NLL", **axis_font)
     ax.legend(loc="best", prop={'size': legend_size})
 
     if do_save:

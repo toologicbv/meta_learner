@@ -98,6 +98,8 @@ class Experiment(object):
         self.lr_decay_rate = 0.5
         self.learning_rates = []
         self.learning_rates.append(run_args.lr)
+        # only used for mixed mlp experiments to alter between 1 and 2-layer MLPs
+        self.binary_switch = 0
 
     def check_lr_decay(self, meta_optimizer, current_loss=None, decay_type="lr_step_decay"):
         do_lr_decay = False
@@ -654,10 +656,16 @@ class Experiment(object):
                 plot_loss_versus_halting_step(self, do_show=False, do_save=True)
             # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
 
-    def get_step_dist_statistics(self, epoch=None):
+    def get_step_dist_statistics(self, epoch=None, with_range=False):
         if epoch is None:
             epoch = self.val_stats["halting_step"].keys()[-1]
         avg_opt_steps, stddev, median, total_steps = halting_step_stats(self.val_stats["halting_step"][epoch])
+        if with_range:
+            step_indices = np.nonzero(self.val_stats["halting_step"][epoch])
+            min_steps = np.min(step_indices)
+            max_steps = np.max(step_indices)
+            return avg_opt_steps, stddev, median, total_steps, [min_steps, max_steps]
+
         return avg_opt_steps, stddev, median, total_steps
 
     @staticmethod

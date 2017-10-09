@@ -158,6 +158,19 @@ def compute_total_steps(exper, epoch_range=None, is_train=True):
     return total_steps
 
 
+def get_evaluation_step_loss(exper, steps=[1, 5, 50], epoch=None):
+    if epoch is None:
+        epoch = exper.val_stats["step_losses"].keys()[-1]
+
+    step_losses = exper.val_stats["step_losses"][epoch]
+    last_step = step_losses.shape[0] - 1
+    # remember "step_losses" also incorporates the 0-step (initial loss), therefore we can easily
+    # work with the real indices
+    steps.extend([last_step])
+
+    return step_losses[np.array(steps)]
+
+
 def halting_step_stats(halting_steps):
     num_of_steps = halting_steps.shape[0]
     num_of_funcs = np.sum(halting_steps)
@@ -310,7 +323,7 @@ def get_model(exper, num_inputs, retrain=False):
     return meta_optimizer
 
 
-def get_batch_functions(exper):
+def get_batch_functions(exper, binary_switch=1):
     if exper.args.problem == "quadratic":
         funcs = L2LQuadratic(batch_size=exper.args.batch_size, num_dims=exper.args.x_dim, stddev=0.01,
                                  use_cuda=exper.args.cuda)
@@ -327,7 +340,16 @@ def get_batch_functions(exper):
         funcs = RosenBrock(batch_size=exper.args.batch_size, stddev=exper.config.stddev, num_dims=2,
                            use_cuda=exper.args.cuda, canonical=CANONICAL)
     elif exper.args.problem == "mlp":
-        funcs = MLP(default_mlp_architecture)
+        if exper.args.mixed_mlp:
+            # alternative between 1-layer and 2-layer MLP
+            if exper.binary_switch == 0:
+                funcs = MLP(default_mlp_architecture)
+                exper.binary_switch = 1
+            else:
+                funcs = MLP(two_layer_mlp_architecture)
+                exper.binary_switch = 0
+        else:
+            funcs = MLP(default_mlp_architecture)
         if exper.args.cuda:
             funcs = funcs.cuda()
     else:
@@ -360,7 +382,11 @@ def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1.,
     if file_name is None:
         if exper.args.problem == "mlp":
             num_of_funcs = 5
-            file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + ".dll"
+            if not exper.args.mixed_mlp:
+                file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + ".dll"
+            else:
+                file_name = config.val_file_name_suffix + "mixed_" + exper.args.problem + "_" \
+                            + str(num_of_funcs) + ".dll"
         else:
             file_name = config.val_file_name_suffix + exper.args.problem + "_" + str(num_of_funcs) + "_" + \
                         str(n_samples) + "_" + \
@@ -396,8 +422,17 @@ def load_val_data(path_specs=None, num_of_funcs=10000, n_samples=100, stddev=1.,
             elif exper.args.problem == "mlp":
                 val_funcs = []
                 num_of_funcs = 5
+                binary_switch = 0
                 for _ in np.arange(num_of_funcs):
-                    val_funcs.append(MLP(default_mlp_architecture))
+                    if not exper.args.mixed_mlp:
+                        val_funcs.append(MLP(default_mlp_architecture))
+                    else:
+                        if binary_switch == 0:
+                            val_funcs.append(MLP(default_mlp_architecture))
+                            binary_switch = 1
+                        else:
+                            val_funcs.append(MLP(two_layer_mlp_architecture))
+                            binary_switch = 0
             else:
                 raise ValueError("Problem type {} is not supported".format(exper.args.problem))
             logger.info("Creating validation set of size {} for problem {}".format(num_of_funcs, exper.args.problem))

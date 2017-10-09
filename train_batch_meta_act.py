@@ -52,7 +52,15 @@ def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj, final
                 keep_states = True
             else:
                 keep_states = False
-            if k % exper.args.truncated_bptt_step == 0 and not exper.args.learner == 'manual':
+            # no matter whether we're using truncated BPTT or not, in the first step always initialize meta learner
+            if k == 0:
+                forward_steps = 1
+                # initialize LSTM
+                meta_optimizer.reset_lstm(keep_states=False)
+                optimizees.reset_params()
+                loss_sum = 0
+            elif exper.args.truncated_bptt_step != 0 and k % exper.args.truncated_bptt_step == 0 \
+                    and not exper.args.learner == 'manual':
                 # meta_logger.debug("DEBUG@step %d - Resetting LSTM" % k)
                 forward_steps = 1
                 meta_optimizer.reset_lstm(keep_states=keep_states)
@@ -214,6 +222,7 @@ def execute_batch(exper, optimizees, meta_optimizer, optimizer, epoch_obj, final
     exper.epoch_stats["step_losses"][exper.epoch][k + 1] += avg_loss
     exper.epoch_stats["opt_step_hist"][exper.epoch][k + 1] += 1
     epoch_obj.total_loss_steps += avg_loss
+
     # back-propagate ACT loss that was accumulated during optimization steps
     if exper.args.learner == 'act':
         # processing ACT loss

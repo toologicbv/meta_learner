@@ -37,7 +37,7 @@ class ACTBatchHandler(BatchHandler):
         self.type_prior = exper.type_prior
         self.prior_shape_param1 = exper.config.ptT_shape_param
         self.learner = exper.args.learner
-        # TODO temporary added self.version for test puposes different batch loss computation
+        # TODO temporary added self.version for test purposes different batch loss computation
         self.version = exper.args.version
 
         if self.is_train:
@@ -198,7 +198,9 @@ class ACTBatchHandler(BatchHandler):
         else:
             loss_step = self.step_loss(eval_par_new, exper, average_batch=True)
             batch_loss = self.batch_step_losses[-1]
-            exper.add_step_loss_variance(batch_loss, self.step+1)
+            # we don't "have" any variance when batch size is 1
+            if self.batch_size > 1:
+                exper.add_step_loss_variance(batch_loss, self.step+1)
 
         # update batch functions parameter for next step
         if self.is_train:
@@ -593,7 +595,8 @@ class ACTBatchHandler(BatchHandler):
             baseline_loss = loss.data.cpu().squeeze().numpy()[0]
         exper.add_step_loss(baseline_loss, self.step, is_train=self.is_train)
         exper.add_opt_steps(self.step, is_train=self.is_train)
-        if not self.is_train:
+        # only calculate batch variance during evaluation and when our batch size is greater than 1 (not the case for MLP)
+        if not self.is_train and self.batch_size > 1:
             exper.add_step_loss_variance(loss, self.step)
 
     def compute_stochastic_ponder_cost(self):
