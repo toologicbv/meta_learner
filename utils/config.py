@@ -55,7 +55,7 @@ class MetaConfig(object):
         # probability of continue computation
 
         self.pT_shape_param = 0.945
-        self.ptT_shape_param = 0.7
+        self.ptT_shape_param = 0.9
         self.T = 100  # avg = 80 with 0.98
         self.max_val_opt_steps = 100
 
@@ -75,8 +75,8 @@ class MetaConfig(object):
         """
             Percentage of training epochs that use KL cost annealing
         """
-        # self.kl_anneal_perc = 0.02  # used for MLP
-        self.kl_anneal_perc = 1.
+        self.kl_anneal_perc = 0.03  # used for MLP
+        # self.kl_anneal_perc = 1.
 
         """
             hyperparameter for the Graves AcT model, scaling the ponder cost
@@ -90,6 +90,6 @@ class MetaConfig(object):
         # self.loss_threshold_lr_decay = 523.  # meta - regression - 50ops
         # self.loss_threshold_lr_decay = 281.  # meta - regression - 25ops
         # self.loss_threshold_lr_decay = 140.  # meta - regression - 10ops
-        self.loss_threshold_lr_decay = 1.5  # MLP experiments
+        self.loss_threshold_lr_decay = 2.5  # MLP experiments
 
 config = MetaConfig()

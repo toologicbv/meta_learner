@@ -224,7 +224,7 @@ def main():
         # if applicable, VALIDATE model performance
         if exper.run_validation and (exper.epoch % exper.args.eval_freq == 0 or epoch + 1 == exper.args.max_epoch):
             if exper.args.problem == "mlp":
-                if epoch.loss_optimizer < exper.config.loss_threshold_lr_decay:
+                if epoch_obj.loss_optimizer < exper.config.loss_threshold_lr_decay:
                     exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None)
             else:
                 exper.eval(epoch_obj, meta_optimizer, val_funcs, save_model=True, save_run=None)

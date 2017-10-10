@@ -50,7 +50,8 @@ class Experiment(object):
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "meta_act") else {},
                           "halting_step": OrderedDict(), "kl_term": [], "penalty_term": [],
-                          "duration": [], "halt_step_funcs": {}, "step_acc": OrderedDict()}
+                          "duration": [], "halt_step_funcs": {}, "mlp_halt_stats": OrderedDict(),
+                          "step_acc": OrderedDict()}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -100,6 +101,9 @@ class Experiment(object):
         self.learning_rates.append(run_args.lr)
         # only used for mixed mlp experiments to alter between 1 and 2-layer MLPs
         self.binary_switch = 0
+        # backward compatibility
+        if not hasattr(self.args, "trunc_bptt"):
+            self.args.__dict__["trunc_bptt"] = False
 
     def check_lr_decay(self, meta_optimizer, current_loss=None, decay_type="lr_step_decay"):
         do_lr_decay = False
@@ -172,7 +176,7 @@ class Experiment(object):
                           "ll_loss": {}, "kl_div": {}, "kl_entropy": {}, "qt_funcs": OrderedDict(),
                           "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "meta_act") else {},
                           "halting_step": OrderedDict(), "kl_term": [], "penalty_term": [], "duration": [],
-                          "halt_step_funcs": {},
+                          "halt_step_funcs": {}, "mlp_halt_stats": OrderedDict(),
                           "step_acc": OrderedDict()}
 
     def add_halting_steps(self, halting_steps, is_train=True):
@@ -469,6 +473,9 @@ class Experiment(object):
             if self.args.problem == "mlp":
                 num_iters = len(functions)
                 num_of_funcs = num_iters
+                # initialize a numpy array to store 1) halt step 2) type of mlp (1/2) 3) last loss value
+                self.val_stats["mlp_halt_stats"][self.epoch] = np.zeros((num_of_funcs, 3))
+
             else:
                 num_iters = 1
                 num_of_funcs = functions.num_of_funcs
@@ -501,6 +508,15 @@ class Experiment(object):
                 penalty_term += test_batch.penalty_term
                 if epoch_obj.test_max_time_steps_taken > test_max_time_steps_taken:
                     test_max_time_steps_taken = epoch_obj.test_max_time_steps_taken
+                if self.args.problem == "mlp":
+                    mlp_type = 2 if optimizee.two_hidden_layers else 1
+                    h_step = int(self.val_stats["halt_step_funcs"][self.epoch][0])
+                    # NOTE: batch_step_losses = max optimization steps but note index 0 = step 1
+                    # therefore we substract 1 from halting step
+                    last_loss = test_batch.batch_step_losses[h_step - 1].data.cpu().squeeze().numpy()[0]
+                    mlp_halt_stats = np.array([h_step, mlp_type, last_loss])
+                    print("Halt stats {}".format(np.array_str(mlp_halt_stats)))
+                    self.val_stats["mlp_halt_stats"][self.epoch][i] = mlp_halt_stats
 
             epoch_obj.test_max_time_steps_taken = test_max_time_steps_taken
             eval_loss *= 1/float(num_iters)
@@ -631,7 +647,7 @@ class Experiment(object):
         plot_image_map_losses(self, data_set="train", do_save=True)
         plot_dist_optimization_steps(self, data_set="train", save=True)
         plot_gradient_stats(self, do_show=False, do_save=True)
-        if self.run_validation:
+        if self.run_validation and self.val_stats["step_losses"].values() != []:
             plot_image_map_losses(self, data_set="eval", do_save=True)
 
         if self.args.learner[0:6] == "act_sb" or self.args.learner == "meta_act":
@@ -640,7 +656,7 @@ class Experiment(object):
             plot_actsb_qts(self, data_set="train", save=True)
             plot_halting_step_stats_with_loss(self, do_show=False, do_save=True, add_info=True)
 
-            if self.run_validation:
+            if self.run_validation and self.val_stats["halting_step"].keys() != []:
                 if hasattr(self.val_stats, 'halt_step_funcs'):
                     plot_loss_versus_halting_step(self, do_show=False, do_save=True)
                 plot_dist_optimization_steps(self, data_set="eval", save=True)
