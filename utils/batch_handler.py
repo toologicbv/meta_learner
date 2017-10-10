@@ -97,6 +97,8 @@ class ACTBatchHandler(BatchHandler):
         self.total_sum_grads = 0
         self.last_backward_step = 0
         self.num_of_backwards = 0
+        # tinkering, add this numpy array to store the step losses for the MLP experiment in order to compute stddev
+        self.np_step_losses = np.zeros(self.horizon + 1)
 
         if exper.args.cuda:
             self.cuda()
@@ -201,6 +203,9 @@ class ACTBatchHandler(BatchHandler):
             # we don't "have" any variance when batch size is 1
             if self.batch_size > 1:
                 exper.add_step_loss_variance(batch_loss, self.step+1)
+            elif exper.args.problem == "mlp":
+                # batch_size is always one, but we want to compute stddev later
+                self.np_step_losses[self.step+1] = batch_loss.data.cpu().squeeze().numpy()[0]
 
         # update batch functions parameter for next step
         if self.is_train:
@@ -598,6 +603,9 @@ class ACTBatchHandler(BatchHandler):
         # only calculate batch variance during evaluation and when our batch size is greater than 1 (not the case for MLP)
         if not self.is_train and self.batch_size > 1:
             exper.add_step_loss_variance(loss, self.step)
+        elif not self.is_train and exper.args.problem == "mlp":
+            # batch_size is always one, but we want to compute stddev later
+            self.np_step_losses[self.step] = baseline_loss
 
     def compute_stochastic_ponder_cost(self):
         """

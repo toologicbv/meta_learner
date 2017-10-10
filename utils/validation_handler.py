@@ -23,6 +23,7 @@ class ValidateMLPOnMetaLearner(object):
         start_validate = time.time()
         fixed_weights = generate_fixed_weights(exper, steps=exper.config.max_val_opt_steps)
         num_of_mlps = len(optimizees)
+        exper.val_stats["step_loss_var"][exper.epoch] = np.zeros((num_of_mlps, exper.config.max_val_opt_steps + 1))
         for i, mlp in enumerate(optimizees):
             if exper.args.cuda:
                 mlp = mlp.cuda()
@@ -63,7 +64,7 @@ class ValidateMLPOnMetaLearner(object):
             self.total_loss += np.sum(np_losses)
             # concatenate losses into a string for plotting the gradient path
             exper.val_stats["step_losses"][exper.epoch] += np_losses
-
+            exper.val_stats["step_loss_var"][exper.epoch][i] = np_losses
             self.total_opt_loss += meta_learner.final_loss(loss_weights=fixed_weights).data.squeeze()[0]
 
             accuracy = mlp.test_model(exper.dta_set, exper.args.cuda, quick_test=True)
@@ -79,6 +80,10 @@ class ValidateMLPOnMetaLearner(object):
         self.avg_final_step_loss *= 1. / float(num_of_mlps)
         exper.val_stats["loss"].append(self.total_loss)
         exper.val_stats["opt_loss"].append(self.total_opt_loss)
+        # compute stddev and store results
+        np_step_variance = np.std(exper.val_stats["step_loss_var"][exper.epoch], axis=0)
+        exper.val_stats["step_loss_var"][exper.epoch] = np.zeros(np_step_variance.shape[0])
+        exper.val_stats["step_loss_var"][exper.epoch] = np_step_variance
 
         if exper.val_stats["step_losses"][exper.epoch].shape[0] > 210:
             step_results = exper.val_stats["step_losses"][exper.epoch][-100:]

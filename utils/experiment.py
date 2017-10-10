@@ -446,6 +446,9 @@ class Experiment(object):
     def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
         start_validate = time.time()
 
+        if eval_time_steps is None:
+            eval_time_steps = self.config.max_val_opt_steps
+
         if self.args.problem == "mlp" and self.dta_set is None:
             self.dta_set = MNISTDataSet(self.args.batch_size, use_cuda=self.args.cuda)
 
@@ -454,10 +457,7 @@ class Experiment(object):
             self.meta_logger.info("Epoch: {} - Evaluating {} test MLPs".format(self.epoch,
                                                                                len(functions)))
             validation_class = getattr(utils.validation_handler, self.validation_handler_class)
-            if eval_time_steps is None:
-                self.init_val_stats()
-            else:
-                self.init_val_stats(eval_time_steps)
+            self.init_val_stats(eval_time_steps)
             validation_handler = validation_class(self, save_model=save_model)
             validation_handler(self, meta_optimizer, functions)
             self.val_stats["step_acc"][self.epoch] = validation_handler.avg_accuracy
@@ -475,7 +475,7 @@ class Experiment(object):
                 num_of_funcs = num_iters
                 # initialize a numpy array to store 1) halt step 2) type of mlp (1/2) 3) last loss value
                 self.val_stats["mlp_halt_stats"][self.epoch] = np.zeros((num_of_funcs, 3))
-
+                self.val_stats["step_loss_var"][self.epoch] = np.zeros((num_of_funcs, eval_time_steps + 1))
             else:
                 num_iters = 1
                 num_of_funcs = functions.num_of_funcs
@@ -515,8 +515,10 @@ class Experiment(object):
                     # therefore we substract 1 from halting step
                     last_loss = test_batch.batch_step_losses[h_step - 1].data.cpu().squeeze().numpy()[0]
                     mlp_halt_stats = np.array([h_step, mlp_type, last_loss])
-                    print("Halt stats {}".format(np.array_str(mlp_halt_stats)))
+                    # print("Halt stats {}".format(np.array_str(mlp_halt_stats)))
+                    # i ==>> index for optimizee
                     self.val_stats["mlp_halt_stats"][self.epoch][i] = mlp_halt_stats
+                    self.val_stats["step_loss_var"][self.epoch][i] = test_batch.np_step_losses
 
             epoch_obj.test_max_time_steps_taken = test_max_time_steps_taken
             eval_loss *= 1/float(num_iters)
@@ -555,6 +557,11 @@ class Experiment(object):
                 mlp_losses = np.vstack(np.array(mlp.losses) for mlp in functions)
                 self.val_stats["loss_funcs"][self.epoch] = mlp_losses
                 self.val_stats["step_acc"][self.epoch] = avg_accuracy
+                # compute stddev and store results
+                np_step_variance = np.std(self.val_stats["step_loss_var"][self.epoch], axis=0)
+                self.val_stats["step_loss_var"][self.epoch] = np.zeros(np_step_variance.shape[0])
+                self.val_stats["step_loss_var"][self.epoch] = np_step_variance
+                # print(np.array_str(self.val_stats["step_loss_var"][self.epoch], precision=3))
 
             # NOTE: we don't need to scale the step losses because during evaluation run each step is only executed
             # once, which is different during training because we process multiple batches in ONE EPOCH
