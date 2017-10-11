@@ -487,7 +487,7 @@ class Experiment(object):
             penalty_term = 0
             test_max_time_steps_taken = 0
             for i in np.arange(num_iters):
-                if num_iters != 1 and i % 10 == 0:
+                if num_iters != 0 and i % 10 == 0:
                     print(" >>> Optimizing {} MLP <<<".format(i+1))
                 if self.args.problem == "mlp":
                     optimizee = functions[i]

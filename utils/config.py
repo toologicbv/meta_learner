@@ -90,6 +90,7 @@ class MetaConfig(object):
         # self.loss_threshold_lr_decay = 523.  # meta - regression - 50ops
         # self.loss_threshold_lr_decay = 281.  # meta - regression - 25ops
         # self.loss_threshold_lr_decay = 140.  # meta - regression - 10ops
-        self.loss_threshold_lr_decay = 2.5  # MLP experiments
-
+        # self.loss_threshold_lr_decay = 2.5  # MLP experiments
+        # self.loss_threshold_lr_decay = 41.  # MLP meta learner
+        self.loss_threshold_lr_decay = 64  # MLP meta learner
 config = MetaConfig()

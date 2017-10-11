@@ -444,8 +444,9 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             model = model_name + r" $(\tau={})$".format(expers[e].config.tau)
         elif "act_sbV3.2" in model:
             model = model_name + r" $(\nu={})$".format(expers[e].config.ptT_shape_param)
-            if expers[e].args.problem == "mlp":
-                model += "_kls{:.3f}_H-{}".format(expers[e].config.kl_anneal_perc, expers[e].training_horizon)
+            # Decided not to use different scaling parameters
+            # if expers[e].args.problem == "mlp":
+            #    model += "_kls{:.3f}_H-{}".format(expers[e].config.kl_anneal_perc, expers[e].training_horizon)
         elif "act" in model:
             if expers[e].args.fixed_horizon:
                 model += "(fixed-H)"
@@ -971,7 +972,7 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
     if exper.args.problem == "regression":
         scale = [9., 65.5]
     elif exper.args.problem == "mlp":
-        scale = [0.4, 2.4]
+        scale = [0.2, 2.4]
 
     if data_set == "train":
         y_label = "Training epoch"

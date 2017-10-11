@@ -52,6 +52,8 @@ class ValidateMLPOnMetaLearner(object):
                 del delta_params
                 del par_new
 
+            if num_of_mlps != 0 and i % 10 == 0:
+                print(" >>> Optimizing {} MLP <<<".format(i + 1))
             # make another step to register final loss
             loss = get_func_loss(exper, mlp, average=False)
             if with_step_acc:
@@ -84,7 +86,6 @@ class ValidateMLPOnMetaLearner(object):
         np_step_variance = np.std(exper.val_stats["step_loss_var"][exper.epoch], axis=0)
         exper.val_stats["step_loss_var"][exper.epoch] = np.zeros(np_step_variance.shape[0])
         exper.val_stats["step_loss_var"][exper.epoch] = np_step_variance
-
         if exper.val_stats["step_losses"][exper.epoch].shape[0] > 210:
             step_results = exper.val_stats["step_losses"][exper.epoch][-100:]
             exper.meta_logger.info(">>> NOTE: only showing last 100 steps <<<")

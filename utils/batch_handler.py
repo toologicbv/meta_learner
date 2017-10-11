@@ -204,7 +204,8 @@ class ACTBatchHandler(BatchHandler):
             if self.batch_size > 1:
                 exper.add_step_loss_variance(batch_loss, self.step+1)
             elif exper.args.problem == "mlp":
-                # batch_size is always one, but we want to compute stddev later
+                # batch_size is always one, but we want to compute stddev later, so just save all losses for the function
+                # we calculate the stddev in Experiment.eval() method
                 self.np_step_losses[self.step+1] = batch_loss.data.cpu().squeeze().numpy()[0]
 
         # update batch functions parameter for next step
@@ -213,6 +214,7 @@ class ACTBatchHandler(BatchHandler):
         else:
             self.functions.set_parameters(eval_par_new)
 
+        # MLP which is a torch.nn.module or regression function (which is just a normal Class object)
         if self.func_is_nn_module:
             self.functions.zero_grad()
         else:

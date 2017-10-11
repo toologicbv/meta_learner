@@ -30,7 +30,7 @@ class StickBreakingACTBaseModel(nn.Module):
         self.rho_linear_out = nn.Linear(num_hidden, 1, bias=True)
         # lower the initial bias value of the linear output layer that generates the rho_t values, this helps the model
         # to explore longer time sequences
-        # self.rho_linear_out.bias.data = torch.FloatTensor([-1.])
+        self.rho_linear_out.bias.data = torch.FloatTensor([-1.])
         self.losses = []
         self.qt = []
         self.q_soft = None
