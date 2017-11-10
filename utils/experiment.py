@@ -12,7 +12,7 @@ import time
 from config import config, MetaConfig
 from probs import TimeStepsDist
 from common import load_val_data, create_logger, generate_fixed_weights, halting_step_stats
-from common import OPTIMIZER_DICT
+from common import OPTIMIZER_DICT, compute_mean_qTx_qzxT, compute_marginal_q_z
 from plots import plot_image_map_data, plot_qt_probs, loss_plot, plot_dist_optimization_steps, plot_gradient_stats
 from plots import plot_actsb_qts, plot_image_map_losses, plot_halting_step_stats_with_loss, plot_loss_versus_halting_step
 from plots import create_exper_label
@@ -51,7 +51,7 @@ class Experiment(object):
                           "loss_funcs": [] if (run_args.learner[0:6] != "act_sb" and run_args.learner != "meta_act") else {},
                           "halting_step": OrderedDict(), "kl_term": [], "penalty_term": [],
                           "duration": [], "halt_step_funcs": {}, "mlp_halt_stats": OrderedDict(),
-                          "step_acc": OrderedDict()}
+                          "step_acc": OrderedDict(), "qzx_dist": None, "rhos": None, "qzxT": None}
         self.epoch = 0
         self.output_dir = None
         self.model_path = None
@@ -177,7 +177,7 @@ class Experiment(object):
                           "loss_funcs": [] if (self.args.learner[0:6] != "act_sb" and self.args.learner != "meta_act") else {},
                           "halting_step": OrderedDict(), "kl_term": [], "penalty_term": [], "duration": [],
                           "halt_step_funcs": {}, "mlp_halt_stats": OrderedDict(),
-                          "step_acc": OrderedDict()}
+                          "step_acc": OrderedDict(), "qzx_dist": None, "rhos": None, "qzxT": None}
 
     def add_halting_steps(self, halting_steps, is_train=True):
         # expect opt_steps to be an autograd.Variable
@@ -252,9 +252,12 @@ class Experiment(object):
 
         if qt_values.ndim > 1 and step is None:
             if qt_values.shape[0] > 1:
-                # take mean over batch size
+                # take mean over batch size and use only non-zero values to calculate mean!
+                # qt_values = np.nan_to_num(np.true_divide(qt_values.sum(0), (qt_values != 0).sum(0)))
                 qt_values = np.mean(qt_values, axis=0)
+                qt_values *= 1./np.sum(qt_values)
             else:
+                # means we have no batch dimension and therefore we only make sure the shape is correct
                 qt_values = np.squeeze(qt_values, axis=0)
         # print(np.array_str(qt_values[:30], precision=5))
         if step is None:
@@ -322,10 +325,13 @@ class Experiment(object):
             # make sure the qt-values sum to one after scaling
             if np.sum(self.epoch_stats["qt_hist"][self.epoch]) > 0:
                 self.epoch_stats["qt_hist"][self.epoch] *= 1./np.sum(self.epoch_stats["qt_hist"][self.epoch])
+
         else:
             self.val_stats["step_losses"][self.epoch] *= step_loss_factors
             # see explanation above
             self.val_stats["qt_hist"][self.epoch] *= step_loss_factors[1:]
+            if np.sum(self.val_stats["qt_hist"][self.epoch]) > 0:
+                self.val_stats["qt_hist"][self.epoch] *= 1./np.sum(self.val_stats["qt_hist"][self.epoch])
 
     def start(self, meta_logger=None):
         # Model specific things to initialize
@@ -443,7 +449,8 @@ class Experiment(object):
 
         self.output_dir = log_dir
 
-    def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None):
+    def eval(self, epoch_obj, meta_optimizer, functions, save_run=None, save_model=True, eval_time_steps=None,
+             test_time=False):
         start_validate = time.time()
 
         if eval_time_steps is None:
@@ -487,7 +494,7 @@ class Experiment(object):
             penalty_term = 0
             test_max_time_steps_taken = 0
             for i in np.arange(num_iters):
-                if num_iters != 0 and i % 10 == 0:
+                if self.args.problem == "mlp" and num_iters != 0 and i % 10 == 0:
                     print(" >>> Optimizing {} MLP <<<".format(i+1))
                 if self.args.problem == "mlp":
                     optimizee = functions[i]
@@ -520,6 +527,19 @@ class Experiment(object):
                     self.val_stats["mlp_halt_stats"][self.epoch][i] = mlp_halt_stats
                     self.val_stats["step_loss_var"][self.epoch][i] = test_batch.np_step_losses
 
+            if self.args.problem[0:10] == "regression" and self.args.learner == "act_sb":
+                # collect the statistics in order to compute the marginal q(z|x, T) for the M-PACT model
+                _, qt_H, qzT_H = compute_mean_qTx_qzxT(test_batch.rho_t.data.cpu().squeeze().numpy(),
+                                                       self.val_stats["halting_step"][self.epoch])
+                qzx_dist = compute_marginal_q_z(qt_H, qzT_H)
+                if test_time:
+                    self.val_stats["qzx_dist"] = qzx_dist
+
+            # not sure whether we should really do this, because it eats up disk space during each evaluation
+            # only want this at test time not during validation
+            if test_time:
+                self.val_stats["qzxT"] = test_batch.q_t.data.cpu().squeeze().numpy()
+                self.val_stats["rhos"] = test_batch.rho_t.data.cpu().squeeze().numpy()
             epoch_obj.test_max_time_steps_taken = test_max_time_steps_taken
             eval_loss *= 1/float(num_iters)
             kl_term *= 1 / float(num_iters)
@@ -679,12 +699,16 @@ class Experiment(object):
                 plot_loss_versus_halting_step(self, do_show=False, do_save=True)
             # plot_qt_probs(experiment, data_set="val", save=True, plot_prior=True, height=8, width=8)
 
-    def get_step_dist_statistics(self, epoch=None, with_range=False):
+    def get_step_dist_statistics(self, epoch=None, with_range=False, is_train=False):
         if epoch is None:
             epoch = self.val_stats["halting_step"].keys()[-1]
-        avg_opt_steps, stddev, median, total_steps = halting_step_stats(self.val_stats["halting_step"][epoch])
+        if is_train:
+            halt_step_array = self.epoch_stats["halting_step"][epoch]
+        else:
+            halt_step_array = self.val_stats["halting_step"][epoch]
+        avg_opt_steps, stddev, median, total_steps = halting_step_stats(halt_step_array)
         if with_range:
-            step_indices = np.nonzero(self.val_stats["halting_step"][epoch])
+            step_indices = np.nonzero(halt_step_array)
             min_steps = np.min(step_indices)
             max_steps = np.max(step_indices)
             return avg_opt_steps, stddev, median, total_steps, [min_steps, max_steps]

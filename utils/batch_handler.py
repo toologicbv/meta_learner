@@ -84,7 +84,7 @@ class ACTBatchHandler(BatchHandler):
         # only used during evaluation to capture the last time step when at least one optimizee still needed processing
         self.eval_last_step_taken = 0.
         self.eps = 1e-320
-        self.verbose = False
+
         self.iterations = Variable(torch.zeros(self.batch_size, 1))
         self.qt_remainders = Variable(torch.zeros(self.batch_size, 1).double())
         self.penalty_term = 0.
@@ -99,6 +99,8 @@ class ACTBatchHandler(BatchHandler):
         self.num_of_backwards = 0
         # tinkering, add this numpy array to store the step losses for the MLP experiment in order to compute stddev
         self.np_step_losses = np.zeros(self.horizon + 1)
+
+        self.verbose = False
 
         if exper.args.cuda:
             self.cuda()
@@ -324,6 +326,8 @@ class ACTBatchHandler(BatchHandler):
             exper.add_opt_steps(self.step, is_train=self.is_train)
             epoch_obj.add_step_loss(avg_loss_step, last_time_step=not do_continue)
 
+        # print("final qt-probs")
+        # print(self.q_t[0:2, 0:self.step].data.cpu().numpy())
         exper.add_step_qts(self.q_t[:, 0:self.step].data.cpu().numpy(), is_train=self.is_train)
         exper.add_halting_steps(self.halting_steps, is_train=self.is_train)
         # set the class variable if we reached a new maximum time steps
@@ -745,18 +749,20 @@ class MACTBatchHandler(ACTBatchHandler):
             self.qt_last_step[final_idx] = (new_probs + qt_remainder)[final_idx]
             qt[final_idx] = self.qt_last_step[final_idx]
             if self.verbose:
-                print("remainders", qt_remainder.size())
-                print("in final mask? ", final_func_mask[10].data.cpu().numpy()[0])
-                if final_func_mask[10].data.cpu().numpy()[0] == 1:
-                    print("*** yes in final mask")
-                    print("new_prob ", new_probs[10].data.cpu().squeeze().numpy()[0])
-                    print("in qt ", qt[10].data.cpu().squeeze().numpy()[0])
-                    print("Remainder ", qt_remainder[10].data.cpu().squeeze().numpy()[0])
+                idx = final_idx[0]
+                print("-----------------------------------------------")
+                print("Before sum probs: ", np.sum(self.q_t[idx, 0:self.step + 1].data.cpu().squeeze().numpy()))
+                print("new_prob ", new_probs[idx].data.cpu().squeeze().numpy()[0])
+                print("Remainder ", qt_remainder[idx].data.cpu().squeeze().numpy()[0])
+                print("Function idx {}".format(idx))
+                print("Cumulative probs ", self.cumulative_probs[idx].data.cpu().squeeze().numpy()[0])
+                print(self.q_t[idx, :self.step + 1].data.cpu().squeeze().numpy())
 
         self.q_t[:, self.step] = qt
-        if self.verbose and finals > 0 and final_func_mask[10].data.cpu().numpy()[0] == 1:
-            print(self.q_t[10, 0:self.step + 1].data.cpu().squeeze().numpy())
-            print("Sum probs: ", np.sum(self.q_t[10, 0:self.step + 1].data.cpu().squeeze().numpy()))
+        if self.verbose and finals > 0:
+            print("func: {} self.q_t.size(1) {} and self.step {}".format(idx, self.q_t.size(1), self.step))
+            print(self.q_t[idx, :self.step+1].data.cpu().squeeze().numpy())
+            print("Sum probs: ", np.sum(self.q_t[idx, 0:self.step + 1].data.cpu().squeeze().numpy()))
 
 
 class ACTGravesBatchHandler(ACTBatchHandler):
@@ -855,7 +861,6 @@ class MPACTBatchHandler(ACTBatchHandler):
 
     def __init__(self, exper, is_train, optimizees=None):
         super(MPACTBatchHandler, self).__init__(exper, is_train, optimizees)
-        self.verbose = False
 
     def compute_batch_loss(self, weight_regularizer=1., variational=True, original_kl=False, mean_field=True):
 

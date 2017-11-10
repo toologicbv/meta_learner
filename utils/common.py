@@ -4,6 +4,7 @@ import os
 import sys
 import dill
 from config import config
+from collections import OrderedDict
 
 import argparse
 import logging
@@ -67,6 +68,106 @@ testRELU_mlp_architecture = \
          act_function="ReLU",               # activation function
          n_output=10                        # MNIST number of output tokens
          )
+
+
+def compute_mean_ptx(np_ptx, halt_steps):
+    N = np_ptx.shape[0]
+    res = halt_steps.nonzero()  # returns tuple, we're only interesting in indices
+    T = res[0]
+    num_of_keys = T.shape[0]
+    ptx_T = OrderedDict(zip(T, [[] for _ in range(num_of_keys)]))
+
+    # collect the optimizee rho values with the same horizon length
+    for i in np.arange(N):
+        i_ptx = np_ptx[i, :]
+        l_idx = np.max(i_ptx.nonzero())
+        T_x = l_idx + 1  # horizon for this optimizee
+        if T_x == 1:
+            res = i_ptx[0]
+        else:
+            res = i_ptx[0: T_x]  # rhos up to the penultimate
+
+        ptx_T[T_x].append(res)
+
+    for H, ptxT in ptx_T.iteritems():
+        ptxT = np.mean(np.array(ptxT), axis=0)
+        ptxT *= 1. / np.sum(ptxT)
+        ptx_T[H] = ptxT
+
+    return ptx_T
+
+
+def compute_mean_qTx_qzxT(m_rhos, halt_steps):
+    # number of optimizees
+    N = m_rhos.shape[0]
+    res = halt_steps.nonzero()  # returns tuple, we're only interesting in indices
+    T = res[0]
+    num_of_keys = T.shape[0]
+    rhos_T = OrderedDict(zip(T, [[] for _ in range(num_of_keys)]))
+    pT_H = OrderedDict()
+    pzT_H = OrderedDict()
+
+    # collect the optimizee rho values with the same horizon length
+    for i in np.arange(N):
+        i_rhos = m_rhos[i, :]
+        l_idx = np.max(i_rhos.nonzero())
+        T_x = l_idx + 1  # horizon for this optimizee
+        if T_x == 1:
+            res = i_rhos[0]
+        else:
+            res = i_rhos[0: T_x]  # rhos up to the penultimate
+
+        rhos_T[T_x].append(res)
+
+    # compute the mean rhos values per horizon H
+    for H, rhos in rhos_T.iteritems():
+        if len(rhos) > 0:
+            np_rhos = np.mean(np.array(rhos), axis=0)
+            # now construct the p(T) probs for all horizons T<=H
+            pT = np.zeros(H)
+            pzT = np.zeros(H)
+            for T in np.arange(H):
+                if T == 0:
+                    pT[0] = np_rhos[0]
+                    pzT[0] = np_rhos[0]
+                else:
+                    product = np.prod(1 - np_rhos[0:T])
+                    pT[T] = product * np_rhos[T]
+                    if T + 1 == H:  # last time step
+                        pzT[T] = 1 - np.sum(pzT)
+                    else:
+                        # strange but true, our pzT values are equal to the p(T) values except for the last step
+                        pzT[T] = pT[T]
+            # save the mean rho values per horizon
+            rhos_T[H] = np_rhos
+            pT_H[H] = pT
+            pzT_H[H] = pzT
+
+    return rhos_T, pT_H, pzT_H
+
+
+def compute_marginal_q_z(qT_H, qzT_H):
+    qz_H = OrderedDict()
+    max_H = np.max(qT_H.keys())
+
+    for T, qzT in qzT_H.iteritems():
+        q_z = np.zeros(T)
+        qT = qT_H[T]
+        for t in np.arange(T):
+            if t == 0:
+                q_z[t] = qT[0] + (1 - qzT[0]) * qzT[0]
+            else:
+                q_z[t] = qT[t] * (1 - np.sum(qzT[0:t])) + (1 - np.sum(qT[0:t])) * qzT[t]
+        qz_H[T] = q_z * 1. / np.sum(q_z)
+        # tinkering...extending all arrays to the maximum horizon length
+        # the underlying problem: I my q_z values are still calculated per horizon H...in the end
+        # I somehow(?) need to average over these values to obtain one q_z distribution
+        # still a blind spot for me to make this work
+        qz_H[T] = np.lib.pad(qz_H[T], (0, (max_H - qz_H[T].shape[0])), 'constant', constant_values=0)
+
+    qz = np.mean(np.vstack(qz_H.values()), axis=0)
+    qz *= 1. / np.sum(qz)
+    return qz
 
 
 def get_official_model_name(exper):
@@ -186,6 +287,19 @@ def halting_step_stats(halting_steps):
         median = np.argmax(cum_sum[cum_sum < num_of_funcs / 2.]) + 1
 
     return avg_opt_steps, stddev, median, total_steps
+
+
+def compute_mean_training_horizon(exper, last_epoch=None):
+    if last_epoch is None:
+        last_epoch = exper.args.max_epoch
+
+    sum_horizons = 0
+    for e in np.arange(1, last_epoch):
+        halt_steps = exper.epoch_stats["halting_step"][e]
+        mean_horizon, _, _, _ = halting_step_stats(halt_steps)
+        sum_horizons += mean_horizon
+
+    return sum_horizons / float(last_epoch)
 
 
 def softmax(x, dim=1):

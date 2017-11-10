@@ -14,6 +14,22 @@ from itertools import cycle
 from probs import ConditionalTimeStepDist
 from regression import neg_log_likelihood_loss, nll_with_t_dist
 from common import get_official_model_name
+from palettable.cmocean.sequential import Algae_20
+from palettable.colorbrewer.sequential import YlGnBu_9
+import palettable
+from cycler import cycler
+
+
+MODEL_COLOR = {'metaV1': "sienna",
+               'metaV7': "darkgoldenrod",
+               'meta_actV1': "royalblue",
+               'act_sbV3.2': "seagreen"}  # "seagreen"
+
+
+def get_model_color(exper):
+
+    key_value = exper.args.learner+exper.args.version
+    return MODEL_COLOR.get(key_value, key_value)
 
 
 def create_exper_label(exper):
@@ -27,11 +43,11 @@ def create_exper_label(exper):
                  "tau{:.5}".format(exper.config.tau) + retrain
     elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
-                 "nu{:.5}".format(exper.config.ptT_shape_param) + \
+                 "nu{:.5}".format(1-exper.config.ptT_shape_param) + \
                  "kls{}".format(exper.config.kl_anneal_perc) + retrain
     else:
         label1 = exper.args.learner + exper.args.version + "_" + str(exper.args.max_epoch) + "ep_" + \
-                 "nu{:.3}".format(exper.config.ptT_shape_param) + retrain
+                 "nu{:.3}".format(1-exper.config.ptT_shape_param) + retrain
 
     return label1
 
@@ -119,7 +135,7 @@ def loss_plot(exper, fig_name=None, loss_type="loss", height=8, width=6, save=Fa
     if (exper.args.learner == "meta" and exper.args.version == "V3.1") or \
             (exper.args.learner == "act" and exper.args.version == "V2") or \
             (exper.args.learner[0:6] == "act_sb"):
-        p_title += r' ($\nu = {:.2}$)'.format(exper.config.ptT_shape_param)
+        p_title += r' ($\nu = {:.2}$)'.format(1-exper.config.ptT_shape_param)
     elif exper.args.learner == "meta_act":
         p_title += r' ($\tau = {:.5}$)'.format(exper.config.tau)
     plt.title(p_title, **title_font)
@@ -218,7 +234,7 @@ def plot_dist_optimization_steps(exper, data_set="train", fig_name=None, height=
     else:
         if exper.args.learner[0:6] == "act_sb":
             p_title = model + r" Histogram of halting step (" + data_set + \
-                      r" in epoch {}) with prior $p(t|\nu={:.3f}$)".format(epoch, exper.config.ptT_shape_param)
+                      r" in epoch {}) with prior $p(t|\nu={:.3f}$)".format(epoch, 1-exper.config.ptT_shape_param)
             p_label = r"$\tau={:.5f}$".format(exper.config.kl_anneal_perc)
         if exper.args.learner == "meta_act":
             p_title = model + r" Histogram of halting step (" + data_set + \
@@ -289,7 +305,8 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         T = len(exper.epoch_stats["qt_hist"][epoch])
         opt_step_hist = exper.epoch_stats["opt_step_hist"][epoch]
         qt_hist = exper.epoch_stats["qt_hist"][epoch]
-        plot_title = "Training " + exper.args.problem + r"- q(t|T) $\nu={:.2f}$ (E[T]={})".format(exper.config.ptT_shape_param,
+        plot_title = "Training " + exper.args.problem + \
+                     r"- q(t|T) $\nu={:.2f}$ (E[T]={})".format(1-exper.config.ptT_shape_param,
             int(exper.avg_num_opt_steps))
         if not exper.args.fixed_horizon:
             plot_title += " (stochastic training)"
@@ -298,7 +315,7 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
         opt_step_hist = exper.val_stats["opt_step_hist"][epoch]
         qt_hist = exper.val_stats["qt_hist"][epoch]
         plot_title = exper.args.problem + r" - $q(t|{}) \;\; \nu={:.2}$".format(
-            config.max_val_opt_steps, exper.config.ptT_shape_param)
+            config.max_val_opt_steps, 1-exper.config.ptT_shape_param)
         if not exper.args.fixed_horizon:
             plot_title += " (stochastic training E[T]={})".format(int(exper.avg_num_opt_steps))
     res_qts = OrderedDict()
@@ -346,15 +363,15 @@ def plot_qt_probs(exper, data_set="train", fig_name=None, height=16, width=12, s
             _ = plt.subplot(num_of_plots, 2, i, sharey=ax1)
 
         plt.bar(index, res_qts[plot_idx[i - 1]], bar_width, color='b', align='center',
-                label=r"$q(t|{}) \;\; \nu={:.2}$".format(T, exper.config.ptT_shape_param))
+                label=r"$q(t|{}) \;\; \nu={:.2}$".format(T, 1-exper.config.ptT_shape_param))
         if plot_prior:
             kl_prior_dist = ConditionalTimeStepDist(T=exper.config.max_val_opt_steps,
                                                     q_prob=exper.config.ptT_shape_param)
-            # print(exper.config.max_val_opt_steps, exper.config.ptT_shape_param)
+
             priors = kl_prior_dist.pmfunc(np.arange(1, exper.config.max_val_opt_steps+1))
-            # print(priors[0:10])
+
             plt.bar(np.array(index)+bar_width, priors, bar_width, color='orange', align='center',
-                    label=r"prior $p(t|{}) \;\; \nu={:.2}$".format(T, exper.config.ptT_shape_param))
+                    label=r"prior $p(t|{}) \;\; \nu={:.2}$".format(T, 1-exper.config.ptT_shape_param))
         if data_set == "train":
             if len(index) > 15:
                 index = np.arange(1, len(index), 5)
@@ -414,9 +431,11 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
 
     ax = plt.figure(figsize=(width, height)).gca()
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
     style = [[8, 4, 2, 4, 2, 4], [4, 2, 2, 4, 2, 4], [2, 2, 2, 4, 2, 4], [4, 8, 2, 4, 2, 4], [8, 8, 8, 4, 2, 4],
              [4, 4, 2, 8, 2, 2]]
     iter_colors = cycle(p_colors)
+    # iter_colors = cycle(cycler('color', palettable.wesanderson.Zissou_5.mpl_colors))
     iter_styles = cycle(style)
 
     if min_step is None:
@@ -431,7 +450,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
             plot_title = sort_exper + " (avg parameter error per step)"
         else:
             res_dict = expers[e].val_stats["step_losses"]
-            y_label = "mean final loss"
+            y_label = "Mean final loss"
             plot_title = sort_exper
         if plot_best:
             plot_title = "Best run selected --- " + plot_title
@@ -443,7 +462,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if "meta_actV1" in model:
             model = model_name + r" $(\tau={})$".format(expers[e].config.tau)
         elif "act_sbV3.2" in model:
-            model = model_name + r" $(\nu={})$".format(expers[e].config.ptT_shape_param)
+            model = model_name + r" $(\nu={})$".format(1-expers[e].config.ptT_shape_param)
             # Decided not to use different scaling parameters
             # if expers[e].args.problem == "mlp":
             #    model += "_kls{:.3f}_H-{}".format(expers[e].config.kl_anneal_perc, expers[e].training_horizon)
@@ -455,7 +474,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
 
         if expers[e].args.learner == "act" or (expers[e].args.learner == "meta"
                                                and expers[e].args.version == "V3.1"):
-            model += r"($\nu={:.2f}$)".format(expers[e].config.ptT_shape_param)
+            model += r"($\nu={:.2f}$)".format(1-expers[e].config.ptT_shape_param)
 
         min_param_value = 999.
 
@@ -521,8 +540,8 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
         if log_scale:
             # res_dict[best_val_runs[e]][min_step:max_step]
             # print(index.shape, mean_losses.shape)
-            plt.semilogy(index, mean_losses, color=icolor, dashes=iter_styles.next(),
-                         linewidth=2., label=l_label)
+            plt.semilogy(index, mean_losses, dashes=iter_styles.next(), color=icolor,
+                         linewidth=2., label=l_label)  # color=icolor,
             if with_stddev:
                 plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
                 plt.yscale("log")
@@ -531,7 +550,7 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
                          dashes=iter_styles.next(),
                          linewidth=2., label=l_label)
             if with_stddev:
-                plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')
+                plt.fill_between(index, mean_plus_std, mean_min_std, color=icolor, alpha='0.2')  #
 
     ax.grid(True, which='both', linestyle='--')
     title_font = {'fontname': 'Arial', 'size': '36', 'color': 'black', 'weight': 'normal'}
@@ -541,9 +560,9 @@ def plot_loss_over_tsteps(expers, height=8, width=12, do_show=True, do_save=Fals
     plt.tick_params(axis='both', which='major', labelsize=20)
     plt.tick_params(axis='both', which='minor', labelsize=20)
     plt.xlim([min_step, max_step-1])
-    plt.xlabel("time step", **axis_font)
+    plt.xlabel("Time steps", **axis_font)
 
-    plt.legend(loc="best")
+    plt.legend(loc="best", prop={'size': 16})
     plt.title(plot_title, **title_font)
     # ax.tick_params(labelsize=20)
 
@@ -803,7 +822,7 @@ def plot_qt_mode_hist(exper, do_save=False, do_show=False, width=10, height=7, f
 
     plt.figure(figsize=(width, height))
     plt.title(r"Distribution of mode-step of $q(t|{})$ with $\nu={:.2f}$".format(exper.config.max_val_opt_steps,
-                                                                          exper.config.ptT_shape_param))
+                                                                          1-exper.config.ptT_shape_param))
     _ = plt.hist(max_idx_probs, bins=key+1, normed=True)
     plt.xlim([0, key+1])
 
@@ -862,7 +881,7 @@ def plot_qt_detailed_stats(exper, funcs, do_save=False, do_show=False, width=18,
 
     fig = plt.figure(figsize=(width, height))
     fig.subplots_adjust(hspace=.5)
-    p_title = exper.args.problem + r' ($\nu={:.2}$) - ${}$ functions'.format(exper.config.ptT_shape_param, N)
+    p_title = exper.args.problem + r' ($\nu={:.2}$) - ${}$ functions'.format(1-exper.config.ptT_shape_param, N)
     if not exper.args.fixed_horizon:
         p_title += " (stochastic training E[T]={})".format(int(exper.avg_num_opt_steps))
     fig.suptitle(p_title , **config.title_font)
@@ -950,7 +969,8 @@ def slice_matrix(losses, max_epoch, max_time_step):
     if max_epoch is not None:
         losses = losses[0:max_epoch, :]
     if max_time_step is not None:
-        losses = losses[:, 0:max_time_step]
+        # here we need to add 1 because index 0 is step 0, and step 100 is index 101
+        losses = losses[:, 0:max_time_step + 1]
     return losses
 
 
@@ -958,9 +978,11 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
                           cmap=cmocean.cm.haline, scale=[11, 70], max_epoch=None, max_time_step=None,
                           fig_title=None, huge=False):
     if huge:
-        font_size = ['42', '30']
+        font_size = ['48', '40']
+        cbar_font = 36
     else:
         font_size = ['14', '12']
+        cbar_font = 25
 
     title_font = {'fontname': 'Arial', 'size': font_size[0], 'color': 'black', 'weight': 'normal'}
     axis_font = {'fontname': 'Arial', 'size': font_size[1], 'weight': 'normal'}
@@ -978,11 +1000,13 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
         y_label = "Training epoch"
         X = np.vstack(exper.epoch_stats["step_losses"].values())
         X = slice_matrix(X, max_epoch, max_time_step)
-        if X.shape[0] > 25:
-            y_step_size = X.shape[0] // 10
+        if X.shape[0] > 50:
+            y_step_size = 20
+        elif X.shape[0] > 14:
+            y_step_size = 5
         else:
             y_step_size = 1
-        y_ticks = np.arange(1, X.shape[0]+1, y_step_size)
+        y_ticks = np.arange(y_step_size, X.shape[0]+1, y_step_size)
     else:
         y_label = "Evaluation run"
         X = np.vstack(exper.val_stats["step_losses"].values())
@@ -992,14 +1016,14 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
     # we can be (nearly) sure to never reach zero loss values (exactly) and because those value disturbe the colormap
     # we set them to a "bad" value in order to color them specifically. This is necessary for the ACT model when
     # trained with a stochastic horizon
-    min_value = np.min(X[X > 0])
+
     X[X == 0] = -1
     plt.figure(figsize=(width, height))
     if exper.args.learner == "act" or (exper.args.learner == "meta" and exper.args.version == "V2"):
         stochastic = r" (stochastic horizon E[T]={} $\nu={:.3f}$)".format(int(exper.avg_num_opt_steps),
-                                                                          exper.config.ptT_shape_param)
+                                                                          1-exper.config.ptT_shape_param)
     elif exper.args.learner[0:6] == "act_sb":
-        stochastic = r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+        stochastic = r" ($\nu={:.3f}$)".format(1-exper.config.ptT_shape_param)
     elif exper.args.learner == "meta_act":
         stochastic = r" ($\tau={:.5f}$)".format(exper.config.tau)
     elif exper.args.learner == "meta":
@@ -1015,19 +1039,27 @@ def plot_image_map_losses(exper, data_set="train", fig_name=None, width=18, heig
     # color
     cmap.set_under(color='darkgray')
     im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=scale[0], vmax=scale[1])
-    plt.xlabel("time step", **axis_font)
+    plt.xlabel("Time step", **axis_font)
     plt.ylabel(y_label, **axis_font)
-
-    plt.yticks(np.arange(0, X.shape[0], y_step_size), y_ticks, fontsize=font_size[1])
+    y = np.arange(y_step_size, X.shape[0] + 1, y_step_size) - 1
+    print(y_step_size)
+    print(y)
+    plt.yticks(y, y_ticks, fontsize=font_size[1])
     if X.shape[1] > 70:
-        x_step_size = 10
+        x_step_size = 20
     elif X.shape[1] > 30:
         x_step_size = 5
     else:
         x_step_size = 1
-    print(X.shape[1], x_step_size)
-    plt.xticks(np.arange(0, X.shape[1], x_step_size), fontsize=font_size[1])
-    plt.colorbar(im)
+
+    if x_step_size > 1:
+        x_ticks = np.arange(x_step_size, X.shape[1]+1, x_step_size)
+    else:
+        x_ticks = np.arange(x_step_size, X.shape[1], x_step_size)
+
+    plt.xticks(x_ticks, fontsize=font_size[1])
+    colbar = plt.colorbar(im)
+    colbar.ax.tick_params(labelsize=cbar_font)
 
     if fig_name is None and do_save:
         fig_name = "_" + create_exper_label(exper)
@@ -1071,15 +1103,16 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=7, width=11, s
             T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero())
         else:
             T = np.max(exper.epoch_stats["qt_hist"][epoch].nonzero()) + 1
+
         qt_hist = exper.epoch_stats["qt_hist"][epoch][:T]
         # print(np.array_str(exper.epoch_stats["qt_hist"][epoch][:T+2], precision=4))
         plot_title = model_info + "q(t|x) during training for epoch {} ".format(epoch)
         if exper.args.learner == "act_sb" and exper.args.version != "V3.2":
-            plot_title += r" - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+            plot_title += r" - with prior(t|$\nu={:.2f})$".format(1-exper.config.ptT_shape_param)
         elif exper.args.learner == "meta_act":
             plot_title += r" - $(\tau={})$".format(exper.config.tau)
         elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
-            plot_title += r"- $(\nu={}$".format(exper.config.ptT_shape_param)
+            plot_title += r"- $(\nu={}$".format(1-exper.config.ptT_shape_param)
             plot_title += " - kls={})".format(exper.config.kl_anneal_perc)
     else:
         if omit_last_step:
@@ -1089,12 +1122,13 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=7, width=11, s
         qt_hist = exper.val_stats["qt_hist"][epoch][:T]
         plot_title = model_info + "q(t|x) during evaluation"
         if exper.args.learner == "act_sb" and exper.args.version != "V3.2":
-            plot_title += r" - with prior(t|$\nu={:.2f})$".format(exper.config.ptT_shape_param)
+            plot_title += r" - with prior(z|$\nu={})$".format(1-exper.config.ptT_shape_param)
         elif exper.args.learner == "meta_act":
             plot_title += r" - $(\tau={})$".format(exper.config.tau)
             legend_label = r"$p(t|\tau)$"
         elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
-            plot_title += r"- $(\nu={}$".format(exper.config.ptT_shape_param)
+            legend_label = r"$q(z|x, T={})$".format(T)
+            plot_title += r"- $(\nu={}$".format(1-exper.config.ptT_shape_param)
             plot_title += " - kls={})".format(exper.config.kl_anneal_perc)
 
     if p_title is not None:
@@ -1104,20 +1138,22 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=7, width=11, s
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     plt.title(plot_title, **title_font)
     index = np.arange(1, qt_hist.shape[0] + 1).astype(int)
-
     plt.bar(index, qt_hist, bar_width, color='b', align='center',
             label=legend_label)
+    # print(index.shape, qt_hist.shape)
     if plot_prior:
-        priors = geom.pmf(index, exper.config.ptT_shape_param)
-        plt.bar(index+bar_width, priors, bar_width, color='orange', align='center',
-                label=r"$p(t|\nu={:.2})$".format(exper.config.ptT_shape_param))
+        priors = geom.pmf(index, 1-exper.config.ptT_shape_param)
+        trunc_priors = 1. / np.sum(priors) * priors
+        print(index.shape, qt_hist.shape, trunc_priors.shape)
+        plt.bar(index+bar_width, trunc_priors, bar_width, color='orange', align='center',
+                label=r"$p(z|T={}, \nu={})$".format(T, 1-exper.config.ptT_shape_param))
     if data_set == "train":
         if len(index) > 15:
             index = np.arange(1, len(index), 5)
         plt.xticks(index)
     plt.legend(loc="best", prop={'size': legend_size})
-    plt.xlabel("time step", **axis_font)
-    plt.ylabel("probability", **axis_font)
+    plt.xlabel("Time steps", **axis_font)
+    plt.ylabel("Probability", **axis_font)
     if x_max is not None:
         plt.xlim([0, x_max])
     if huge:
@@ -1158,7 +1194,7 @@ def plot_actsb_qts(exper, data_set="train", fig_name=None, height=7, width=11, s
 
 
 def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height=15, do_save=False, do_show=False,
-                        data="qt_value", cmap=cmocean.cm.haline, scale=[0., 1.],
+                        data="qt_value", cmap=cmocean.cm.haline, scale=None,
                         max_epoch=None, max_time_step=None,
                         huge=False, plot_title=None):
 
@@ -1168,9 +1204,11 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
         raise ValueError("Only support parameter values for -data- are 1) qt_value 2) halting_step")
 
     if huge:
-        font_size = ['42', '30']
+        font_size = ['48', '40']
+        cbar_font = 36
     else:
         font_size = ['14', '12']
+        cbar_font = 25
 
     title_font = {'fontname': 'Arial', 'size': font_size[0], 'color': 'black', 'weight': 'normal'}
     axis_font = {'fontname': 'Arial', 'size': font_size[1], 'weight': 'normal'}
@@ -1189,8 +1227,8 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
 
         title_prefix = "Model {} - qt probabilities during ".format(exper.args.learner+exper.args.version) + run_type
         save_suffix = "qts"
-        scale[0] = 0.
-        scale[1] = 1.
+        if scale is None:
+            scale = [0., 1.]
 
     elif data == "halting_step":
         if data_set == "train":
@@ -1206,19 +1244,18 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
 
         title_prefix = "Model {} - halting step during ".format(exper.args.learner+exper.args.version) + run_type
         save_suffix = "halting"
-        scale[0] = np.min(X[X>0])
-        # print("min {}".format(scale[0]))
-        scale[1] = np.max(X)
+        if scale is None:
+            scale = [np.min(X[X > 0]), np.max(X)]
 
     # we can be (nearly) sure to never reach zero loss values (exactly) and because those value disturbe the colormap
     # we set them to a "bad" value in order to color them specifically. This is necessary for the ACT model when
     # trained with a stochastic horizon
-    min_value = np.min(X[X > 0])
+
     X[X == 0] = -1
     plt.figure(figsize=(width, height))
     if exper.args.learner[0:3] == "act" or exper.args.learner == "meta_act":
         p_title = title_prefix + " per time step" + \
-                     r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+                     r" ($\nu={:.3f}$)".format(1-exper.config.ptT_shape_param)
     else:
         p_title = ""
     if exper.args.learner == "meta_act":
@@ -1232,18 +1269,41 @@ def plot_image_map_data(exper, data_set="train", fig_name=None, width=18, height
     # color
     cmap.set_under(color='darkgray')
     im = plt.imshow(X, cmap=cmap, interpolation='none', aspect='auto', vmin=scale[0], vmax=scale[1])
-    plt.xlabel("Number of optimization steps", **axis_font)
+
+    plt.xlabel("Time step", **axis_font)
     plt.ylabel(y_label, **axis_font)
-    if X.shape[0] > 25:
-        y_step_size = X.shape[0] // 10
+    if X.shape[0] > 50:
+        y_step_size = 20
+    elif X.shape[0] > 14:
+        y_step_size = 5
     else:
         y_step_size = 1
-    if huge:
-        plt.tick_params(axis='both', which='major', labelsize=20)
-        plt.tick_params(axis='both', which='minor', labelsize=20)
-    plt.yticks(np.arange(0, X.shape[0], y_step_size), np.arange(1, X.shape[0]+1, y_step_size))
-    plt.colorbar(im)
+    y_ticks = np.arange(y_step_size, X.shape[0] + 1, y_step_size)
 
+    if huge:
+        plt.tick_params(axis='both', which='major', labelsize=font_size[1])
+        plt.tick_params(axis='both', which='minor', labelsize=font_size[1])
+    y = np.arange(y_step_size, X.shape[0] + 1, y_step_size) - 1
+
+    plt.yticks(y, y_ticks, fontsize=font_size[1])
+    # plt.yticks(np.arange(0, X.shape[0], y_step_size), np.arange(1, X.shape[0]+1, y_step_size))
+
+    if X.shape[1] > 70:
+        x_step_size = 20
+    elif X.shape[1] > 30:
+        x_step_size = 5
+    else:
+        x_step_size = 1
+
+    if x_step_size > 1:
+        x_ticks = np.arange(x_step_size, X.shape[1]+1, x_step_size)
+    else:
+        x_ticks = np.arange(x_step_size, X.shape[1], x_step_size)
+    print(x_ticks)
+    plt.xticks(x_ticks, fontsize=font_size[1])
+
+    colbar = plt.colorbar(im)
+    colbar.ax.tick_params(labelsize=cbar_font)
     if fig_name is None and do_save:
         fig_name = "_" + create_exper_label(exper)
         fig_name = os.path.join(exper.output_dir, data_set + "_step_map_" + save_suffix + fig_name + ".png")
@@ -1280,9 +1340,9 @@ def plot_halting_step_stats_with_loss(exper, height=8, width=12, do_show=False, 
     if exper.args.learner == "meta_act":
         ptitle += r" ($\tau={:.5f}$)".format(exper.config.tau)
     elif exper.args.learner == "act_sb" and exper.args.version == "V3.2":
-        ptitle += r" ($\nu={:.3f}$ kls={:.3f})".format(exper.config.ptT_shape_param, exper.config.kl_anneal_perc)
+        ptitle += r" ($\nu={:.3f}$ kls={:.3f})".format(1-exper.config.ptT_shape_param, exper.config.kl_anneal_perc)
     else:
-        ptitle += r" ($\nu={:.3f}$)".format(exper.config.ptT_shape_param)
+        ptitle += r" ($\nu={:.3f}$)".format(1-exper.config.ptT_shape_param)
 
     plt.title(ptitle + suffix, **config.title_font)
     opt_hist = exper.epoch_stats["opt_step_hist"]
@@ -1365,10 +1425,10 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     if exper.args.learner == "meta_act":
         p_label = r" $\tau={:.5f}$".format(exper.config.tau)
     elif exper.args.learner == "act_sb":
-        p_label = r" $\nu={}$".format(exper.config.ptT_shape_param)
+        p_label = r" $\nu={}$".format(1-exper.config.ptT_shape_param)
 
     else:
-        p_label = r" ($\nu={}$)".format(exper.config.ptT_shape_param)
+        p_label = r" ($\nu={}$)".format(1-exper.config.ptT_shape_param)
 
     if huge:
         title_font = {'fontname': 'Arial', 'size': 32, 'color': 'black', 'weight': 'normal'}
@@ -1406,7 +1466,7 @@ def plot_loss_versus_halting_step(exper, height=8, width=12, do_show=False, do_s
     ax.set_ylim([0, max_y])
     plt.tick_params(axis='both', which='major', labelsize=20)
     plt.tick_params(axis='both', which='minor', labelsize=20)
-    ax.set_ylabel("initial NLL", **axis_font)
+    ax.set_ylabel(r"Initial NLL", **axis_font)
     ax.legend(loc="best", prop={'size': legend_size})
 
     if do_save:
@@ -1446,7 +1506,7 @@ def plot_gradient_stats(exper, height=8, width=12, do_show=False, do_save=False,
     ax.plot(x[offset:], grad_means[offset:], 'o-', color="black")
     ax.set_title("Model {} - gradient statistics during training (batch-size={})".format(model_name, exper.args.batch_size),
                  **config.title_font)
-    ax.set_xlabel("Epoch")
+    ax.set_xlabel("Epoch", )
     ax.set_ylabel("mean value gradients")
     if do_save:
         if fig_name is None:
@@ -1460,3 +1520,267 @@ def plot_gradient_stats(exper, height=8, width=12, do_show=False, do_save=False,
         plt.show()
 
     plt.close()
+
+
+def plot_halting_step_stats(expers, height=8, width=12, do_show=False, do_save=False, xlim=[0, 100],
+                            fig_name=None, fig_title=None, huge=True, last_epoch=None, model_in_label=False):
+
+    if huge:
+        font_size = ['40', '30']
+        cbar_font = 36
+        legend_size = 16
+        tick_size = 20
+    else:
+        font_size = ['14', '12']
+        cbar_font = 25
+        legend_size = 10
+        tick_size = 10
+
+    title_font = {'fontname': 'Arial', 'size': font_size[0], 'color': 'black', 'weight': 'normal'}
+    axis_font = {'fontname': 'Arial', 'size': font_size[1], 'weight': 'normal'}
+
+    fig, ax = plt.subplots()
+    fig.set_figheight(height)
+    fig.set_figwidth(width)
+    plt.gca().invert_yaxis()
+    ax.set_facecolor('lightgray')
+    ax.set_prop_cycle(cycler('color', palettable.cmocean.sequential.Algae_6.mpl_colors))
+
+    if fig_title is None:
+        fig_title = "Mean halting step per epoch"
+
+    c_alpha = 0.15
+    max_epoch = 0
+    model_name = None
+    for i, e in enumerate(expers):
+        p_label = ""
+        model_name = get_official_model_name(e)
+        if e.args.learner == "meta_act":
+            p_label += r"$\tau={}$".format(e.config.tau)
+            model_color = get_model_color(e)
+        else:
+            p_label += r"$\nu={}$".format(1-e.config.ptT_shape_param)
+            model_color = get_model_color(e)
+
+        if last_epoch is None:
+            epochs = len(e.epoch_stats["halting_stats"])
+        else:
+            epochs = last_epoch[i]
+        if epochs > max_epoch:
+            max_epoch = epochs
+        if model_in_label:
+            p_label = model_name + " (" + p_label + ")"
+
+        halting_stats = np.vstack(e.epoch_stats["halting_stats"].values())
+        halting_stats = halting_stats[:epochs, :]
+        halt_min = halting_stats[:, 0]
+        halt_max = halting_stats[:, 1]
+        halt_avg = halting_stats[:, 2]
+        halt_stddev = halting_stats[:, 3]
+        halt_avg_plus_stddev = halt_avg + halt_stddev
+        halt_avg_min_stddev = halt_avg - halt_stddev
+
+        x = np.arange(1, epochs + 1)
+        # plt.plot(halt_avg, x, marker='D', label=p_label)  # c=model_color, alpha=c_alpha
+        plt.plot(halt_avg, x, marker='D', c=model_color, alpha=c_alpha, label=p_label)  # c=model_color, alpha=c_alpha
+        # plt.fill_betweenx(x, halt_avg_min_stddev, halt_avg_plus_stddev, alpha=c_alpha)  # color=model_color , alpha=c_alpha)
+        plt.fill_betweenx(x, halt_avg_min_stddev, halt_avg_plus_stddev, color=model_color, alpha=c_alpha)
+        c_alpha += 0.22
+
+    plt.ylabel("Training epoch", **axis_font)
+    plt.legend(loc="best", prop={'size': legend_size})
+    plt.xlabel("Mean halting step", **axis_font)
+    plt.title(fig_title, **title_font)
+    plt.ylim([max_epoch, 1])
+    plt.xlim(xlim)
+    plt.tick_params(axis='both', which='major', labelsize=tick_size)
+    plt.tick_params(axis='both', which='minor', labelsize=tick_size)
+
+    if do_save:
+        if fig_name is None:
+            fig_name = "halting_steps_training"
+        fig_name = os.path.join(config.figure_path, fig_name + config.dflt_plot_ext)
+
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    if do_show:
+        plt.show()
+
+    plt.close()
+
+
+def plot_geometric_priors(p_shape, horizon=100, fig_name=None, fig_title=None, huge=True, do_save=False,
+                          do_show=True, height=8, width=12):
+    p_label = r"$p(z|T={}, \nu={})$".format(horizon, p_shape)
+    bar_width = 0.3
+
+    if fig_title is None:
+        fig_title = "Truncated geometric prior"
+
+    if huge:
+        font_size = ['40', '30']
+        legend_size = 16
+        tick_size = 20
+    else:
+        font_size = ['14', '12']
+        legend_size = 10
+        tick_size = 10
+
+    title_font = {'fontname': 'Arial', 'size': font_size[0], 'color': 'black', 'weight': 'normal'}
+    axis_font = {'fontname': 'Arial', 'size': font_size[1], 'weight': 'normal'}
+
+    t = np.arange(1, horizon + 1)
+    probs = geom.pmf(t, p=p_shape)
+
+    trunc_probs = 1. / np.sum(probs) * probs
+
+    fig, ax = plt.subplots()
+    fig.set_figheight(height)
+    fig.set_figwidth(width)
+    # plt.plot(t, trunc_probs, 'o', label=p_label)
+    plt.bar(t + bar_width, trunc_probs, bar_width, color='orange', align='center', label=p_label)
+
+    plt.ylabel("Probability", **axis_font)
+    plt.legend(loc="best", prop={'size': legend_size})
+    plt.xlabel("Time steps", **axis_font)
+    plt.title(fig_title, **title_font)
+    plt.tick_params(axis='both', which='major', labelsize=tick_size)
+    plt.tick_params(axis='both', which='minor', labelsize=tick_size)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    if do_save:
+        if fig_name is None:
+            str_shape = str.replace(str(p_shape), '.', '_')
+            fig_name = "prior_geom_trunc_shape_" + str_shape
+        fig_name = os.path.join(config.figure_path, fig_name + config.dflt_plot_ext)
+
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    if do_show:
+        plt.show()
+
+    plt.close()
+
+
+def plot_marginal_qz(exper, qz_dist, do_show=True, width=11, height=7, huge=False, p_title=None,
+                     do_save=False, fig_name=None, max_time_step=None, plot_conditional=False):
+    if huge:
+        title_font = {'fontname': 'Arial', 'size': 32, 'color': 'black', 'weight': 'normal'}
+        axis_font = {'fontname': 'Arial', 'size': 20, 'weight': 'normal'}
+        legend_size = 16
+    else:
+        title_font = config.title_font
+        axis_font = {'fontname': 'Arial', 'size': 10, 'weight': 'normal'}
+        legend_size = 6
+
+    bar_width = 0.3
+    legend_label = r"$q(z|x)$"
+    ax = plt.figure(figsize=(width, height)).gca()
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    if p_title is not None:
+        plt.title(p_title, **title_font)
+    index = np.arange(1, qz_dist.shape[0] + 1).astype(int)
+    plt.bar(index, qz_dist, bar_width, color='b', align='center', label=legend_label)
+    if plot_conditional:
+        epoch = exper.epoch
+        T = np.max(exper.val_stats["qt_hist"][epoch].nonzero()) + 1
+        qt_hist = exper.val_stats["qt_hist"][epoch][:T]
+        legend_label_cond = r"$q(z|x, T)$"
+        plt.bar(index+bar_width, qt_hist, bar_width, color='orange', align='center', label=legend_label_cond)
+    plt.legend(loc="best", prop={'size': legend_size})
+    plt.xlabel("Time steps", **axis_font)
+    plt.ylabel("Probability", **axis_font)
+    if max_time_step is not None:
+        plt.xlim([1, max_time_step])
+
+    if huge:
+        plt.tick_params(axis='both', which='major', labelsize=20)
+        plt.tick_params(axis='both', which='minor', labelsize=20)
+
+    if fig_name is None:
+        hyper_param = str.replace(str(1-exper.config.ptT_shape_param), '.', '_')
+        fig_name = "qzx_marginal_nu" + hyper_param
+
+    if do_save:
+        fig_name = os.path.join(exper.output_dir, fig_name + ".png")
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    if do_show:
+        plt.show()
+
+
+def plot_qtT_distributions(exper, qt_dists, width=14, height=30, huge=True, do_save=False, do_show=True,
+                           fig_name=None, plot_prior=False, filter_horizons=None):
+    if huge:
+        title_font = {'fontname': 'Arial', 'size': 32, 'color': 'black', 'weight': 'normal'}
+        axis_font = {'fontname': 'Arial', 'size': 20, 'weight': 'normal'}
+        legend_size = 16
+    else:
+        title_font = config.title_font
+        axis_font = {'fontname': 'Arial', 'size': 10, 'weight': 'normal'}
+        legend_size = 6
+
+    bar_width = 0.5
+    if filter_horizons is not None:
+        num_of_plots = len(filter_horizons)
+        T_max = np.max(np.array(filter_horizons)) + 1
+    else:
+        num_of_plots = len(qt_dists)
+        T_max = np.max(qt_dists.keys()) + 1
+
+    if T_max > 40:
+        x_step_size = 20
+    else:
+        x_step_size = 0
+
+    i = 1
+    ax = plt.figure(figsize=(width, height)).gca()
+    # plt.suptitle("M-PACT", **title_font)
+
+    for key, qt_values in qt_dists.iteritems():
+        if filter_horizons is None or key in filter_horizons:
+            ax1 = plt.subplot(num_of_plots, 2, i)
+            if exper.args.learner == "act_sb":
+                legend_label = "q(z|x, {})".format(key)
+            else:
+                legend_label = "p(t|x, {})".format(key)
+            index = np.arange(1, qt_values.shape[0] + 1)
+            plt.bar(index, qt_values, bar_width, color='b', align='center',
+                    label=legend_label)
+
+            if plot_prior:
+                priors = geom.pmf(index, 1 - exper.config.ptT_shape_param)
+                # print(priors.shape[0], np.sum(priors))
+                trunc_priors = 1. / np.sum(priors) * priors
+                plt.bar(index + bar_width, trunc_priors, bar_width, color='orange', align='center',
+                        label=r"$p(z|T={}, \nu={})$".format(key, 1 - exper.config.ptT_shape_param))
+            plt.legend(loc="best")
+            i += 1
+            plt.xlabel('Time step', **axis_font)
+            plt.ylabel('Probability', **axis_font)
+            # if x_step_size != 0:
+            #    ax1.set_xticks(np.arange(1, T_max, x_step_size))
+            ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+            # ax1.set_xlim([0, T_max])
+            if huge:
+                ax1.tick_params(axis='both', which='major', labelsize=20)
+                ax1.tick_params(axis='both', which='minor', labelsize=20)
+
+    plt.subplots_adjust(wspace=0.5, hspace=0.7)
+
+    if fig_name is None:
+        if exper.args.learner == "act_sb":
+            hyper_param = str.replace(str(1 - exper.config.ptT_shape_param), '.', '_')
+        else:
+            hyper_param = str.replace(str(exper.config.tau), '.', '_')
+        fig_name = "qzxT_conditionals" + hyper_param
+
+    if do_save:
+        fig_name = os.path.join(exper.output_dir, fig_name + ".png")
+        plt.savefig(fig_name, bbox_inches='tight')
+        print("INFO - Successfully saved fig %s" % fig_name)
+
+    plt.show()
